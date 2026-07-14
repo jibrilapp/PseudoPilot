@@ -1,0 +1,9 @@
+{
+  "extends": "@pseudopilot/typescript-config/library.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "noEmit": false
+  },
+  "include": ["src"]
+}

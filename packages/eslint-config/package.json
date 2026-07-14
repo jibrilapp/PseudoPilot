@@ -1,0 +1,17 @@
+{
+  "name": "@pseudopilot/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared ESLint flat config for PseudoPilot.",
+  "exports": {
+    "./base": "./base.js"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.17.0",
+    "typescript-eslint": "^8.18.2"
+  },
+  "peerDependencies": {
+    "eslint": "^9.17.0"
+  }
+}

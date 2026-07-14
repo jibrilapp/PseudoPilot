@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  color: theme('colors.pp.ink');
+  background: theme('colors.pp.canvas');
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01' on, 'cv11' on;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(13, 115, 112, 0.18);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.14);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.22);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer components {
+  .pp-btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-[8px] px-2.5 py-1.5
+      text-[13px] font-medium tracking-[-0.01em]
+      transition-[background-color,color,box-shadow,transform] duration-150 ease-apple
+      disabled:opacity-40;
+  }
+
+  .pp-btn:active {
+    transform: scale(0.98);
+  }
+
+  .pp-btn-ghost {
+    @apply pp-btn text-pp-muted hover:bg-black/[0.04] hover:text-pp-ink;
+  }
+
+  .pp-btn-ghost[data-active='true'] {
+    @apply bg-black/[0.05] text-pp-ink;
+  }
+
+  .pp-btn-primary {
+    @apply pp-btn bg-pp-accent text-white shadow-[0_1px_0_rgba(255,255,255,0.12)_inset]
+      hover:bg-pp-accentHover;
+  }
+
+  .pp-icon-btn {
+    @apply pp-btn-ghost h-8 w-8 px-0;
+  }
+
+  .pp-tab {
+    @apply relative px-3.5 py-2.5 text-[13px] font-medium tracking-[-0.01em]
+      text-pp-muted transition-colors duration-150 hover:text-pp-ink;
+  }
+
+  .pp-tab[data-active='true'] {
+    @apply text-pp-ink;
+  }
+
+  .pp-tab[data-active='true']::after {
+    content: '';
+    @apply absolute inset-x-3 -bottom-px h-[2px] rounded-full bg-pp-accent;
+  }
+
+  .pp-hairline {
+    border-color: theme('colors.pp.line');
+  }
+
+  .pp-section-label {
+    @apply text-[11px] font-semibold tracking-[0.04em] text-pp-faint;
+  }
+}

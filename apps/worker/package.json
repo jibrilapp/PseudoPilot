@@ -1,0 +1,27 @@
+{
+  "name": "@pseudopilot/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Background jobs: AI coaching, exports, cleanup. Scales independently of request traffic.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --watch --import tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist .turbo coverage"
+  },
+  "dependencies": {
+    "@pseudopilot/shared-types": "workspace:*"
+  },
+  "devDependencies": {
+    "@pseudopilot/eslint-config": "workspace:*",
+    "@pseudopilot/typescript-config": "workspace:*",
+    "eslint": "^9.17.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
