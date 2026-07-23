@@ -7,8 +7,9 @@ import type {
 import {
   emptyTrivia,
   withEmptyTrivia,
+  type IrAssignTarget,
+  type IrElseIfClause,
   type IrExpression,
-  type IrIdentifier,
   type IrProgram,
   type IrStatement,
 } from '../ir/nodes.js';
@@ -24,17 +25,21 @@ export type LowerResult = {
 function lowerTarget(
   target: AssignTarget,
   diagnostics: TranslateDiagnostic[],
-): IrIdentifier | null {
+): IrAssignTarget | null {
   if (target.kind === 'Identifier') {
     return { kind: 'IrIdentifier', name: target.name };
   }
-  diagnostics.push({
-    severity: 'error',
-    code: 'T_UNSUPPORTED_INDEX',
-    message: 'V1 translator does not support array indexing as an assignment target.',
-    span: target.span,
-  });
-  return null;
+  const indices: IrExpression[] = [];
+  for (const idx of target.indices) {
+    const lowered = lowerExpression(idx, diagnostics);
+    if (!lowered) return null;
+    indices.push(lowered);
+  }
+  return {
+    kind: 'IrIndexExpression',
+    array: { kind: 'IrIdentifier', name: target.array.name },
+    indices,
+  };
 }
 
 function lowerExpression(
@@ -48,10 +53,25 @@ function lowerExpression(
       return { kind: 'IrRealLiteral', value: expr.value };
     case 'StringLiteral':
       return { kind: 'IrStringLiteral', value: expr.value };
+    case 'CharLiteral':
+      return { kind: 'IrCharLiteral', value: expr.value };
     case 'BooleanLiteral':
       return { kind: 'IrBooleanLiteral', value: expr.value };
     case 'Identifier':
       return { kind: 'IrIdentifier', name: expr.name };
+    case 'IndexExpression': {
+      const indices: IrExpression[] = [];
+      for (const idx of expr.indices) {
+        const lowered = lowerExpression(idx, diagnostics);
+        if (!lowered) return null;
+        indices.push(lowered);
+      }
+      return {
+        kind: 'IrIndexExpression',
+        array: { kind: 'IrIdentifier', name: expr.array.name },
+        indices,
+      };
+    }
     case 'UnaryExpression': {
       const argument = lowerExpression(expr.argument, diagnostics);
       if (!argument) return null;
@@ -81,15 +101,7 @@ function lowerExpression(
       diagnostics.push({
         severity: 'error',
         code: 'T_UNSUPPORTED_CALL',
-        message: `V1 translator does not support function calls (found '${expr.callee.name}').`,
-        span: expr.span,
-      });
-      return null;
-    case 'IndexExpression':
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_UNSUPPORTED_INDEX',
-        message: 'V1 translator does not support array index expressions.',
+        message: `Translator does not support function calls (found '${expr.callee.name}').`,
         span: expr.span,
       });
       return null;
@@ -97,7 +109,7 @@ function lowerExpression(
       diagnostics.push({
         severity: 'error',
         code: 'T_UNSUPPORTED_EOF',
-        message: 'V1 translator does not support EOF(...).',
+        message: 'Translator does not support EOF(...).',
         span: expr.span,
       });
       return null;
@@ -106,6 +118,19 @@ function lowerExpression(
       return _exhaustive;
     }
   }
+}
+
+/** Lower a statement list; skip unsupported nodes (diagnostics already emitted). */
+function lowerBlock(
+  statements: Statement[],
+  diagnostics: TranslateDiagnostic[],
+): IrStatement[] {
+  const out: IrStatement[] = [];
+  for (const stmt of statements) {
+    const lowered = lowerStatement(stmt, diagnostics);
+    if (lowered) out.push(lowered.ir);
+  }
+  return out;
 }
 
 function lowerStatement(
@@ -153,19 +178,38 @@ function lowerStatement(
         }),
       };
     }
-    case 'IfStatement':
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_UNSUPPORTED_IF',
-        message: 'V1 translator does not support IF statements.',
+    case 'IfStatement': {
+      const condition = lowerExpression(stmt.condition, diagnostics);
+      if (!condition) return null;
+      const consequent = lowerBlock(stmt.consequent, diagnostics);
+      const elseIfClauses: IrElseIfClause[] = [];
+      for (const clause of stmt.elseIfClauses) {
+        const c = lowerExpression(clause.condition, diagnostics);
+        if (!c) return null;
+        elseIfClauses.push({
+          kind: 'IrElseIfClause',
+          condition: c,
+          consequent: lowerBlock(clause.consequent, diagnostics),
+        });
+      }
+      const alternate =
+        stmt.alternate === null ? null : lowerBlock(stmt.alternate, diagnostics);
+      return {
         span: stmt.span,
-      });
-      return null;
+        ir: withEmptyTrivia({
+          kind: 'IrIfStatement' as const,
+          condition,
+          consequent,
+          elseIfClauses,
+          alternate,
+        }),
+      };
+    }
     case 'DeclareStatement':
       diagnostics.push({
         severity: 'error',
         code: 'T_UNSUPPORTED_DECLARE',
-        message: 'V1 translator does not support DECLARE (yet).',
+        message: 'Translator does not support DECLARE (yet).',
         span: stmt.span,
       });
       return null;
@@ -174,7 +218,7 @@ function lowerStatement(
       diagnostics.push({
         severity: 'error',
         code: 'T_UNSUPPORTED_ROUTINE',
-        message: 'V1 translator does not support procedures/functions.',
+        message: 'Translator does not support procedures/functions.',
         span: stmt.span,
       });
       return null;
@@ -182,7 +226,7 @@ function lowerStatement(
       diagnostics.push({
         severity: 'error',
         code: 'T_UNSUPPORTED_CALL',
-        message: 'V1 translator does not support CALL statements.',
+        message: 'Translator does not support CALL statements.',
         span: stmt.span,
       });
       return null;
@@ -190,7 +234,7 @@ function lowerStatement(
       diagnostics.push({
         severity: 'error',
         code: 'T_UNSUPPORTED_RETURN',
-        message: 'V1 translator does not support RETURN.',
+        message: 'Translator does not support RETURN.',
         span: stmt.span,
       });
       return null;
@@ -201,7 +245,7 @@ function lowerStatement(
       diagnostics.push({
         severity: 'error',
         code: 'T_UNSUPPORTED_FILE',
-        message: 'V1 translator does not support file handling.',
+        message: 'Translator does not support file handling.',
         span: stmt.span,
       });
       return null;
@@ -213,7 +257,8 @@ function lowerStatement(
 }
 
 /**
- * Lower a Cambridge AST Program into IR (V1 subset).
+ * Lower a Cambridge AST Program into IR.
+ * Still lowers successfully parsed statements even when the overall parse had errors.
  */
 export function lowerCambridgeProgram(
   program: Program,

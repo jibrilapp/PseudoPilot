@@ -1,4 +1,5 @@
 import type {
+  IrAssignTarget,
   IrBinaryExpression,
   IrExpression,
   IrProgram,
@@ -7,6 +8,7 @@ import type {
 } from '../ir/nodes.js';
 import {
   escapePythonString,
+  escapePythonChar,
   formatBooleanPython,
   formatRealLiteral,
 } from '../rules/literals.js';
@@ -19,6 +21,16 @@ import {
 } from '../rules/operators.js';
 import { printTrivia } from '../trivia/attach.js';
 
+const INDENT = '    ';
+
+function printTarget(target: IrAssignTarget): string {
+  if (target.kind === 'IrIdentifier') return target.name;
+  return target.indices.reduce(
+    (acc, idx) => `${acc}[${printExpr(idx, 0)}]`,
+    target.array.name,
+  );
+}
+
 function printExpr(expr: IrExpression, parentPrec: number): string {
   switch (expr.kind) {
     case 'IrIntegerLiteral':
@@ -27,10 +39,14 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return formatRealLiteral(expr.value);
     case 'IrStringLiteral':
       return `"${escapePythonString(expr.value)}"`;
+    case 'IrCharLiteral':
+      return `'${escapePythonChar(expr.value)}'`;
     case 'IrBooleanLiteral':
       return formatBooleanPython(expr.value);
     case 'IrIdentifier':
       return expr.name;
+    case 'IrIndexExpression':
+      return printTarget(expr);
     case 'IrGroupingExpression':
       return `(${printExpr(expr.expression, 0)})`;
     case 'IrUnaryExpression':
@@ -62,39 +78,80 @@ function printBinary(expr: IrBinaryExpression, parentPrec: number): string {
   return prec < parentPrec ? `(${core})` : core;
 }
 
-/**
- * Expand IrInput with prompt into OUTPUT then INPUT semantics for Cambridge;
- * for Python, emit assignment from input(...).
- */
-function printStatement(stmt: IrStatement): string[] {
-  const lines: string[] = [...printTrivia(stmt.leadingTrivia, 'hash')];
-  let code: string;
+function pad(level: number): string {
+  return INDENT.repeat(level);
+}
+
+function printBlock(
+  statements: readonly IrStatement[],
+  level: number,
+): string[] {
+  if (statements.length === 0) {
+    return [`${pad(level)}pass`];
+  }
+  const lines: string[] = [];
+  for (const stmt of statements) {
+    lines.push(...printStatement(stmt, level));
+  }
+  return lines;
+}
+
+function printStatement(stmt: IrStatement, level: number): string[] {
+  const p = pad(level);
+  const lines: string[] = [
+    ...printTrivia(stmt.leadingTrivia, 'hash').map((l) =>
+      l.length === 0 ? l : `${p}${l}`,
+    ),
+  ];
+
   switch (stmt.kind) {
     case 'IrAssignment':
-      code = `${stmt.target.name} = ${printExpr(stmt.value, 0)}`;
+      lines.push(`${p}${printTarget(stmt.target)} = ${printExpr(stmt.value, 0)}`);
       break;
     case 'IrInput':
       if (stmt.prompt) {
-        code = `${stmt.target.name} = input(${printExpr(stmt.prompt, 0)})`;
+        lines.push(
+          `${p}${printTarget(stmt.target)} = input(${printExpr(stmt.prompt, 0)})`,
+        );
       } else {
-        code = `${stmt.target.name} = input()`;
+        lines.push(`${p}${printTarget(stmt.target)} = input()`);
       }
       break;
     case 'IrOutput':
-      code = `print(${stmt.values.map((v) => printExpr(v, 0)).join(', ')})`;
+      lines.push(
+        `${p}print(${stmt.values.map((v) => printExpr(v, 0)).join(', ')})`,
+      );
       break;
+    case 'IrIfStatement': {
+      lines.push(`${p}if ${printExpr(stmt.condition, 0)}:`);
+      lines.push(...printBlock(stmt.consequent, level + 1));
+      for (const clause of stmt.elseIfClauses) {
+        lines.push(`${p}elif ${printExpr(clause.condition, 0)}:`);
+        lines.push(...printBlock(clause.consequent, level + 1));
+      }
+      if (stmt.alternate !== null) {
+        lines.push(`${p}else:`);
+        lines.push(...printBlock(stmt.alternate, level + 1));
+      }
+      break;
+    }
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
     }
   }
+
   const trailing = printTrivia(stmt.trailingTrivia, 'hash');
-  if (trailing.length > 0 && trailing[0]?.startsWith('#')) {
-    lines.push(`${code} ${trailing[0]}`);
-    lines.push(...trailing.slice(1));
+  if (
+    stmt.kind !== 'IrIfStatement' &&
+    trailing.length > 0 &&
+    trailing[0]?.startsWith('#')
+  ) {
+    const last = lines.pop()!;
+    lines.push(`${last} ${trailing[0]}`);
+    lines.push(...trailing.slice(1).map((l) => (l.length === 0 ? l : `${p}${l}`)));
   } else {
-    lines.push(code);
-    lines.push(...trailing);
+    lines.push(...trailing.map((l) => (l.length === 0 ? l : `${p}${l}`)));
   }
   return lines;
 }
@@ -112,7 +169,7 @@ function finalizeOutput(lines: string[]): string {
 export function printPython(program: IrProgram): string {
   const lines: string[] = [...printTrivia(program.leadingTrivia, 'hash')];
   for (const stmt of program.body) {
-    lines.push(...printStatement(stmt));
+    lines.push(...printStatement(stmt, 0));
   }
   lines.push(...printTrivia(program.trailingTrivia, 'hash'));
   return finalizeOutput(lines);

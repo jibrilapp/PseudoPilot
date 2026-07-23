@@ -9,6 +9,7 @@ export enum TokenKind {
   Integer = 'Integer',
   Real = 'Real',
   String = 'String',
+  Char = 'Char',
   Boolean = 'Boolean',
 
   Input = 'Input',

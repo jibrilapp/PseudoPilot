@@ -196,7 +196,7 @@ export function lex(source: string): LexResult {
       continue;
     }
 
-    // String literal
+    // String literal (double quotes)
     if (ch === '"') {
       const start = currentPos();
       advance(); // opening "
@@ -235,6 +235,54 @@ export function lex(source: string): LexResult {
         error('Unterminated string literal.', start, 'E_STRING');
       }
       emit(TokenKind.String, start, source.slice(start.offset, i), value);
+      continue;
+    }
+
+    // CHAR literal (single quotes) — Cambridge Guide: 'A'
+    if (ch === "'") {
+      const start = currentPos();
+      advance(); // opening '
+      let value = '';
+      let closed = false;
+      while (i < source.length) {
+        const c = at();
+        if (c === '\n') break;
+        if (c === "'") {
+          advance();
+          closed = true;
+          break;
+        }
+        if (c === '\\') {
+          advance();
+          const esc = at();
+          if (esc === "'" || esc === '\\') {
+            value += esc;
+            advance();
+          } else if (esc === 'n') {
+            value += '\n';
+            advance();
+          } else if (esc === 't') {
+            value += '\t';
+            advance();
+          } else {
+            value += esc;
+            if (esc) advance();
+          }
+          continue;
+        }
+        value += c;
+        advance();
+      }
+      if (!closed) {
+        error('Unterminated character literal.', start, 'E_CHAR_LIT');
+      } else if (value.length !== 1) {
+        error(
+          `Character literal must contain exactly one character (found ${value.length}).`,
+          start,
+          'E_CHAR_LEN',
+        );
+      }
+      emit(TokenKind.Char, start, source.slice(start.offset, i), value);
       continue;
     }
 

@@ -1,6 +1,6 @@
 # @pseudopilot/web
 
-Student IDE UI shell for PseudoPilot (**Milestone 2 — UI only**).
+Student IDE for PseudoPilot.
 
 ## Run
 
@@ -8,20 +8,23 @@ From the monorepo root:
 
 ```bash
 pnpm install
+pnpm --filter @pseudopilot/language-core build
+pnpm --filter @pseudopilot/translator build
 pnpm --filter @pseudopilot/web dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
-## What’s here
+## Live translation
 
-Visual IDE chrome inspired by VS Code / modern developer tools:
+Editing the **Pseudocode** pane debounces (~250ms) and calls
+`translatePseudocodeToPython()` from `@pseudopilot/translator` (package
+`exports` → built `dist/`, not live TypeScript source). Prefer starting via
+`pnpm --filter @pseudopilot/web dev` so turbo builds workspace deps first.
 
-- Toolbar + brand
-- Activity bar + file explorer
-- Split pseudocode / Python editors (dummy highlighted code)
-- Console, AI coach panel, variable inspector
-- Status bar
-- Responsive mobile dock
+- On success, the **Python** pane updates.
+- On failure, the last successful Python text stays visible and diagnostics
+  appear in the bottom Console / Diagnostics panel.
 
-No interpreter, parser, auth, or AI backend is wired yet.
+Translator subset: assignment, INPUT/OUTPUT, expressions, CHAR, indexes, **IF / ELSE / ELSE IF**.
+Unsupported constructs (CASE, loops, DECLARE, routines, …) show diagnostics without crashing the UI.

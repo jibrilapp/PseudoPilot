@@ -34,7 +34,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | INTEGER literal | ✅ | ❌ | ❌ | 🟡 | 🟡 |
 | REAL literal | 🟡 | ❌ | ❌ | 🟡 | 🟡 |
 | STRING literal | ✅ | ❌ | ❌ | 🟡 | 🟡 |
-| CHAR literal `'x'` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| CHAR literal `'x'` | ✅ | ❌ | ❌ | 🟡 | 🟡 |
 | BOOLEAN `TRUE`/`FALSE` | ✅ | ❌ | ❌ | 🟡 | 🟡 |
 | DATE type + literal | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Type names in DECLARE / params | ✅ | ❌ | ❌ | ❌ | ❌ |
@@ -51,7 +51,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | Logical `AND OR NOT` | ✅ | ❌ | ❌ | 🟡 | 🟡 |
 | `&` concatenation | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Precedence / parentheses | ✅ | — | ❌ | ❌ | ❌ |
-| Index expressions | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Index expressions | ✅ | ❌ | ❌ | 🟡 | 🟡 |
 | Function call expressions | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Member `.` / pointer `^` | ❌ | ❌ | ❌ | ❌ | ❌ |
 
@@ -81,10 +81,10 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| `IF` / `THEN` / `ENDIF` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `ELSE` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Nested IF | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `ELSE IF` extension | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `IF` / `THEN` / `ENDIF` | ✅ | ❌ | ❌ | ✅ | ✅ |
+| `ELSE` | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Nested IF | ✅ | ❌ | ❌ | ✅ | ✅ |
+| `ELSE IF` extension | ✅ | ❌ | ❌ | ✅ | ✅ |
 | `CASE OF` / `OTHERWISE` / `ENDCASE` | ❌ | ❌ | ❌ | ❌ | ❌ |
 | CASE `TO` ranges | ❌ | ❌ | ❌ | ❌ | ❌ |
 
@@ -121,7 +121,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
 | 1D / 2D (+ N-D) declare | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Element read/write | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Element read/write | ✅ | ❌ | ❌ | 🟡 | 🟡 |
 | Bounds checking | — | ❌ | ❌ | — | — |
 | Whole-array assign | 🟡 | ❌ | ❌ | ❌ | ❌ |
 
@@ -169,7 +169,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | Parser coverage checklist | ✅ |
 | IDE Monaco binding to parser | ❌ |
 | Interpreter / debugger | ❌ |
-| Pseudocode ↔ Python translator | 🟡 | V1: assign / INPUT / OUTPUT / expressions only |
+| Pseudocode ↔ Python translator | 🟡 | Assign/I/O/expr/CHAR/index/**IF**; no loops/CASE/routines |
 | AI coach grounded on this dialect | ❌ |
 
 ---

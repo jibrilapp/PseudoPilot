@@ -113,6 +113,10 @@ export class ExpressionParser {
         this.cursor.advance();
         return { kind: 'StringLiteral', value: token.literal as string, span: token.span };
       }
+      case TokenKind.Char: {
+        this.cursor.advance();
+        return { kind: 'CharLiteral', value: token.literal as string, span: token.span };
+      }
       case TokenKind.Boolean: {
         this.cursor.advance();
         return { kind: 'BooleanLiteral', value: token.literal as boolean, span: token.span };

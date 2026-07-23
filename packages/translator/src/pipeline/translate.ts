@@ -14,11 +14,14 @@ function finalize(
   diagnostics: TranslateResult['diagnostics'],
 ): TranslateResult {
   const ok = !diagnostics.some((d) => d.severity === 'error');
-  return { ok, code: ok ? code : code, diagnostics };
+  return { ok, code, diagnostics };
 }
 
 /**
- * Cambridge pseudocode → Python (V1 subset).
+ * Cambridge pseudocode → Python (assign / I/O / expr / IF subset).
+ *
+ * On parse errors, still lowers any recovered statements so callers get
+ * partial `code` plus diagnostics (`ok: false`).
  */
 export function translatePseudocodeToPython(
   source: string,
@@ -35,10 +38,6 @@ export function translatePseudocodeToPython(
     }),
   );
 
-  if (!parsed.ok) {
-    return finalize('', diagnostics);
-  }
-
   const lowered = lowerCambridgeProgram(parsed.ast, source, opts.preserveTrivia);
   diagnostics.push(...lowered.diagnostics);
 
@@ -47,7 +46,7 @@ export function translatePseudocodeToPython(
 }
 
 /**
- * Python (V1 subset) → Cambridge pseudocode.
+ * Python (assign / I/O / expr / IF subset) → Cambridge pseudocode.
  */
 export function translatePythonToPseudocode(
   source: string,

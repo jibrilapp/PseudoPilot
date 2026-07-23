@@ -15,7 +15,7 @@ Supported:
 - Arrays: `ARRAY[l:u] OF Type`, indexing `Name[i]` / `Name[i, j]`
 - Files: `OPENFILE` / `READFILE` / `WRITEFILE` / `CLOSEFILE`, modes `READ|WRITE|APPEND`, `EOF(…)`
 - Arithmetic, relational (`= <> < <= > >=`), and logical (`AND` `OR` `NOT`) expressions
-- Literals: integer, real, string, boolean
+- Literals: integer, real, string, **char** (`'A'`), boolean
 - Identifiers
 
 Not yet: loops (`WHILE` / `FOR` / `REPEAT`).

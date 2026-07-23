@@ -188,7 +188,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Real | 🟡 | Strict digit-both-sides not fully enforced |
 | String `"…"` | ✅ |
 | Boolean | ✅ |
-| Char `'…'` | ❌ |
+| Char `'…'` | ✅ |
 | Date literal | ❌ |
 
 ---

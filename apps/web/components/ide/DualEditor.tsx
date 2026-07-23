@@ -10,7 +10,9 @@ type DualEditorProps = {
   onSelectTab: (id: string) => void;
   pseudocode: string;
   python: string;
+  onPseudocodeChange: (value: string) => void;
   stacked?: boolean;
+  translationStatus?: 'idle' | 'ok' | 'error';
 };
 
 export function DualEditor({
@@ -19,7 +21,9 @@ export function DualEditor({
   onSelectTab,
   pseudocode,
   python,
+  onPseudocodeChange,
   stacked = false,
+  translationStatus = 'idle',
 }: DualEditorProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-pp-editor">
@@ -48,6 +52,8 @@ export function DualEditor({
           path="src/main.pseudo"
           code={pseudocode}
           language="pseudocode"
+          editable
+          onChange={onPseudocodeChange}
           emphasis={activeFileId.includes('pseudo') || activeFileId.startsWith('ex')}
         />
         <EditorColumn
@@ -57,6 +63,13 @@ export function DualEditor({
           language="python"
           emphasis={activeFileId.includes('py')}
           bordered
+          badge={
+            translationStatus === 'error'
+              ? 'Showing last good translation'
+              : translationStatus === 'ok'
+                ? 'Live'
+                : undefined
+          }
         />
       </div>
     </div>
@@ -70,6 +83,9 @@ function EditorColumn({
   language,
   emphasis,
   bordered,
+  editable,
+  onChange,
+  badge,
 }: {
   title: string;
   path: string;
@@ -77,6 +93,9 @@ function EditorColumn({
   language: 'pseudocode' | 'python';
   emphasis?: boolean;
   bordered?: boolean;
+  editable?: boolean;
+  onChange?: (value: string) => void;
+  badge?: string;
 }) {
   return (
     <section
@@ -86,11 +105,29 @@ function EditorColumn({
         emphasis ? 'bg-pp-editor' : 'bg-[#fbfbfc]',
       )}
     >
-      <div className="flex h-8 items-center justify-between px-3.5">
+      <div className="flex h-8 items-center justify-between gap-2 px-3.5">
         <h3 className="text-[12px] font-medium tracking-[-0.01em] text-pp-muted">{title}</h3>
-        <span className="font-mono text-[11px] text-pp-faint">{path}</span>
+        <div className="flex min-w-0 items-center gap-2">
+          {badge && (
+            <span
+              className={cn(
+                'truncate text-[10px] font-medium tracking-[-0.01em]',
+                badge === 'Live' ? 'text-emerald-600/80' : 'text-amber-700/80',
+              )}
+            >
+              {badge}
+            </span>
+          )}
+          <span className="font-mono text-[11px] text-pp-faint">{path}</span>
+        </div>
       </div>
-      <CodeSurface code={code} language={language} />
+      <CodeSurface
+        code={code}
+        language={language}
+        editable={editable}
+        onChange={onChange}
+        aria-label={title}
+      />
     </section>
   );
 }

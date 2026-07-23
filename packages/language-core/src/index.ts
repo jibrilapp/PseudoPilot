@@ -46,6 +46,7 @@ export type {
   IntegerLiteral,
   RealLiteral,
   StringLiteral,
+  CharLiteral,
   BooleanLiteral,
   BinaryOperator,
   UnaryOperator,

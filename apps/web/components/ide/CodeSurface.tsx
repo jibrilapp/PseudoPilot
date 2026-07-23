@@ -1,15 +1,64 @@
 'use client';
 
+import { useMemo } from 'react';
 import { cn } from '@/lib/cn';
 
 type CodeSurfaceProps = {
   code: string;
   language: 'pseudocode' | 'python';
+  /** When set, the surface is an editable textarea (pseudocode). */
+  editable?: boolean;
+  onChange?: (value: string) => void;
+  'aria-label'?: string;
 };
 
-/** Visual-only code surface — not a real editor/runtime. */
-export function CodeSurface({ code, language }: CodeSurfaceProps) {
-  const lines = code.replace(/\n$/, '').split('\n');
+/**
+ * Code surface: read-only highlighted view, or editable monospace textarea.
+ * Highlighting is visual-only for read-only mode; editable mode prioritizes typing.
+ */
+export function CodeSurface({
+  code,
+  language,
+  editable = false,
+  onChange,
+  'aria-label': ariaLabel,
+}: CodeSurfaceProps) {
+  const lines = useMemo(() => {
+    const normalized = code.replace(/\n$/, '');
+    return normalized.length === 0 ? [''] : normalized.split('\n');
+  }, [code]);
+
+  const lineCount = Math.max(lines.length, 1);
+
+  if (editable) {
+    return (
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div className="flex h-full min-h-0 font-mono text-[13px] leading-[1.7]">
+          <div
+            aria-hidden
+            className="sticky left-0 select-none border-r border-pp-line bg-pp-editor px-3.5 py-2 text-right text-[12px] text-pp-faint"
+          >
+            {Array.from({ length: lineCount }, (_, i) => (
+              <div key={i} className="tabular-nums">
+                {i + 1}
+              </div>
+            ))}
+          </div>
+          <textarea
+            aria-label={ariaLabel ?? 'Pseudocode editor'}
+            spellCheck={false}
+            value={code}
+            onChange={(e) => onChange?.(e.target.value)}
+            className={cn(
+              'm-0 min-h-0 w-full flex-1 resize-none border-0 bg-transparent',
+              'px-4 py-2 text-pp-ink outline-none focus:ring-0',
+              'caret-pp-accent',
+            )}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
@@ -89,6 +138,7 @@ function HighlightedLine({
           'import',
           'from',
           'as',
+          'input',
         ];
 
   const parts = tokenize(line, keywords, language);
@@ -109,7 +159,10 @@ function tokenize(
   language: 'pseudocode' | 'python',
 ): { text: string; className?: string }[] {
   const tokens: { text: string; className?: string }[] = [];
-  const stringRe = language === 'python' ? /("([^"\\]|\\.)*"|'([^'\\]|\\.)*')/ : /("([^"\\]|\\.)*")/;
+  const stringRe =
+    language === 'python'
+      ? /("([^"\\]|\\.)*"|'([^'\\]|\\.)*')/
+      : /("([^"\\]|\\.)*"|'([^'\\]|\\.)*')/;
   const commentRe = language === 'python' ? /#.*$/ : /\/\/.*$/;
 
   let rest = line;

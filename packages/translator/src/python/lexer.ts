@@ -1,10 +1,13 @@
 export enum PyTokenKind {
   Eof = 'Eof',
   Newline = 'Newline',
+  Indent = 'Indent',
+  Dedent = 'Dedent',
   Identifier = 'Identifier',
   Integer = 'Integer',
   Real = 'Real',
   String = 'String',
+  Char = 'Char',
   True = 'True',
   False = 'False',
   And = 'And',
@@ -12,7 +15,11 @@ export enum PyTokenKind {
   Not = 'Not',
   Print = 'Print',
   Input = 'Input',
-  Equal = 'Equal', // =
+  If = 'If',
+  Elif = 'Elif',
+  Else = 'Else',
+  Pass = 'Pass',
+  Equal = 'Equal',
   EqEq = 'EqEq',
   NotEq = 'NotEq',
   Lt = 'Lt',
@@ -27,7 +34,10 @@ export enum PyTokenKind {
   Percent = 'Percent',
   LParen = 'LParen',
   RParen = 'RParen',
+  LBracket = 'LBracket',
+  RBracket = 'RBracket',
   Comma = 'Comma',
+  Colon = 'Colon',
 }
 
 export type PyToken = {
@@ -46,11 +56,20 @@ const KEYWORDS: ReadonlyMap<string, PyTokenKind> = new Map([
   ['not', PyTokenKind.Not],
   ['print', PyTokenKind.Print],
   ['input', PyTokenKind.Input],
+  ['if', PyTokenKind.If],
+  ['elif', PyTokenKind.Elif],
+  ['else', PyTokenKind.Else],
+  ['pass', PyTokenKind.Pass],
 ]);
 
 export type PyLexResult = {
   readonly tokens: PyToken[];
-  readonly diagnostics: { message: string; line: number; column: number; code: string }[];
+  readonly diagnostics: {
+    message: string;
+    line: number;
+    column: number;
+    code: string;
+  }[];
 };
 
 function isIdentStart(ch: string): boolean {
@@ -66,8 +85,8 @@ function isDigit(ch: string): boolean {
 }
 
 /**
- * Line-oriented lexer for Python V1 subset (top-level statements only).
- * Skips indent/dedent — V1 forbids indented blocks.
+ * Python subset lexer with INDENT / DEDENT for if/elif/else blocks.
+ * Still rejects tabs in indentation (spaces only).
  */
 export function lexPython(source: string): PyLexResult {
   const tokens: PyToken[] = [];
@@ -75,6 +94,8 @@ export function lexPython(source: string): PyLexResult {
   let i = 0;
   let line = 1;
   let column = 1;
+  const indentStack: number[] = [0];
+  let atLineStart = true;
 
   const at = () => source[i] ?? '';
   const peek = (n = 1) => source[i + n] ?? '';
@@ -90,7 +111,11 @@ export function lexPython(source: string): PyLexResult {
     return ch;
   };
 
-  const emit = (kind: PyTokenKind, lexeme: string, start: { line: number; column: number; offset: number }) => {
+  const emit = (
+    kind: PyTokenKind,
+    lexeme: string,
+    start: { line: number; column: number; offset: number },
+  ) => {
     tokens.push({
       kind,
       lexeme,
@@ -100,10 +125,62 @@ export function lexPython(source: string): PyLexResult {
     });
   };
 
-  while (i < source.length) {
-    const ch = at();
+  const pos = () => ({ line, column, offset: i });
 
-    // Full-line or trailing comments — skip to EOL (trivia handled separately)
+  while (i < source.length) {
+    if (atLineStart) {
+      atLineStart = false;
+      const start = pos();
+      let indent = 0;
+      while (at() === ' ') {
+        indent += 1;
+        advance();
+      }
+      if (at() === '\t') {
+        diagnostics.push({
+          message: 'Tabs are not allowed for indentation in the Python subset.',
+          line,
+          column,
+          code: 'T_PY_TAB',
+        });
+        while (at() === '\t' || at() === ' ') advance();
+      }
+
+      // Blank or comment-only line: do not change indent stack
+      if (at() === '\n' || at() === '' || at() === '#') {
+        if (at() === '#') {
+          while (i < source.length && at() !== '\n') advance();
+        }
+        if (at() === '\n') {
+          advance();
+          atLineStart = true;
+        }
+        continue;
+      }
+
+      const current = indentStack[indentStack.length - 1]!;
+      if (indent > current) {
+        indentStack.push(indent);
+        emit(PyTokenKind.Indent, '', start);
+      } else {
+        while (indent < indentStack[indentStack.length - 1]!) {
+          indentStack.pop();
+          emit(PyTokenKind.Dedent, '', start);
+        }
+        if (indent !== indentStack[indentStack.length - 1]) {
+          diagnostics.push({
+            message: 'Inconsistent indentation.',
+            line: start.line,
+            column: start.column,
+            code: 'T_PY_INDENT',
+          });
+        }
+      }
+    }
+
+    const ch = at();
+    if (ch === '') break;
+
     if (ch === '#') {
       while (i < source.length && at() !== '\n') advance();
       continue;
@@ -115,13 +192,14 @@ export function lexPython(source: string): PyLexResult {
     }
 
     if (ch === '\n') {
-      const start = { line, column, offset: i };
+      const start = pos();
       advance();
       emit(PyTokenKind.Newline, '\n', start);
+      atLineStart = true;
       continue;
     }
 
-    const start = { line, column, offset: i };
+    const start = pos();
 
     if (ch === '=' && peek() === '=') {
       advance();
@@ -204,9 +282,24 @@ export function lexPython(source: string): PyLexResult {
       emit(PyTokenKind.RParen, ')', start);
       continue;
     }
+    if (ch === '[') {
+      advance();
+      emit(PyTokenKind.LBracket, '[', start);
+      continue;
+    }
+    if (ch === ']') {
+      advance();
+      emit(PyTokenKind.RBracket, ']', start);
+      continue;
+    }
     if (ch === ',') {
       advance();
       emit(PyTokenKind.Comma, ',', start);
+      continue;
+    }
+    if (ch === ':') {
+      advance();
+      emit(PyTokenKind.Colon, ':', start);
       continue;
     }
 
@@ -235,7 +328,11 @@ export function lexPython(source: string): PyLexResult {
         }
       }
       if (at() === quote) advance();
-      emit(PyTokenKind.String, value, start);
+      if (quote === "'" && value.length === 1) {
+        emit(PyTokenKind.Char, value, start);
+      } else {
+        emit(PyTokenKind.String, value, start);
+      }
       continue;
     }
 
@@ -267,6 +364,13 @@ export function lexPython(source: string): PyLexResult {
       code: 'T_PY_LEX',
     });
     advance();
+  }
+
+  // Close remaining indents at EOF
+  const end = pos();
+  while (indentStack.length > 1) {
+    indentStack.pop();
+    emit(PyTokenKind.Dedent, '', end);
   }
 
   tokens.push({

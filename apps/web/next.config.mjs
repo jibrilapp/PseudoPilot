@@ -1,7 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  transpilePackages: [],
+  // Bundle workspace packages (pure TS/JS, safe for the browser).
+  transpilePackages: ['@pseudopilot/translator', '@pseudopilot/language-core'],
 };
 
 export default nextConfig;

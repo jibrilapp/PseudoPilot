@@ -182,6 +182,7 @@ export type Expression =
   | IntegerLiteral
   | RealLiteral
   | StringLiteral
+  | CharLiteral
   | BooleanLiteral
   | Identifier
   | UnaryExpression
@@ -227,6 +228,13 @@ export type RealLiteral = {
 
 export type StringLiteral = {
   readonly kind: 'StringLiteral';
+  readonly value: string;
+  readonly span: SourceSpan;
+};
+
+/** Single character, Cambridge `'A'` form. */
+export type CharLiteral = {
+  readonly kind: 'CharLiteral';
   readonly value: string;
   readonly span: SourceSpan;
 };

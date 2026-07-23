@@ -1,8 +1,8 @@
 # Translation Engine — Architecture (V1)
 
 **Package:** `@pseudopilot/translator`  
-**Dialect version:** Core subset V1 (assignment, I/O, expressions only)  
-**Status:** Implementation started
+**Dialect version:** Core subset V2 (assignment, I/O, expressions, CHAR, array indexes, **IF / ELSE / ELSE IF**)  
+**Status:** IF translation milestone complete
 
 ---
 
@@ -46,7 +46,7 @@ PseudoPilot does **not** translate by string rewrite. The engine is a classic mu
 
 - Deterministic: same input → same IR → same output (stable formatting).
 - Pure library: no I/O, network, or AI.
-- Fail loudly on unsupported constructs (IF, loops, …) with structured diagnostics — never invent control flow.
+- Fail loudly on unsupported constructs (CASE, loops, routines, …) with structured diagnostics — never invent control flow.
 - New languages plug in as **frontend + printer** only; IR and rule registries stay shared.
 
 ---
@@ -56,7 +56,7 @@ PseudoPilot does **not** translate by string rewrite. The engine is a classic mu
 ### Cambridge → IR
 
 1. `parse(source)` from `language-core` yields a `Program`.
-2. A **lowering walker** visits `Program.body` in order (no recursive control-flow yet in V1).
+2. A **lowering walker** visits `Program.body` in order, recursively lowering nested blocks (`IF` then/else bodies).
 3. Each `Statement` is pattern-matched by `kind`:
    - Supported → IR node
    - Unsupported → diagnostic `T_UNSUPPORTED_*`, statement skipped or pipeline `ok = false`
@@ -67,11 +67,12 @@ This is a **single-pass recursive descent over the AST** (visitor by explicit `s
 
 ### Python → IR
 
-1. Python V1 lexer → tokens (including `#` comments and newlines).
-2. Recursive-descent parser builds IR **directly** (no separate long-lived Py AST in V1) for:
+1. Python subset lexer → tokens (including `#` comments, newlines, and `INDENT`/`DEDENT`).
+2. Recursive-descent parser builds IR **directly** (no separate long-lived Py AST) for:
    - `name = expr`
    - `name = input(...)` → `IrInput` (+ optional `IrOutput` for prompt)
    - `print(...)` → `IrOutput`
+   - `if` / `elif` / `else` suites (indented blocks; empty → `pass`)
 3. Same IR printers as the Cambridge path.
 
 ### IR → text
@@ -93,7 +94,7 @@ Rules live as **tables and pure functions**, not as ad-hoc string concat in prin
 | `python/parse.ts` | Python syntax → IR |
 | `*/print.ts` | IR → syntax using the tables |
 
-Adding a new construct (e.g. IF later):
+Adding a new construct (e.g. WHILE later):
 
 1. Extend IR nodes.
 2. Add lowerers in each frontend.
@@ -121,7 +122,7 @@ IR stability is the scalability bottleneck we protect: prefer evolving IR carefu
 
 | Concern | Behaviour |
 | --- | --- |
-| **Indentation** | Regenerated. Cambridge body uses 0 indent at top level (V1 has no blocks). Python uses no indent at top level. Future blocks use configurable `indentSize` (Cambridge 3 / Python 4 defaults per Guide / PEP 8). |
+| **Indentation** | Regenerated. Nested `IF` blocks use 4 spaces per level in both Cambridge and Python printers. Top-level statements have no indent. |
 | **Assignment glyph** | Default Cambridge print uses `←`; option `assignmentArrow: 'ascii'` → `<-`. |
 | **Whitespace inside exprs** | Canonical: `a + b`, `a DIV b` / `a // b` — not source-faithful spacing. |
 | **Comments** | Full-line `//` or `#` comments between statements are captured as **leading trivia** on the following statement (or trailing program trivia). Same-line trailing comments attach as **trailing trivia**. |
@@ -137,11 +138,17 @@ Trivia is stored on IR nodes, not re-derived from target language, so Cambridge 
 | Cambridge | IR | Python |
 | --- | --- | --- |
 | `x ← expr` | `IrAssignment` | `x = expr` |
-| `INPUT x` | `IrInput` | `x = input()` |
+| `A[i] ← expr` / `A[i, j] ← expr` | `IrAssignment` + `IrIndexExpression` | `A[i] = expr` / `A[i][j] = expr` |
+| `INPUT x` / `INPUT A[i]` | `IrInput` | `x = input()` / `A[i] = input()` |
 | `OUTPUT a, b` | `IrOutput` | `print(a, b)` |
 | `DIV` / `MOD` | `//` / `%` | `//` / `%` |
 | `=` `<>` … | `==` `!=` … | `==` `!=` … |
 | `AND` `OR` `NOT` | `and` `or` `not` | `and` `or` `not` |
 | `TRUE`/`FALSE` | bool | `True`/`False` |
+| `'A'` (CHAR) | `IrCharLiteral` | `'A'` |
+| `"text"` (STRING) | `IrStringLiteral` | `"text"` |
+| `IF` / `ELSE IF` / `ELSE` / `ENDIF` | `IrIfStatement` | `if` / `elif` / `else` (+ `pass` for empty body) |
 
-**Explicitly out of scope for V1:** IF, loops, DECLARE, routines, arrays, files, `&`, builtins.
+**INPUT typing:** Without `DECLARE` (out of current subset), Cambridge `INPUT` has no declared type. PseudoPilot maps to Python `input()` (always `str`). Coercion belongs with a later typechecker + DECLARE milestone — not invented here.
+
+**Explicitly out of scope for this subset:** CASE, loops (`WHILE`/`FOR`/`REPEAT`), DECLARE, routines, file I/O, `&` concatenation, builtins, DATE literals.

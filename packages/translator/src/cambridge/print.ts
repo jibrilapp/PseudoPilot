@@ -1,4 +1,5 @@
 import type {
+  IrAssignTarget,
   IrBinaryExpression,
   IrExpression,
   IrProgram,
@@ -9,6 +10,7 @@ import {
   formatBooleanCambridge,
   formatRealLiteral,
   escapeCambridgeString,
+  escapeCambridgeChar,
 } from '../rules/literals.js';
 import {
   BINARY_PRECEDENCE,
@@ -20,6 +22,15 @@ import {
 import { printTrivia } from '../trivia/attach.js';
 import type { AssignmentArrow } from '../types.js';
 
+/** Cambridge Guide typically uses ~3 spaces; we use 4 for clear nesting. */
+const INDENT = '    ';
+
+function printTarget(target: IrAssignTarget): string {
+  if (target.kind === 'IrIdentifier') return target.name;
+  const idxs = target.indices.map((i) => printExpr(i, 0)).join(', ');
+  return `${target.array.name}[${idxs}]`;
+}
+
 function printExpr(expr: IrExpression, parentPrec: number): string {
   switch (expr.kind) {
     case 'IrIntegerLiteral':
@@ -28,10 +39,14 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return formatRealLiteral(expr.value);
     case 'IrStringLiteral':
       return `"${escapeCambridgeString(expr.value)}"`;
+    case 'IrCharLiteral':
+      return `'${escapeCambridgeChar(expr.value)}'`;
     case 'IrBooleanLiteral':
       return formatBooleanCambridge(expr.value);
     case 'IrIdentifier':
       return expr.name;
+    case 'IrIndexExpression':
+      return printTarget(expr);
     case 'IrGroupingExpression':
       return `(${printExpr(expr.expression, 0)})`;
     case 'IrUnaryExpression':
@@ -58,41 +73,89 @@ function printBinary(expr: IrBinaryExpression, parentPrec: number): string {
   const prec = BINARY_PRECEDENCE[expr.operator];
   const op = irBinaryToCambridge(expr.operator);
   const left = printExpr(expr.left, prec);
-  const right = printExpr(expr.right, prec + 1); // left-assoc
-  const gap = isWordOperator(op) ? ` ${op} ` : ` ${op} `;
-  const core = `${left}${gap}${right}`;
+  const right = printExpr(expr.right, prec + 1);
+  const core = `${left} ${op} ${right}`;
   return prec < parentPrec ? `(${core})` : core;
 }
 
-function printStatement(stmt: IrStatement, arrow: string): string[] {
-  const lines: string[] = [...printTrivia(stmt.leadingTrivia, 'slash')];
-  const codes: string[] = [];
+function pad(level: number): string {
+  return INDENT.repeat(level);
+}
+
+function printBlock(
+  statements: readonly IrStatement[],
+  arrow: string,
+  level: number,
+): string[] {
+  const lines: string[] = [];
+  for (const stmt of statements) {
+    lines.push(...printStatement(stmt, arrow, level));
+  }
+  return lines;
+}
+
+function printStatement(
+  stmt: IrStatement,
+  arrow: string,
+  level: number,
+): string[] {
+  const p = pad(level);
+  const lines: string[] = [
+    ...printTrivia(stmt.leadingTrivia, 'slash').map((l) =>
+      l.length === 0 ? l : `${p}${l}`,
+    ),
+  ];
+
   switch (stmt.kind) {
     case 'IrAssignment':
-      codes.push(`${stmt.target.name} ${arrow} ${printExpr(stmt.value, 0)}`);
+      lines.push(`${p}${printTarget(stmt.target)} ${arrow} ${printExpr(stmt.value, 0)}`);
       break;
     case 'IrInput':
-      // Python input(prompt) lowers to IrInput with prompt — emit Guide-faithful pair.
       if (stmt.prompt) {
-        codes.push(`OUTPUT ${printExpr(stmt.prompt, 0)}`);
+        lines.push(`${p}OUTPUT ${printExpr(stmt.prompt, 0)}`);
       }
-      codes.push(`INPUT ${stmt.target.name}`);
+      lines.push(`${p}INPUT ${printTarget(stmt.target)}`);
       break;
     case 'IrOutput':
-      codes.push(`OUTPUT ${stmt.values.map((v) => printExpr(v, 0)).join(', ')}`);
+      lines.push(
+        stmt.values.length === 0
+          ? `${p}OUTPUT`
+          : `${p}OUTPUT ${stmt.values.map((v) => printExpr(v, 0)).join(', ')}`,
+      );
       break;
+    case 'IrIfStatement': {
+      lines.push(`${p}IF ${printExpr(stmt.condition, 0)} THEN`);
+      lines.push(...printBlock(stmt.consequent, arrow, level + 1));
+      for (const clause of stmt.elseIfClauses) {
+        lines.push(`${p}ELSE IF ${printExpr(clause.condition, 0)} THEN`);
+        lines.push(...printBlock(clause.consequent, arrow, level + 1));
+      }
+      if (stmt.alternate !== null) {
+        lines.push(`${p}ELSE`);
+        lines.push(...printBlock(stmt.alternate, arrow, level + 1));
+      }
+      lines.push(`${p}ENDIF`);
+      break;
+    }
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
     }
   }
+
   const trailing = printTrivia(stmt.trailingTrivia, 'slash');
-  if (codes.length === 1 && trailing.length > 0 && trailing[0]?.startsWith('//')) {
-    lines.push(`${codes[0]} ${trailing[0]}`);
-    lines.push(...trailing.slice(1));
+  if (
+    stmt.kind !== 'IrIfStatement' &&
+    trailing.length > 0 &&
+    trailing[0]?.startsWith('//')
+  ) {
+    const last = lines.pop()!;
+    lines.push(`${last} ${trailing[0]}`);
+    lines.push(...trailing.slice(1).map((l) => (l.length === 0 ? l : `${p}${l}`)));
   } else {
-    lines.push(...codes);
-    lines.push(...trailing);
+    lines.push(
+      ...trailing.map((l) => (l.length === 0 ? l : `${p}${l}`)),
+    );
   }
   return lines;
 }
@@ -116,7 +179,7 @@ export function printCambridge(
     ...printTrivia(program.leadingTrivia, 'slash'),
   ];
   for (const stmt of program.body) {
-    lines.push(...printStatement(stmt, arrow));
+    lines.push(...printStatement(stmt, arrow, 0));
   }
   lines.push(...printTrivia(program.trailingTrivia, 'slash'));
   return finalizeOutput(lines);

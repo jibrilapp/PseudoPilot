@@ -44,14 +44,20 @@ describe('lexer', () => {
     ]);
   });
 
-  it('lexes integers, reals, strings, booleans', () => {
-    const { tokens, diagnostics } = lex('42 3.14 "hi" TRUE FALSE');
+  it('lexes integers, reals, strings, chars, booleans', () => {
+    const { tokens, diagnostics } = lex(`42 3.14 "hi" 'A' TRUE FALSE`);
     expect(diagnostics).toEqual([]);
     expect(tokens[0]).toMatchObject({ kind: TokenKind.Integer, literal: 42 });
     expect(tokens[1]).toMatchObject({ kind: TokenKind.Real, literal: 3.14 });
     expect(tokens[2]).toMatchObject({ kind: TokenKind.String, literal: 'hi' });
-    expect(tokens[3]).toMatchObject({ kind: TokenKind.Boolean, literal: true });
-    expect(tokens[4]).toMatchObject({ kind: TokenKind.Boolean, literal: false });
+    expect(tokens[3]).toMatchObject({ kind: TokenKind.Char, literal: 'A' });
+    expect(tokens[4]).toMatchObject({ kind: TokenKind.Boolean, literal: true });
+    expect(tokens[5]).toMatchObject({ kind: TokenKind.Boolean, literal: false });
+  });
+
+  it('rejects empty or multi-char character literals', () => {
+    expect(lex("''").diagnostics.some((d) => d.code === 'E_CHAR_LEN')).toBe(true);
+    expect(lex("'AB'").diagnostics.some((d) => d.code === 'E_CHAR_LEN')).toBe(true);
   });
 
   it('lexes DIV and MOD as keywords', () => {

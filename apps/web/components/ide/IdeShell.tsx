@@ -6,10 +6,10 @@ import {
   DUMMY_CONSOLE,
   DUMMY_FILES,
   DUMMY_PSEUDOCODE,
-  DUMMY_PYTHON,
   DUMMY_TABS,
   DUMMY_VARIABLES,
 } from '@/lib/dummy';
+import { usePseudocodeTranslation } from '@/hooks/usePseudocodeTranslation';
 import { ActivityBar, type ActivityId } from './ActivityBar';
 import { AiAssistantPanel } from './AiAssistantPanel';
 import { ConsolePanel } from './ConsolePanel';
@@ -33,7 +33,22 @@ export function IdeShell() {
   const [mobileView, setMobileView] = useState<MobileView>('editors');
   const [mounted, setMounted] = useState(false);
 
+  const {
+    pseudocode,
+    setPseudocode,
+    python,
+    diagnostics,
+    status: translationStatus,
+  } = usePseudocodeTranslation(DUMMY_PSEUDOCODE);
+
   useEffect(() => setMounted(true), []);
+
+  // Surface diagnostics: keep console open when translation fails.
+  useEffect(() => {
+    if (translationStatus === 'error' && diagnostics.length > 0) {
+      setConsoleOpen(true);
+    }
+  }, [translationStatus, diagnostics.length]);
 
   return (
     <div
@@ -77,8 +92,10 @@ export function IdeShell() {
                 tabs={DUMMY_TABS}
                 activeFileId={activeFileId}
                 onSelectTab={setActiveFileId}
-                pseudocode={DUMMY_PSEUDOCODE}
-                python={DUMMY_PYTHON}
+                pseudocode={pseudocode}
+                python={python}
+                onPseudocodeChange={setPseudocode}
+                translationStatus={translationStatus}
               />
             </div>
             <div
@@ -87,7 +104,9 @@ export function IdeShell() {
                 consoleOpen ? 'h-[168px] opacity-100 lg:h-[188px]' : 'h-0 border-t-0 opacity-0',
               )}
             >
-              {consoleOpen && <ConsolePanel lines={DUMMY_CONSOLE} />}
+              {consoleOpen && (
+                <ConsolePanel lines={DUMMY_CONSOLE} diagnostics={diagnostics} />
+              )}
             </div>
           </main>
 
@@ -146,18 +165,25 @@ export function IdeShell() {
               tabs={DUMMY_TABS}
               activeFileId={activeFileId}
               onSelectTab={setActiveFileId}
-              pseudocode={DUMMY_PSEUDOCODE}
-              python={DUMMY_PYTHON}
+              pseudocode={pseudocode}
+              python={python}
+              onPseudocodeChange={setPseudocode}
+              translationStatus={translationStatus}
               stacked
             />
           )}
-          {mobileView === 'console' && <ConsolePanel lines={DUMMY_CONSOLE} />}
+          {mobileView === 'console' && (
+            <ConsolePanel lines={DUMMY_CONSOLE} diagnostics={diagnostics} />
+          )}
           {mobileView === 'ai' && <AiAssistantPanel messages={DUMMY_AI} />}
           {mobileView === 'vars' && <VariableInspector rows={DUMMY_VARIABLES} />}
         </div>
       </div>
 
-      <StatusBar />
+      <StatusBar
+        translationStatus={translationStatus}
+        diagnosticCount={diagnostics.length}
+      />
       <MobileDock active={mobileView} onChange={setMobileView} />
     </div>
   );

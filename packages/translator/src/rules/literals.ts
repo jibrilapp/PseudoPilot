@@ -8,9 +8,22 @@ export function escapePythonString(value: string): string {
     .replace(/\t/g, '\\t');
 }
 
+/** Escape a character for Python/Cambridge single-quoted CHAR literals. */
+export function escapePythonChar(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t');
+}
+
 /** Escape a string for Cambridge double-quoted literals. */
 export function escapeCambridgeString(value: string): string {
   return escapePythonString(value);
+}
+
+export function escapeCambridgeChar(value: string): string {
+  return escapePythonChar(value);
 }
 
 export function formatRealLiteral(value: number): string {

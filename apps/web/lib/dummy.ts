@@ -70,47 +70,28 @@ export const DUMMY_TABS: EditorTab[] = [
   },
 ];
 
-export const DUMMY_PSEUDOCODE = `DECLARE Count : INTEGER
-DECLARE Total : INTEGER
-DECLARE Name : STRING
+export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes IF)
+Count ← 2 + 3 * 4
+IF Count > 10 THEN
+    OUTPUT "big", Count
+ELSE
+    OUTPUT "small", Count
+ENDIF
+`;
 
-PROCEDURE Greeting(Name : STRING)
-    OUTPUT "Hello, ", Name
-ENDPROCEDURE
-
-Total ← 0
-FOR Count ← 1 TO 5
-    Total ← Total + Count
-    OUTPUT Count, " → running total = ", Total
-NEXT Count
-
-CALL Greeting("PseudoPilot")
-OUTPUT "Done."`;
-
-export const DUMMY_PYTHON = `count: int
-total: int
-name: str
-
-def greeting(name: str) -> None:
-    print(f"Hello, {name}")
-
-total = 0
-for count in range(1, 6):
-    total = total + count
-    print(f"{count} → running total = {total}")
-
-greeting("PseudoPilot")
-print("Done.")`;
+export const DUMMY_PYTHON = `Count = 2 + 3 * 4
+if Count > 10:
+    print("big", Count)
+else:
+    print("small", Count)
+`;
 
 export const DUMMY_CONSOLE: ConsoleLine[] = [
-  { id: 'c1', kind: 'info', text: 'PseudoPilot runtime (preview) — dummy output' },
-  { id: 'c2', kind: 'out', text: '1 → running total = 1' },
-  { id: 'c3', kind: 'out', text: '2 → running total = 3' },
-  { id: 'c4', kind: 'out', text: '3 → running total = 6' },
-  { id: 'c5', kind: 'out', text: '4 → running total = 10' },
-  { id: 'c6', kind: 'out', text: '5 → running total = 15' },
-  { id: 'c7', kind: 'out', text: 'Hello, PseudoPilot' },
-  { id: 'c8', kind: 'out', text: 'Done.' },
+  {
+    id: 'c1',
+    kind: 'info',
+    text: 'Live translation active — edit pseudocode to update Python',
+  },
 ];
 
 export const DUMMY_VARIABLES: VariableRow[] = [

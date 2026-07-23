@@ -1,7 +1,9 @@
 import {
   emptyTrivia,
   withEmptyTrivia,
+  type IrAssignTarget,
   type IrBinaryOp,
+  type IrElseIfClause,
   type IrExpression,
   type IrProgram,
   type IrStatement,
@@ -11,7 +13,6 @@ import { attachTriviaToStatements } from '../trivia/attach.js';
 import type { TranslateDiagnostic } from '../types.js';
 import { lexPython, PyTokenKind, type PyToken } from './lexer.js';
 
-/** Minimal source span for trivia attachment (1-based line/column). */
 type StmtSpan = {
   readonly start: { offset: number; line: number; column: number };
   readonly end: { offset: number; line: number; column: number };
@@ -34,7 +35,10 @@ class PyParser {
   private i = 0;
   readonly diagnostics: TranslateDiagnostic[] = [];
 
-  constructor(tokens: PyToken[], lexDiagnostics: { message: string; line: number; column: number; code: string }[]) {
+  constructor(
+    tokens: PyToken[],
+    lexDiagnostics: { message: string; line: number; column: number; code: string }[],
+  ) {
     this.tokens = tokens;
     for (const d of lexDiagnostics) {
       this.diagnostics.push({
@@ -57,19 +61,23 @@ class PyParser {
         this.advance();
         continue;
       }
-      // Reject indentation: if line starts with unexpected structure we already skipped ws.
-      const startTok = this.peek();
+      if (this.check(PyTokenKind.Dedent)) {
+        this.advance();
+        continue;
+      }
       const stmt = this.parseStatement();
       if (stmt) {
         paired.push(stmt);
       } else {
-        // Recovery: skip to newline
-        while (!this.check(PyTokenKind.Eof) && !this.check(PyTokenKind.Newline)) {
+        while (
+          !this.check(PyTokenKind.Eof) &&
+          !this.check(PyTokenKind.Newline) &&
+          !this.check(PyTokenKind.Dedent)
+        ) {
           this.advance();
         }
       }
       this.skipNewlines();
-      void startTok;
     }
 
     if (!preserveTrivia) {
@@ -90,38 +98,164 @@ class PyParser {
   }
 
   private parseStatement(): { stmt: IrStatement; span: StmtSpan } | null {
+    if (this.check(PyTokenKind.If)) {
+      return this.parseIf();
+    }
     if (this.check(PyTokenKind.Print)) {
       return this.parsePrint();
+    }
+    if (this.check(PyTokenKind.Pass)) {
+      this.advance();
+      return null;
+    }
+
+    if (this.isUnsupportedBlockKeyword()) {
+      this.error(
+        `Translator does not support '${this.peek().lexeme}' (IF only among control-flow).`,
+        this.peek(),
+      );
+      return null;
     }
 
     if (this.check(PyTokenKind.Identifier)) {
       const nameTok = this.advance();
+      let target: IrAssignTarget = {
+        kind: 'IrIdentifier',
+        name: nameTok.lexeme,
+      };
+      let endTok = nameTok;
+
+      if (this.match(PyTokenKind.LBracket)) {
+        const indices: IrExpression[] = [];
+        do {
+          const idx = this.parseExpression();
+          if (!idx) return null;
+          indices.push(idx);
+          this.expect(PyTokenKind.RBracket);
+        } while (this.match(PyTokenKind.LBracket));
+        target = {
+          kind: 'IrIndexExpression',
+          array: { kind: 'IrIdentifier', name: nameTok.lexeme },
+          indices,
+        };
+        endTok = this.previous();
+      }
+
       if (!this.match(PyTokenKind.Equal)) {
-        this.error('Expected "=" after identifier (V1 only supports assignments and print).', nameTok);
+        this.error(
+          'Expected "=" after assignment target (subset supports assignments, print, and if).',
+          this.peek(),
+        );
         return null;
       }
-      // input() special form
+
       if (this.check(PyTokenKind.Input)) {
-        return this.parseInputAssign(nameTok);
+        return this.parseInputAssign(nameTok, target);
       }
+
       const value = this.parseExpression();
       if (!value) return null;
-      const end = this.previous();
+      endTok = this.previous();
       return {
-        span: tokenSpan(nameTok, end),
+        span: tokenSpan(nameTok, endTok),
         stmt: withEmptyTrivia({
           kind: 'IrAssignment' as const,
-          target: { kind: 'IrIdentifier', name: nameTok.lexeme },
+          target,
           value,
         }),
       };
     }
 
-    this.error('Expected assignment or print statement.', this.peek());
+    this.error('Expected assignment, print, or if statement.', this.peek());
     return null;
   }
 
-  private parseInputAssign(nameTok: PyToken): { stmt: IrStatement; span: StmtSpan } | null {
+  private parseIf(): { stmt: IrStatement; span: StmtSpan } | null {
+    const ifTok = this.expect(PyTokenKind.If)!;
+    const condition = this.parseExpression();
+    if (!condition) return null;
+    this.expect(PyTokenKind.Colon);
+    this.skipNewlines();
+    const consequent = this.parseSuite();
+
+    const elseIfClauses: IrElseIfClause[] = [];
+    while (this.check(PyTokenKind.Elif)) {
+      this.advance();
+      const c = this.parseExpression();
+      if (!c) return null;
+      this.expect(PyTokenKind.Colon);
+      this.skipNewlines();
+      elseIfClauses.push({
+        kind: 'IrElseIfClause',
+        condition: c,
+        consequent: this.parseSuite(),
+      });
+    }
+
+    let alternate: IrStatement[] | null = null;
+    if (this.check(PyTokenKind.Else)) {
+      this.advance();
+      this.expect(PyTokenKind.Colon);
+      this.skipNewlines();
+      alternate = this.parseSuite();
+    }
+
+    return {
+      span: tokenSpan(ifTok, this.previous()),
+      stmt: withEmptyTrivia({
+        kind: 'IrIfStatement' as const,
+        condition,
+        consequent,
+        elseIfClauses,
+        alternate,
+      }),
+    };
+  }
+
+  /** Parse an indented block; `pass` alone yields an empty statement list. */
+  private parseSuite(): IrStatement[] {
+    if (!this.match(PyTokenKind.Indent)) {
+      // Single-line suite not supported in this subset
+      this.error('Expected indented block after ":".', this.peek());
+      return [];
+    }
+
+    const body: IrStatement[] = [];
+    let onlyPass = true;
+
+    while (!this.check(PyTokenKind.Dedent) && !this.check(PyTokenKind.Eof)) {
+      this.skipNewlines();
+      if (this.check(PyTokenKind.Dedent) || this.check(PyTokenKind.Eof)) break;
+
+      if (this.check(PyTokenKind.Pass)) {
+        this.advance();
+        this.skipNewlines();
+        continue;
+      }
+
+      onlyPass = false;
+      const stmt = this.parseStatement();
+      if (stmt) body.push(stmt.stmt);
+      else {
+        while (
+          !this.check(PyTokenKind.Eof) &&
+          !this.check(PyTokenKind.Newline) &&
+          !this.check(PyTokenKind.Dedent)
+        ) {
+          this.advance();
+        }
+      }
+      this.skipNewlines();
+    }
+
+    this.expect(PyTokenKind.Dedent);
+    return onlyPass && body.length === 0 ? [] : body;
+  }
+
+  private parseInputAssign(
+    nameTok: PyToken,
+    target: IrAssignTarget,
+  ): { stmt: IrStatement; span: StmtSpan } | null {
     this.expect(PyTokenKind.Input);
     this.expect(PyTokenKind.LParen);
     let prompt: IrExpression | null = null;
@@ -134,7 +268,7 @@ class PyParser {
       span: tokenSpan(nameTok, rparen ?? this.previous()),
       stmt: withEmptyTrivia({
         kind: 'IrInput' as const,
-        target: { kind: 'IrIdentifier', name: nameTok.lexeme },
+        target,
         prompt,
       }),
     };
@@ -174,12 +308,7 @@ class PyParser {
     while (this.match(PyTokenKind.Or)) {
       const right = this.parseAnd();
       if (!right) return null;
-      left = {
-        kind: 'IrBinaryExpression',
-        operator: 'or',
-        left,
-        right,
-      };
+      left = { kind: 'IrBinaryExpression', operator: 'or', left, right };
     }
     return left;
   }
@@ -190,12 +319,7 @@ class PyParser {
     while (this.match(PyTokenKind.And)) {
       const right = this.parseNot();
       if (!right) return null;
-      left = {
-        kind: 'IrBinaryExpression',
-        operator: 'and',
-        left,
-        right,
-      };
+      left = { kind: 'IrBinaryExpression', operator: 'and', left, right };
     }
     return left;
   }
@@ -235,7 +359,9 @@ class PyParser {
     let left = this.parseMul();
     if (!left) return null;
     while (this.check(PyTokenKind.Plus) || this.check(PyTokenKind.Minus)) {
-      const op: IrBinaryOp = this.match(PyTokenKind.Plus) ? '+' : (this.advance(), '-');
+      const op: IrBinaryOp = this.match(PyTokenKind.Plus)
+        ? '+'
+        : (this.advance(), '-');
       const right = this.parseMul();
       if (!right) return null;
       left = { kind: 'IrBinaryExpression', operator: op, left, right };
@@ -269,7 +395,9 @@ class PyParser {
 
   private parseUnary(): IrExpression | null {
     if (this.check(PyTokenKind.Plus) || this.check(PyTokenKind.Minus)) {
-      const op: IrUnaryOp = this.match(PyTokenKind.Plus) ? '+' : (this.advance(), '-');
+      const op: IrUnaryOp = this.match(PyTokenKind.Plus)
+        ? '+'
+        : (this.advance(), '-');
       const argument = this.parseUnary();
       if (!argument) return null;
       return { kind: 'IrUnaryExpression', operator: op, argument };
@@ -284,6 +412,9 @@ class PyParser {
     if (this.match(PyTokenKind.Real)) {
       return { kind: 'IrRealLiteral', value: Number(this.previous().lexeme) };
     }
+    if (this.match(PyTokenKind.Char)) {
+      return { kind: 'IrCharLiteral', value: this.previous().lexeme };
+    }
     if (this.match(PyTokenKind.String)) {
       return { kind: 'IrStringLiteral', value: this.previous().lexeme };
     }
@@ -295,10 +426,26 @@ class PyParser {
     }
     if (this.match(PyTokenKind.Identifier)) {
       const name = this.previous().lexeme;
-      // Reject bare calls other than handled at statement level
       if (this.check(PyTokenKind.LParen)) {
-        this.error(`V1 translator does not support call '${name}(...).'`, this.previous());
+        this.error(
+          `Translator does not support call '${name}(...).'`,
+          this.previous(),
+        );
         return null;
+      }
+      if (this.match(PyTokenKind.LBracket)) {
+        const indices: IrExpression[] = [];
+        do {
+          const idx = this.parseExpression();
+          if (!idx) return null;
+          indices.push(idx);
+          this.expect(PyTokenKind.RBracket);
+        } while (this.match(PyTokenKind.LBracket));
+        return {
+          kind: 'IrIndexExpression',
+          array: { kind: 'IrIdentifier', name },
+          indices,
+        };
       }
       return { kind: 'IrIdentifier', name };
     }
@@ -308,21 +455,15 @@ class PyParser {
       this.expect(PyTokenKind.RParen);
       return { kind: 'IrGroupingExpression', expression: inner };
     }
-    // Reject if/while/for keywords used as identifiers
-    if (this.isBlockKeyword()) {
-      this.error(
-        'V1 translator does not support control-flow statements (if/for/while/...).',
-        this.peek(),
-      );
-      return null;
-    }
     this.error('Expected expression.', this.peek());
     return null;
   }
 
-  private isBlockKeyword(): boolean {
+  private isUnsupportedBlockKeyword(): boolean {
     const lex = this.peek().lexeme;
-    return ['if', 'elif', 'else', 'for', 'while', 'def', 'class', 'return', 'pass'].includes(lex);
+    return ['for', 'while', 'def', 'class', 'return', 'match', 'with'].includes(
+      lex,
+    );
   }
 
   private skipNewlines(): void {
@@ -375,39 +516,8 @@ export function parsePythonToIr(
   source: string,
   preserveTrivia: boolean,
 ): { ir: IrProgram; diagnostics: TranslateDiagnostic[] } {
-  // Reject indented blocks early (lines starting with whitespace after a newline with content)
-  if (hasIndentedBlock(source)) {
-    return {
-      ir: {
-        kind: 'IrProgram',
-        body: [],
-        leadingTrivia: emptyTrivia(),
-        trailingTrivia: emptyTrivia(),
-      },
-      diagnostics: [
-        {
-          severity: 'error',
-          code: 'T_PY_INDENT',
-          message:
-            'V1 translator does not support indented Python blocks (if/for/while/def). Use top-level statements only.',
-        },
-      ],
-    };
-  }
-
   const lexed = lexPython(source);
   const parser = new PyParser(lexed.tokens, lexed.diagnostics);
   const ir = parser.parseProgram(source, preserveTrivia);
   return { ir, diagnostics: parser.diagnostics };
-}
-
-function hasIndentedBlock(source: string): boolean {
-  const lines = source.split(/\r?\n/);
-  for (const line of lines) {
-    if (line.length === 0) continue;
-    if (/^[ \t]+/.test(line) && line.trim().length > 0 && !line.trim().startsWith('#')) {
-      return true;
-    }
-  }
-  return false;
 }
