@@ -96,7 +96,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | --- | --- | --- | --- | --- | --- |
 | `FOR` / `TO` / `NEXT` | ❌ | ❌ | ❌ | ❌ | ❌ |
 | `FOR` … `STEP` | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `WHILE` / `DO` / `ENDWHILE` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `WHILE` / `DO` / `ENDWHILE` | ✅ | ❌ | ❌ | ✅ | ✅ |
 | `REPEAT` / `UNTIL` | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ---
@@ -169,14 +169,14 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | Parser coverage checklist | ✅ |
 | IDE Monaco binding to parser | ❌ |
 | Interpreter / debugger | ❌ |
-| Pseudocode ↔ Python translator | 🟡 | Assign/I/O/expr/CHAR/index/**IF**; no loops/CASE/routines |
+| Pseudocode ↔ Python translator | 🟡 | Assign/I/O/expr/CHAR/index/IF/**WHILE**; no FOR/REPEAT/CASE/routines |
 | AI coach grounded on this dialect | ❌ |
 
 ---
 
 ## Recommended implementation order (pre-translator)
 
-1. ❌ Iteration: `WHILE`, `REPEAT`, `FOR` (+ `STEP`, `DO` keyword)
+1. 🟡 Iteration: `WHILE` ✅; still ❌ `REPEAT`, `FOR` (+ `STEP`)
 2. ❌ String `&` + builtins `LENGTH` / `RIGHT` / `MID` / `LCASE` / `UCASE`
 3. ❌ Numeric builtins `INT` / `RAND`
 4. ❌ `CONSTANT`, CHAR literals, strict REAL literals

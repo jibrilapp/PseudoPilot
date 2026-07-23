@@ -18,6 +18,7 @@ export enum PyTokenKind {
   If = 'If',
   Elif = 'Elif',
   Else = 'Else',
+  While = 'While',
   Pass = 'Pass',
   Equal = 'Equal',
   EqEq = 'EqEq',
@@ -59,6 +60,7 @@ const KEYWORDS: ReadonlyMap<string, PyTokenKind> = new Map([
   ['if', PyTokenKind.If],
   ['elif', PyTokenKind.Elif],
   ['else', PyTokenKind.Else],
+  ['while', PyTokenKind.While],
   ['pass', PyTokenKind.Pass],
 ]);
 
@@ -85,7 +87,7 @@ function isDigit(ch: string): boolean {
 }
 
 /**
- * Python subset lexer with INDENT / DEDENT for if/elif/else blocks.
+ * Python subset lexer with INDENT / DEDENT for if/while blocks.
  * Still rejects tabs in indentation (spaces only).
  */
 export function lexPython(source: string): PyLexResult {

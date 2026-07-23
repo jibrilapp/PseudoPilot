@@ -91,9 +91,9 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | `TO` | FOR upper bound | 🟡 | Lexed; loop ❌ |
 | `STEP` | FOR increment | ❌ | Not yet a keyword in lexer |
 | `NEXT` | End FOR | 🟡 | Lexed; loop ❌ |
-| `WHILE` | Pre-condition loop | 🟡 | Lexed; statement ❌ |
-| `DO` | `WHILE … DO` | ❌ | Not in lexer (Cambridge uses `DO`) |
-| `ENDWHILE` | End WHILE | 🟡 | Lexed; statement ❌ |
+| `WHILE` | Pre-condition loop | ✅ |
+| `DO` | Optional after WHILE condition | ✅ |
+| `ENDWHILE` | End WHILE | ✅ |
 | `REPEAT` | Post-condition loop | 🟡 | Lexed; statement ❌ |
 | `UNTIL` | REPEAT terminator | 🟡 | Lexed; statement ❌ |
 
@@ -534,9 +534,13 @@ UNTIL <condition>
 
 Body runs at least once; exit when condition is `TRUE`. Parser ❌
 
-### 9.3 WHILE … DO … ENDWHILE (pre-condition)
+### 9.3 WHILE … [DO] … ENDWHILE (pre-condition)
 
 ```
+WHILE <condition>
+    <statements>
+ENDWHILE
+
 WHILE <condition> DO
     <statements>
 ENDWHILE
@@ -544,10 +548,10 @@ ENDWHILE
 
 | Rule | Detail | Parser |
 | --- | --- | --- |
-| Condition tested before body | Skip body if initially false | ❌ |
-| `DO` keyword | Required in PseudoPilot (matches exams) | ❌ |
+| Condition tested before body | Skip body if initially false | ✅ |
+| `DO` keyword | **Optional** (Teacher Guide omits; exams often include) | ✅ |
 
-> Note: Some PDF extractions of the teacher guide omit `DO` in the metalanguage line; exam papers and the standard index use `WHILE … DO … ENDWHILE`. PseudoPilot **requires** `DO`.
+> PseudoPilot accepts both forms. The Cambridge printer emits `DO` for a stable exam-style surface.
 
 ---
 
@@ -670,10 +674,10 @@ Cambridge’s guide is a **style guide for exams**, not a formal grammar. Ambigu
 
 | Source | Stance |
 | --- | --- |
-| Some guide metalanguage | Condition placement unclear in text extracts |
-| Exam practice | `WHILE <cond> DO` … `ENDWHILE` |
+| Teacher Guide examples | Often `WHILE <cond>` … `ENDWHILE` (no `DO`) |
+| Exam practice | Frequently `WHILE <cond> DO` … `ENDWHILE` |
 
-**PseudoPilot:** `DO` is **required**.
+**PseudoPilot:** `DO` is **optional** on input. Printers emit `DO`.
 
 ### 13.3 `NEXT` identifier
 

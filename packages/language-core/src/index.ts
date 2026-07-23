@@ -18,6 +18,7 @@ export type {
   InputStatement,
   OutputStatement,
   IfStatement,
+  WhileStatement,
   ElseIfClause,
   DeclareStatement,
   ProcedureDeclaration,

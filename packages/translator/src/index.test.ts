@@ -168,6 +168,91 @@ ENDIF
     expect(result.diagnostics.length).toBeGreaterThan(0);
   });
 
+  it('translates simple WHILE', () => {
+    const result = translatePseudocodeToPython(`
+WHILE Count < 10
+    Count ← Count + 1
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'while Count < 10:\n    Count = Count + 1\n',
+    );
+  });
+
+  it('translates WHILE with DO', () => {
+    const result = translatePseudocodeToPython(`
+WHILE Count < 10 DO
+    OUTPUT Count
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'while Count < 10:\n    print(Count)\n',
+    );
+  });
+
+  it('translates nested WHILE', () => {
+    const result = translatePseudocodeToPython(`
+WHILE I < 2
+    WHILE J < 2
+        OUTPUT I, J
+    ENDWHILE
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'while I < 2:\n    while J < 2:\n        print(I, J)\n',
+    );
+  });
+
+  it('translates WHILE containing IF', () => {
+    const result = translatePseudocodeToPython(`
+WHILE X > 0
+    IF X = 1 THEN
+        OUTPUT "one"
+    ENDIF
+    X ← X - 1
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'while X > 0:\n    if X == 1:\n        print("one")\n    X = X - 1\n',
+    );
+  });
+
+  it('translates IF containing WHILE', () => {
+    const result = translatePseudocodeToPython(`
+IF Run = TRUE THEN
+    WHILE N > 0
+        N ← N - 1
+    ENDWHILE
+ENDIF
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'if Run == True:\n    while N > 0:\n        N = N - 1\n',
+    );
+  });
+
+  it('translates empty WHILE body to pass', () => {
+    const result = translatePseudocodeToPython(`
+WHILE FALSE
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('while False:\n    pass\n');
+  });
+
+  it('reports diagnostics for invalid WHILE syntax', () => {
+    const result = translatePseudocodeToPython(`
+WHILE TRUE
+    OUTPUT 1
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+  });
+
   it('rejects DECLARE', () => {
     const result = translatePseudocodeToPython(`DECLARE X : INTEGER\n`);
     expect(result.ok).toBe(false);
@@ -292,13 +377,15 @@ x = 1
     expect(result.code).toContain('x ← 1');
   });
 
-  it('rejects while (not IF) indented control flow', () => {
+  it('translates while loops', () => {
     const result = translatePythonToPseudocode(`
 while True:
     print(1)
 `);
-    expect(result.ok).toBe(false);
-    expect(result.diagnostics.some((d) => d.code === 'T_PY_PARSE')).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'WHILE TRUE DO\n    OUTPUT 1\nENDWHILE\n',
+    );
   });
 
   it('translates simple if', () => {
@@ -366,6 +453,61 @@ if x > 5
 `);
     expect(result.ok).toBe(false);
     expect(result.diagnostics.length).toBeGreaterThan(0);
+  });
+
+  it('translates nested while', () => {
+    const result = translatePythonToPseudocode(`
+while i < 2:
+    while j < 2:
+        print(i, j)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'WHILE i < 2 DO\n    WHILE j < 2 DO\n        OUTPUT i, j\n    ENDWHILE\nENDWHILE\n',
+    );
+  });
+
+  it('translates while containing if', () => {
+    const result = translatePythonToPseudocode(`
+while x > 0:
+    if x == 1:
+        print("one")
+    x = x - 1
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'WHILE x > 0 DO\n    IF x = 1 THEN\n        OUTPUT "one"\n    ENDIF\n    x ← x - 1\nENDWHILE\n',
+    );
+  });
+
+  it('translates if containing while', () => {
+    const result = translatePythonToPseudocode(`
+if run:
+    while n > 0:
+        n = n - 1
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'IF run THEN\n    WHILE n > 0 DO\n        n ← n - 1\n    ENDWHILE\nENDIF\n',
+    );
+  });
+
+  it('translates empty while body (pass)', () => {
+    const result = translatePythonToPseudocode(`
+while False:
+    pass
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('WHILE FALSE DO\nENDWHILE\n');
+  });
+
+  it('rejects for loops', () => {
+    const result = translatePythonToPseudocode(`
+for i in range(3):
+    print(i)
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'T_PY_PARSE')).toBe(true);
   });
 
   it('translates CHAR and indexed assignment', () => {
@@ -451,6 +593,18 @@ OUTPUT Scores[1], Letter
 ELSE
     OUTPUT 0
 ENDIF
+`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(norm(source));
+  });
+
+  it('round-trips WHILE', () => {
+    const source = `WHILE Count < 10 DO
+    Count ← Count + 1
+ENDWHILE
 `;
     const py = translatePseudocodeToPython(source);
     expect(py.ok).toBe(true);

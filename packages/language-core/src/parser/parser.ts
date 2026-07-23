@@ -24,6 +24,7 @@ import type {
   TypeName,
   TypeNameKind,
   TypeReference,
+  WhileStatement,
   WriteFileStatement,
 } from '../ast/nodes.js';
 import { isFileModeToken, isTypeToken, TokenKind, type Token } from '../lexer/token.js';
@@ -79,6 +80,7 @@ export class Parser {
     if (token.kind === TokenKind.Input) return this.parseInput();
     if (token.kind === TokenKind.Output) return this.parseOutput();
     if (token.kind === TokenKind.If) return this.parseIf();
+    if (token.kind === TokenKind.While) return this.parseWhile();
     if (token.kind === TokenKind.Declare) return this.parseDeclare();
     if (token.kind === TokenKind.Call) return this.parseCallStatement();
     if (token.kind === TokenKind.Return) return this.parseReturn();
@@ -556,6 +558,39 @@ export class Parser {
     };
   }
 
+  /**
+   * WHILE <condition> [DO] NL <block> ENDWHILE
+   * `DO` optional — Guide form omits it; exam form often includes it.
+   */
+  private parseWhile(): WhileStatement | null {
+    const startToken = this.cursor.advance(); // WHILE
+    const condition = this.expressions().parseExpression();
+    if (!condition) return null;
+
+    this.skipNewlines();
+    const hasDo = this.cursor.match(TokenKind.Do);
+    this.skipNewlines();
+
+    const body = this.parseBlock(() => this.cursor.check(TokenKind.Endwhile));
+
+    if (!this.cursor.match(TokenKind.Endwhile)) {
+      pushError(
+        this.diagnostics,
+        "Expected 'ENDWHILE' to close WHILE statement.",
+        this.cursor.peek(),
+      );
+      return null;
+    }
+
+    return {
+      kind: 'WhileStatement',
+      condition,
+      body,
+      hasDo,
+      span: span(startToken.span.start, this.cursor.previous().span.end),
+    };
+  }
+
   private parseElseIfClause(): ElseIfClause | null {
     const elseToken = this.cursor.advance();
     this.cursor.advance(); // IF
@@ -711,6 +746,7 @@ export class Parser {
       this.cursor.check(
         TokenKind.Else,
         TokenKind.Endif,
+        TokenKind.Endwhile,
         TokenKind.Endprocedure,
         TokenKind.Endfunction,
       )
@@ -745,6 +781,8 @@ function isUnexpectedStructuralKeyword(kind: TokenKind): boolean {
     kind === TokenKind.Then ||
     kind === TokenKind.Else ||
     kind === TokenKind.Endif ||
+    kind === TokenKind.Do ||
+    kind === TokenKind.Endwhile ||
     kind === TokenKind.Endprocedure ||
     kind === TokenKind.Endfunction ||
     kind === TokenKind.Returns
@@ -753,8 +791,6 @@ function isUnexpectedStructuralKeyword(kind: TokenKind): boolean {
 
 function isReservedFutureKeyword(kind: TokenKind): boolean {
   return (
-    kind === TokenKind.While ||
-    kind === TokenKind.Endwhile ||
     kind === TokenKind.For ||
     kind === TokenKind.To ||
     kind === TokenKind.Next ||

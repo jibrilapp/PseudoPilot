@@ -18,8 +18,8 @@ function parseOk(source: string): Program {
 }
 
 describe('edge cases — loops (WHILE / FOR / REPEAT)', () => {
-  describe('desired successful parses (known failing — not implemented)', () => {
-    it.fails('1. minimal WHILE … ENDWHILE', () => {
+  describe('WHILE — now implemented', () => {
+    it('1. minimal WHILE … ENDWHILE', () => {
       expect(parseOk(`
 WHILE Count < 10
     Count ← Count + 1
@@ -27,14 +27,14 @@ ENDWHILE
 `).body[0]?.kind).toBe('WhileStatement');
     });
 
-    it.fails('2. WHILE with empty body', () => {
+    it('2. WHILE with empty body', () => {
       expect(parseOk(`
 WHILE FALSE
 ENDWHILE
 `).body[0]?.kind).toBe('WhileStatement');
     });
 
-    it.fails('3. WHILE condition with AND/OR/NOT', () => {
+    it('3. WHILE condition with AND/OR/NOT', () => {
       parseOk(`
 WHILE NOT Done AND Tries < 3 OR Flag = TRUE
     OUTPUT Tries
@@ -42,7 +42,7 @@ ENDWHILE
 `);
     });
 
-    it.fails('4. nested WHILE', () => {
+    it('4. nested WHILE', () => {
       parseOk(`
 WHILE I < 3
     WHILE J < 3
@@ -54,7 +54,7 @@ ENDWHILE
 `);
     });
 
-    it.fails('5. WHILE containing IF', () => {
+    it('5. WHILE containing IF', () => {
       parseOk(`
 WHILE X > 0
     IF X = 1 THEN
@@ -65,7 +65,7 @@ ENDWHILE
 `);
     });
 
-    it.fails('6. IF containing WHILE', () => {
+    it('6. IF containing WHILE', () => {
       parseOk(`
 IF Run = TRUE THEN
     WHILE N > 0
@@ -75,7 +75,7 @@ ENDIF
 `);
     });
 
-    it.fails('7. WHILE inside PROCEDURE with locals', () => {
+    it('7. WHILE inside PROCEDURE with locals', () => {
       parseOk(`
 PROCEDURE CountDown(N : INTEGER)
     DECLARE I : INTEGER
@@ -87,7 +87,9 @@ PROCEDURE CountDown(N : INTEGER)
 ENDPROCEDURE
 `);
     });
+  });
 
+  describe('desired successful parses (known failing — FOR / REPEAT)', () => {
     it.fails('8. minimal FOR … NEXT', () => {
       expect(parseOk(`
 FOR I ← 1 TO 10
@@ -181,7 +183,7 @@ UNTIL Finished = TRUE
 `);
     });
 
-    it.fails('18. lowercase while/for/repeat keywords', () => {
+    it('18. lowercase while keywords', () => {
       parseOk(`
 while x < 3
     x ← x + 1
@@ -189,7 +191,7 @@ endwhile
 `);
     });
 
-    it.fails('19. WHILE with function-call condition', () => {
+    it('19. WHILE with function-call condition', () => {
       parseOk(`
 FUNCTION More() RETURNS BOOLEAN
     RETURN TRUE
@@ -227,10 +229,10 @@ ENDWHILE
       expect(parse(`UNTIL TRUE`).ok).toBe(false);
     });
 
-    it('24. rejects WHILE keyword today via E_UNSUPPORTED', () => {
+    it('24. accepts WHILE (no longer E_UNSUPPORTED)', () => {
       const result = parse(`WHILE TRUE\nOUTPUT 1\nENDWHILE`);
-      expect(result.ok).toBe(false);
-      expect(result.diagnostics.some((d) => d.code === 'E_UNSUPPORTED')).toBe(true);
+      expect(result.ok).toBe(true);
+      expect(result.ast.body[0]?.kind).toBe('WhileStatement');
     });
 
     it('25. rejects FOR keyword today via E_UNSUPPORTED', () => {

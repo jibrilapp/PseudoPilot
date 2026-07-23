@@ -26,6 +26,7 @@ export type Statement =
   | InputStatement
   | OutputStatement
   | IfStatement
+  | WhileStatement
   | DeclareStatement
   | ProcedureDeclaration
   | FunctionDeclaration
@@ -144,6 +145,19 @@ export type ElseIfClause = {
   readonly kind: 'ElseIfClause';
   readonly condition: Expression;
   readonly consequent: Statement[];
+  readonly span: SourceSpan;
+};
+
+/**
+ * WHILE … [DO] … ENDWHILE
+ * `DO` is optional (Teacher Guide omits it; many exams include it).
+ */
+export type WhileStatement = {
+  readonly kind: 'WhileStatement';
+  readonly condition: Expression;
+  readonly body: Statement[];
+  /** True when source included an explicit `DO` after the condition. */
+  readonly hasDo: boolean;
   readonly span: SourceSpan;
 };
 

@@ -70,20 +70,25 @@ export const DUMMY_TABS: EditorTab[] = [
   },
 ];
 
-export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes IF)
-Count ← 2 + 3 * 4
-IF Count > 10 THEN
-    OUTPUT "big", Count
-ELSE
-    OUTPUT "small", Count
-ENDIF
+export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes WHILE + IF)
+Count ← 0
+WHILE Count < 3
+    IF Count = 1 THEN
+        OUTPUT "mid", Count
+    ELSE
+        OUTPUT Count
+    ENDIF
+    Count ← Count + 1
+ENDWHILE
 `;
 
-export const DUMMY_PYTHON = `Count = 2 + 3 * 4
-if Count > 10:
-    print("big", Count)
-else:
-    print("small", Count)
+export const DUMMY_PYTHON = `Count = 0
+while Count < 3:
+    if Count == 1:
+        print("mid", Count)
+    else:
+        print(Count)
+    Count = Count + 1
 `;
 
 export const DUMMY_CONSOLE: ConsoleLine[] = [

@@ -101,6 +101,9 @@ class PyParser {
     if (this.check(PyTokenKind.If)) {
       return this.parseIf();
     }
+    if (this.check(PyTokenKind.While)) {
+      return this.parseWhile();
+    }
     if (this.check(PyTokenKind.Print)) {
       return this.parsePrint();
     }
@@ -111,7 +114,7 @@ class PyParser {
 
     if (this.isUnsupportedBlockKeyword()) {
       this.error(
-        `Translator does not support '${this.peek().lexeme}' (IF only among control-flow).`,
+        `Translator does not support '${this.peek().lexeme}' (IF/WHILE only among control-flow).`,
         this.peek(),
       );
       return null;
@@ -143,7 +146,7 @@ class PyParser {
 
       if (!this.match(PyTokenKind.Equal)) {
         this.error(
-          'Expected "=" after assignment target (subset supports assignments, print, and if).',
+          'Expected "=" after assignment target (subset supports assignments, print, if, and while).',
           this.peek(),
         );
         return null;
@@ -166,8 +169,25 @@ class PyParser {
       };
     }
 
-    this.error('Expected assignment, print, or if statement.', this.peek());
+    this.error('Expected assignment, print, if, or while statement.', this.peek());
     return null;
+  }
+
+  private parseWhile(): { stmt: IrStatement; span: StmtSpan } | null {
+    const whileTok = this.expect(PyTokenKind.While)!;
+    const condition = this.parseExpression();
+    if (!condition) return null;
+    this.expect(PyTokenKind.Colon);
+    this.skipNewlines();
+    const body = this.parseSuite();
+    return {
+      span: tokenSpan(whileTok, this.previous()),
+      stmt: withEmptyTrivia({
+        kind: 'IrWhileStatement' as const,
+        condition,
+        body,
+      }),
+    };
   }
 
   private parseIf(): { stmt: IrStatement; span: StmtSpan } | null {
@@ -461,9 +481,7 @@ class PyParser {
 
   private isUnsupportedBlockKeyword(): boolean {
     const lex = this.peek().lexeme;
-    return ['for', 'while', 'def', 'class', 'return', 'match', 'with'].includes(
-      lex,
-    );
+    return ['for', 'def', 'class', 'return', 'match', 'with'].includes(lex);
   }
 
   private skipNewlines(): void {

@@ -135,6 +135,11 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       }
       break;
     }
+    case 'IrWhileStatement': {
+      lines.push(`${p}while ${printExpr(stmt.condition, 0)}:`);
+      lines.push(...printBlock(stmt.body, level + 1));
+      break;
+    }
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
@@ -144,6 +149,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
   const trailing = printTrivia(stmt.trailingTrivia, 'hash');
   if (
     stmt.kind !== 'IrIfStatement' &&
+    stmt.kind !== 'IrWhileStatement' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('#')
   ) {

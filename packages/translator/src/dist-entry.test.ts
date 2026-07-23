@@ -65,4 +65,29 @@ ENDIF
     expect(norm(back.code)).toContain('IF x > 5 THEN');
     expect(norm(back.code)).toContain('ENDIF');
   });
+
+  it('translates WHILE (Count < 10) — IDE smoke', () => {
+    const result = translatePseudocodeToPython(`WHILE Count < 10
+    OUTPUT Count
+    Count ← Count + 1
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(norm(result.code)).toBe(
+      'while Count < 10:\n    print(Count)\n    Count = Count + 1\n',
+    );
+  });
+
+  it('does not emit T_UNSUPPORTED for valid WHILE', () => {
+    const result = translatePseudocodeToPython(`
+WHILE TRUE DO
+    OUTPUT 1
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(
+      result.diagnostics.some((d) => d.code.startsWith('T_UNSUPPORTED')),
+    ).toBe(false);
+  });
 });

@@ -137,6 +137,12 @@ function printStatement(
       lines.push(`${p}ENDIF`);
       break;
     }
+    case 'IrWhileStatement': {
+      lines.push(`${p}WHILE ${printExpr(stmt.condition, 0)} DO`);
+      lines.push(...printBlock(stmt.body, arrow, level + 1));
+      lines.push(`${p}ENDWHILE`);
+      break;
+    }
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
@@ -146,6 +152,7 @@ function printStatement(
   const trailing = printTrivia(stmt.trailingTrivia, 'slash');
   if (
     stmt.kind !== 'IrIfStatement' &&
+    stmt.kind !== 'IrWhileStatement' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('//')
   ) {

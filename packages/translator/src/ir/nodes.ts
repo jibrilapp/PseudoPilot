@@ -16,7 +16,12 @@ export type IrProgram = {
   readonly trailingTrivia: IrTrivia[];
 };
 
-export type IrStatement = IrAssignment | IrInput | IrOutput | IrIfStatement;
+export type IrStatement =
+  | IrAssignment
+  | IrInput
+  | IrOutput
+  | IrIfStatement
+  | IrWhileStatement;
 
 type WithTrivia = {
   readonly leadingTrivia: IrTrivia[];
@@ -60,6 +65,13 @@ export type IrElseIfClause = {
   readonly kind: 'IrElseIfClause';
   readonly condition: IrExpression;
   readonly consequent: IrStatement[];
+};
+
+/** WHILE … ENDWHILE — maps to Python while. */
+export type IrWhileStatement = WithTrivia & {
+  readonly kind: 'IrWhileStatement';
+  readonly condition: IrExpression;
+  readonly body: IrStatement[];
 };
 
 export type IrExpression =

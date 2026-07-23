@@ -205,6 +205,18 @@ function lowerStatement(
         }),
       };
     }
+    case 'WhileStatement': {
+      const condition = lowerExpression(stmt.condition, diagnostics);
+      if (!condition) return null;
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrWhileStatement' as const,
+          condition,
+          body: lowerBlock(stmt.body, diagnostics),
+        }),
+      };
+    }
     case 'DeclareStatement':
       diagnostics.push({
         severity: 'error',

@@ -33,8 +33,8 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `FOR` (file mode connector) | ✅ |
 | `TO` `NEXT` | 🟡 | Lexed; unused by statements |
 | `STEP` | ❌ | Not in lexer |
-| `DO` | ❌ | Not in lexer |
-| `WHILE` `ENDWHILE` | 🟡 | Lexed; statements ❌ |
+| `DO` | ✅ | Optional after WHILE condition |
+| `WHILE` `ENDWHILE` | ✅ | Optional `DO` accepted |
 | `REPEAT` `UNTIL` | 🟡 | Lexed; statements ❌ |
 | `PROCEDURE` `ENDPROCEDURE` | ✅ |
 | `FUNCTION` `ENDFUNCTION` `RETURNS` `RETURN` | ✅ |
@@ -161,7 +161,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | --- | --- |
 | `FOR` / `TO` / `NEXT` | ❌ |
 | `STEP` | ❌ |
-| `WHILE` / `DO` / `ENDWHILE` | ❌ |
+| `WHILE` / `DO` / `ENDWHILE` | ✅ |
 | `REPEAT` / `UNTIL` | ❌ |
 
 ---
@@ -215,7 +215,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `FOR` file vs loop | 🟡 | File path ✅; loop ❌ |
 | `←` / `<-` | ✅ |
 | Case-insensitive keywords | ✅ |
-| Require `DO` on WHILE | ❌ | Not implemented yet |
+| Optional `DO` on WHILE | ✅ | Accepted when present; not required |
 | Require `NEXT` binder match | ❌ | Not implemented yet |
 
 ---

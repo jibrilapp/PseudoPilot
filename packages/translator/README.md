@@ -7,9 +7,10 @@ Bidirectional **Cambridge 9618 pseudocode ↔ Python** translation via a canonic
 | Supported | Not supported |
 | --- | --- |
 | Assignment (`←` / `=`) including `A[i]` / `A[i, j]` | CASE |
-| `INPUT` / `OUTPUT` (incl. indexed targets) | Loops (`WHILE` / `FOR` / `REPEAT`) |
+| `INPUT` / `OUTPUT` (incl. indexed targets) | `FOR` / `REPEAT` |
 | **`IF` / `THEN` / `ELSE` / `ELSE IF` / `ENDIF`** | DECLARE, routines |
-| Literals: integer, real, string, char, boolean | File I/O, builtins, `&` |
+| **`WHILE` / `[DO]` / `ENDWHILE`** | File I/O, builtins, `&` |
+| Literals: integer, real, string, char, boolean | |
 | Variables + arithmetic / relational / logical exprs | |
 
 ### IF mapping
@@ -24,6 +25,16 @@ ENDIF
 
 Empty branches → Python `pass`. `ELSE IF` ↔ `elif`. Nested IF preserved with indentation (4 spaces).
 
+### WHILE mapping
+
+```
+WHILE Count < 10 DO        while Count < 10:
+    Count ← Count + 1          Count = Count + 1
+ENDWHILE
+```
+
+`DO` is optional on input (Teacher Guide omits it); Cambridge print always emits `DO`. Nested WHILE and WHILE↔IF nesting are supported. Empty body → Python `pass`.
+
 ## Usage
 
 ```ts
@@ -33,11 +44,10 @@ import {
 } from '@pseudopilot/translator';
 
 const py = translatePseudocodeToPython(`
-IF Score >= 50 THEN
-    OUTPUT "Pass"
-ELSE
-    OUTPUT "Fail"
-ENDIF
+WHILE Count < 10
+    OUTPUT Count
+    Count ← Count + 1
+ENDWHILE
 `);
 ```
 
