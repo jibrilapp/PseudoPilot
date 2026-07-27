@@ -2,7 +2,7 @@
 
 Cambridge pseudocode language core: lexer → parser → AST.
 
-**Version:** `0.8.0`
+**Version:** `0.10.0`
 
 ## Supported (parser)
 
@@ -13,16 +13,16 @@ Cambridge pseudocode language core: lexer → parser → AST.
 - `WHILE` / `[DO]` / `ENDWHILE`, `REPEAT` / `UNTIL`, `FOR` / `TO` / `[STEP]` / `NEXT`
 - `CASE OF` / `OTHERWISE` / `ENDCASE`
 - `PROCEDURE` / `ENDPROCEDURE`, `FUNCTION` / `RETURNS` / `ENDFUNCTION`
-- Parameters, `DECLARE` locals/globals, `CALL`, `RETURN`, function `CallExpression`
+- Parameters, `DECLARE` locals/globals, **`CONSTANT` literal bindings**, `CALL`, `RETURN`, function `CallExpression`
 - Arrays: `ARRAY[l:u] OF Type`, indexing `Name[i]` / `Name[i, j]`
 - Files: `OPENFILE` / `READFILE` / `WRITEFILE` / `CLOSEFILE`, modes `READ|WRITE|APPEND`, `EOF(…)`
 - Arithmetic, relational (`= <> < <= > >=`), and logical (`AND` `OR` `NOT`) expressions
 - Literals: integer, real, string, char (`'A'`), boolean
 - Identifiers (case-insensitive keywords)
 
-Not yet (parser): `CONSTANT`, `BYREF`/`BYVAL`, `&` concatenation, DATE, OOP/Extended, many builtins.
+Not yet (parser): `BYREF`/`BYVAL`, `&` concatenation, DATE, OOP/Extended, many builtins.
 
-> **Note:** Parsing DECLARE/files does not imply the translator lowers them yet. See `@pseudopilot/translator` and `docs/language/TRANSLATION.md`.
+> **Note:** Parsing DECLARE/CONSTANT/files does not imply every construct is lowered by the translator. See `@pseudopilot/translator` and `docs/language/TRANSLATION.md`.
 
 ## Limits
 
@@ -34,7 +34,9 @@ Not yet (parser): `CONSTANT`, `BYREF`/`BYVAL`, `&` concatenation, DATE, OOP/Exte
 import { parse } from '@pseudopilot/language-core';
 
 const { ast, ok, diagnostics } = parse(`
-Count ← 2 + 3 * 4
+DECLARE Count : INTEGER
+CONSTANT Limit = 10
+Count ← Limit
 OUTPUT Count
 `);
 ```

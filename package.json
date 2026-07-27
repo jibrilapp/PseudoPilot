@@ -1,7 +1,7 @@
 {
   "name": "pseudopilot",
   "private": true,
-  "version": "0.8.0",
+  "version": "0.10.0",
   "license": "MIT",
   "description": "Cambridge 9618 pseudocode ↔ Python translator, language core, and student IDE (experimental 0.x).",
   "packageManager": "pnpm@9.15.0",

@@ -5,6 +5,7 @@ import type {
   ArrayDimension,
   ArrayType,
   CloseFileStatement,
+  ConstantStatement,
   DeclareStatement,
   ElseIfClause,
   Expression,
@@ -90,6 +91,7 @@ export class Parser {
     if (token.kind === TokenKind.Repeat) return this.parseRepeat();
     if (token.kind === TokenKind.For) return this.parseFor();
     if (token.kind === TokenKind.Declare) return this.parseDeclare();
+    if (token.kind === TokenKind.Constant) return this.parseConstant();
     if (token.kind === TokenKind.Call) return this.parseCallStatement();
     if (token.kind === TokenKind.Return) return this.parseReturn();
     if (token.kind === TokenKind.Procedure) return this.parseProcedure();
@@ -303,6 +305,123 @@ export class Parser {
       typeRef,
       span: span(startToken.span.start, typeRef.span.end),
     };
+  }
+
+  /**
+   * CONSTANT Name = <literal>
+   * Accepts optional unary +/- before numeric literals.
+   */
+  private parseConstant(): ConstantStatement | null {
+    const startToken = this.cursor.advance(); // CONSTANT
+    const name = this.expressions().parseIdentifier();
+    if (!name) return null;
+
+    if (!this.cursor.match(TokenKind.Equal)) {
+      pushError(
+        this.diagnostics,
+        "Expected '=' after CONSTANT name.",
+        this.cursor.peek(),
+        'E_CONSTANT_EQUALS',
+      );
+      return null;
+    }
+
+    const value = this.parseConstantLiteral();
+    if (!value) return null;
+
+    return {
+      kind: 'ConstantStatement',
+      name,
+      value,
+      span: span(startToken.span.start, value.span.end),
+    };
+  }
+
+  /** Literal (or +/- number) for CONSTANT — rejects general expressions. */
+  private parseConstantLiteral(): Expression | null {
+    const token = this.cursor.peek();
+
+    if (token.kind === TokenKind.Plus || token.kind === TokenKind.Minus) {
+      const opTok = this.cursor.advance();
+      const numTok = this.cursor.peek();
+      if (numTok.kind !== TokenKind.Integer && numTok.kind !== TokenKind.Real) {
+        pushError(
+          this.diagnostics,
+          'CONSTANT value must be a literal (integer, real, string, char, or boolean).',
+          numTok,
+          'E_CONSTANT_LITERAL',
+        );
+        return null;
+      }
+      this.cursor.advance();
+      const argument =
+        numTok.kind === TokenKind.Integer
+          ? {
+              kind: 'IntegerLiteral' as const,
+              value: numTok.literal as number,
+              span: numTok.span,
+            }
+          : {
+              kind: 'RealLiteral' as const,
+              value: numTok.literal as number,
+              span: numTok.span,
+            };
+      return {
+        kind: 'UnaryExpression',
+        operator: opTok.kind === TokenKind.Minus ? '-' : '+',
+        argument,
+        span: span(opTok.span.start, numTok.span.end),
+      };
+    }
+
+    if (token.kind === TokenKind.Integer) {
+      this.cursor.advance();
+      return {
+        kind: 'IntegerLiteral',
+        value: token.literal as number,
+        span: token.span,
+      };
+    }
+    if (token.kind === TokenKind.Real) {
+      this.cursor.advance();
+      return {
+        kind: 'RealLiteral',
+        value: token.literal as number,
+        span: token.span,
+      };
+    }
+    if (token.kind === TokenKind.String) {
+      this.cursor.advance();
+      return {
+        kind: 'StringLiteral',
+        value: token.literal as string,
+        span: token.span,
+      };
+    }
+    if (token.kind === TokenKind.Char) {
+      this.cursor.advance();
+      return {
+        kind: 'CharLiteral',
+        value: token.literal as string,
+        span: token.span,
+      };
+    }
+    if (token.kind === TokenKind.Boolean) {
+      this.cursor.advance();
+      return {
+        kind: 'BooleanLiteral',
+        value: token.literal as boolean,
+        span: token.span,
+      };
+    }
+
+    pushError(
+      this.diagnostics,
+      'CONSTANT value must be a literal (integer, real, string, char, or boolean).',
+      token,
+      'E_CONSTANT_LITERAL',
+    );
+    return null;
   }
 
   private parseTypeReference(): TypeReference | null {
@@ -930,6 +1049,7 @@ export class Parser {
         TokenKind.Repeat,
         TokenKind.For,
         TokenKind.Declare,
+        TokenKind.Constant,
         TokenKind.Call,
         TokenKind.Return,
         TokenKind.Procedure,

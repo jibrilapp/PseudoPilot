@@ -21,7 +21,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Keyword | Status |
 | --- | --- |
 | `DECLARE` | ✅ |
-| `CONSTANT` | ❌ |
+| `CONSTANT` | ✅ |
 | `INTEGER` `REAL` `CHAR` `STRING` `BOOLEAN` | ✅ |
 | `DATE` | ❌ |
 | `ARRAY` `OF` | ✅ |
@@ -63,7 +63,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `=` `<>` `<` `<=` `>` `>=` | ✅ |
 | `AND` `OR` `NOT` | ✅ |
 | Parentheses | ✅ |
-| `&` concatenation | ❌ |
+| `&` concatenation | ✅ |
 | `.` member | ❌ |
 | `^` pointer | ❌ |
 
@@ -88,12 +88,13 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Feature | Status |
 | --- | --- |
 | `EOF(file)` | ✅ |
-| `LENGTH` | ❌ |
-| `RIGHT` | ❌ |
-| `MID` | ❌ |
-| `LCASE` / `UCASE` | ❌ |
-| `INT` / `RAND` | ❌ |
-| Exam-insert registry | ❌ |
+| `LENGTH` | ✅ | soft CallExpression |
+| `LEFT` | ✅ | PseudoPilot Core |
+| `RIGHT` | ✅ |
+| `MID` | ✅ |
+| `LCASE` / `UCASE` | ✅ |
+| `INT` / `RAND` | ✅ |
+| Exam-insert registry | 🟡 | Core registry shipped; packs later |
 
 ---
 
@@ -175,7 +176,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Call primary / postfix | ✅ |
 | Index postfix | ✅ |
 | Precedence (Pratt) | ✅ |
-| `&` concat | ❌ |
+| `&` concat | ✅ |
 | Member / pointer expressions | ❌ |
 
 ---
@@ -230,8 +231,9 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Arrays + text files | ✅ |
 | Loops | 🟡 |
 | CASE | ✅ |
-| String/numeric builtins (except EOF) | ❌ |
-| Constants / BYREF / CHAR lit / DATE | ❌ |
+| String/numeric builtins (except EOF) | ✅ |
+| CONSTANT (literal) | ✅ |
+| BYREF / DATE | ❌ |
 | Extended TYPE / OOP / random files | ❌ |
 
-**Estimate:** Core Paper 2 surface covers selection, iteration, PROCEDURE/CALL, and **FUNCTION/RETURN** translation; still blocked on DECLARE, BYREF, and several builtins.
+**Estimate:** Core Paper 2 surface covers selection, iteration, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE/CONSTANT, Core builtins + `&`. Semantic analysis is **not** parser coverage — see [`SEMANTICS.md`](./SEMANTICS.md) / `@pseudopilot/checker`. Still blocked on BYREF, file I/O runtime, and exam-insert packs.

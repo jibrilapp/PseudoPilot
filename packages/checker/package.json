@@ -1,19 +1,19 @@
 {
-  "name": "@pseudopilot/translator",
-  "version": "0.11.0",
+  "name": "@pseudopilot/checker",
+  "version": "0.10.0",
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "AST-to-AST bidirectional translation between pseudocode and Python via canonical IR.",
+  "description": "Cambridge 9618 semantic checker: scopes, symbols, types, and diagnostics over language-core AST.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jibrilapp/PseudoPilot.git",
-    "directory": "packages/translator"
+    "directory": "packages/checker"
   },
   "bugs": {
     "url": "https://github.com/jibrilapp/PseudoPilot/issues"
   },
-  "homepage": "https://github.com/jibrilapp/PseudoPilot/tree/main/packages/translator",
+  "homepage": "https://github.com/jibrilapp/PseudoPilot/tree/main/packages/checker",
   "engines": {
     "node": ">=22.0.0"
   },
@@ -34,7 +34,6 @@
     "clean": "rm -rf dist .turbo coverage"
   },
   "dependencies": {
-    "@pseudopilot/checker": "workspace:*",
     "@pseudopilot/language-core": "workspace:*"
   },
   "devDependencies": {

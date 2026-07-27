@@ -18,6 +18,7 @@ import {
   isPythonSyntaxKeyword,
   isPythonTranslatorBuiltin,
 } from '../rules/python-names.js';
+import { cambridgeBuiltinFromPythonCall } from '../builtins/emit.js';
 import { lexPython, PyTokenKind, type PyToken } from './lexer.js';
 
 type StmtSpan = {
@@ -110,7 +111,7 @@ class PyParser {
     if (!preserveTrivia) {
       return {
         kind: 'IrProgram',
-        body: paired.map((p) => p.stmt),
+        body: refineDeclareConstantFromTrivia(paired.map((p) => p.stmt)),
         leadingTrivia: emptyTrivia(),
         trailingTrivia: emptyTrivia(),
       };
@@ -118,7 +119,7 @@ class PyParser {
     const attached = attachTriviaToStatements(source, 'hash', paired);
     return {
       kind: 'IrProgram',
-      body: attached.body,
+      body: refineDeclareConstantFromTrivia(attached.body),
       leadingTrivia: attached.leadingTrivia,
       trailingTrivia: attached.trailingTrivia,
     };
@@ -129,6 +130,20 @@ class PyParser {
     allowDef = false,
     allowReturn = false,
   ): ParsedStatement | null {
+    // Ignore `import random` (and similar) emitted for RAND.
+    if (
+      this.check(PyTokenKind.Identifier) &&
+      this.peek().lexeme === 'import'
+    ) {
+      while (
+        !this.check(PyTokenKind.Newline) &&
+        !this.check(PyTokenKind.Eof) &&
+        !this.check(PyTokenKind.Dedent)
+      ) {
+        this.advance();
+      }
+      return null;
+    }
     if (this.check(PyTokenKind.If)) {
       return this.parseIf(allowBreak, allowReturn);
     }
@@ -189,6 +204,11 @@ class PyParser {
         return this.parseCallStatement(nameTok);
       }
 
+      // Annotated declare: Name: type  or  Name: list[type]
+      if (this.match(PyTokenKind.Colon)) {
+        return this.parseAnnotatedDeclare(nameTok);
+      }
+
       let target: IrAssignTarget = {
         kind: 'IrIdentifier',
         name: nameTok.lexeme,
@@ -213,7 +233,7 @@ class PyParser {
 
       if (!this.match(PyTokenKind.Equal)) {
         this.error(
-          'Expected "=" after assignment target (subset supports assignments, print, if, while, for, match, and def).',
+          'Expected "=" after assignment target (subset supports assignments, annotations, print, if, while, for, match, and def).',
           this.peek(),
         );
         return null;
@@ -274,6 +294,96 @@ class PyParser {
         kind: 'IrCallStatement' as const,
         callee: nameTok.lexeme,
         args,
+      }),
+    };
+  }
+
+  /**
+   * Parse PseudoPilot-emitted annotation declare:
+   *   Name: int|float|str|bool
+   *   Name: list[int|float|str|bool]
+   * Array bounds / CHAR tag come from trailing comments (post-pass).
+   */
+  private parseAnnotatedDeclare(nameTok: PyToken): ParsedStatement | null {
+    if (isPythonSyntaxKeyword(nameTok.lexeme)) {
+      this.error(
+        `Name '${nameTok.lexeme}' is a Python keyword and cannot map to DECLARE.`,
+        nameTok,
+      );
+      return null;
+    }
+
+    if (!this.check(PyTokenKind.Identifier)) {
+      this.error('Expected type name after ":".', this.peek());
+      return null;
+    }
+    const typeTok = this.advance();
+
+    // list[T]
+    if (typeTok.lexeme === 'list' && this.match(PyTokenKind.LBracket)) {
+      if (!this.check(PyTokenKind.Identifier)) {
+        this.error('Expected element type inside list[…].', this.peek());
+        return null;
+      }
+      const elemTok = this.advance();
+      const elem = pythonTypeToIr(elemTok.lexeme);
+      if (!elem) {
+        this.error(
+          'Unsupported list element type (use int, float, str, bool).',
+          elemTok,
+        );
+        return null;
+      }
+      this.expect(PyTokenKind.RBracket);
+      if (this.check(PyTokenKind.Equal)) {
+        this.error(
+          'Annotated list declare must not include "= …" (PseudoPilot emits annotation-only DECLARE).',
+          this.peek(),
+        );
+        return null;
+      }
+      // Placeholder 1:1 bounds; refined from `# ARRAY[…]` trailing comment.
+      return {
+        span: tokenSpan(nameTok, this.previous()),
+        stmt: withEmptyTrivia({
+          kind: 'IrDeclareStatement' as const,
+          names: [nameTok.lexeme],
+          typeRef: {
+            kind: 'IrArrayType' as const,
+            dimensions: [
+              {
+                kind: 'IrArrayDimension' as const,
+                lower: { kind: 'IrIntegerLiteral' as const, value: 1 },
+                upper: { kind: 'IrIntegerLiteral' as const, value: 1 },
+              },
+            ],
+            elementType: elem,
+          },
+        }),
+      };
+    }
+
+    const mapped = pythonTypeToIr(typeTok.lexeme);
+    if (!mapped) {
+      this.error(
+        'Unsupported type annotation (use int, float, str, bool, or list[…]).',
+        typeTok,
+      );
+      return null;
+    }
+    if (this.check(PyTokenKind.Equal)) {
+      this.error(
+        'Annotated declare must not include "= …" (PseudoPilot emits annotation-only DECLARE).',
+        this.peek(),
+      );
+      return null;
+    }
+    return {
+      span: tokenSpan(nameTok, typeTok),
+      stmt: withEmptyTrivia({
+        kind: 'IrDeclareStatement' as const,
+        names: [nameTok.lexeme],
+        typeRef: { kind: 'IrScalarType' as const, name: mapped },
       }),
     };
   }
@@ -1002,11 +1112,16 @@ class PyParser {
     let left = this.parseMul();
     if (!left) return null;
     while (this.check(PyTokenKind.Plus) || this.check(PyTokenKind.Minus)) {
-      const op: IrBinaryOp = this.match(PyTokenKind.Plus)
-        ? '+'
-        : (this.advance(), '-');
+      const isPlus = this.match(PyTokenKind.Plus);
+      if (!isPlus) this.advance();
       const right = this.parseMul();
       if (!right) return null;
+      const op: IrBinaryOp =
+        isPlus && (looksStringyExpr(left) || looksStringyExpr(right))
+          ? '&'
+          : isPlus
+            ? '+'
+            : '-';
       left = { kind: 'IrBinaryExpression', operator: op, left, right };
     }
     return left;
@@ -1031,6 +1146,19 @@ class PyParser {
       }
       const right = this.parseUnary();
       if (!right) return null;
+      if (
+        op === '*' &&
+        left.kind === 'IrCallExpression' &&
+        left.callee === 'RAND' &&
+        left.args.length === 0
+      ) {
+        left = {
+          kind: 'IrCallExpression',
+          callee: 'RAND',
+          args: [right],
+        };
+        continue;
+      }
       left = { kind: 'IrBinaryExpression', operator: op, left, right };
     }
     return left;
@@ -1097,23 +1225,47 @@ class PyParser {
           this.error("Expected ')' after call arguments.", this.peek());
           return null;
         }
-        return { kind: 'IrCallExpression', callee: name, args };
+        const callee = cambridgeBuiltinFromPythonCall(name) ?? name;
+        return { kind: 'IrCallExpression', callee, args };
       }
-      if (this.match(PyTokenKind.LBracket)) {
-        const indices: IrExpression[] = [];
-        do {
-          const idx = this.parseExpression();
-          if (!idx) return null;
-          indices.push(idx);
-          this.expect(PyTokenKind.RBracket);
-        } while (this.match(PyTokenKind.LBracket));
-        return {
-          kind: 'IrIndexExpression',
-          array: { kind: 'IrIdentifier', name },
-          indices,
-        };
+
+      let expr: IrExpression = { kind: 'IrIdentifier', name };
+
+      // Attribute: x.lower() / x.upper()
+      while (this.match(PyTokenKind.Dot)) {
+        if (!this.match(PyTokenKind.Identifier)) {
+          this.error('Expected attribute name after ".".', this.peek());
+          return null;
+        }
+        const method = this.previous().lexeme;
+        if (!this.match(PyTokenKind.LParen) || !this.match(PyTokenKind.RParen)) {
+          this.error('Only zero-argument method calls (.lower/.upper) are supported.', this.peek());
+          return null;
+        }
+        if (method === 'lower') {
+          expr = { kind: 'IrCallExpression', callee: 'LCASE', args: [expr] };
+        } else if (method === 'upper') {
+          expr = { kind: 'IrCallExpression', callee: 'UCASE', args: [expr] };
+        } else if (
+          expr.kind === 'IrIdentifier' &&
+          expr.name === 'random' &&
+          method === 'random'
+        ) {
+          // Placeholder completed by `* x` → RAND(x)
+          expr = { kind: 'IrCallExpression', callee: 'RAND', args: [] };
+        } else {
+          this.error(`Unsupported method '.${method}()'.`, this.previous());
+          return null;
+        }
       }
-      return { kind: 'IrIdentifier', name };
+
+      // Index / slice: Name[i] or Name[:n] / Name[-n:] / Name[a:b]
+      while (this.match(PyTokenKind.LBracket)) {
+        const sliced = this.parseIndexOrSlice(expr);
+        if (!sliced) return null;
+        expr = sliced;
+      }
+      return expr;
     }
     if (this.match(PyTokenKind.LParen)) {
       const inner = this.parseExpression();
@@ -1122,6 +1274,92 @@ class PyParser {
       return { kind: 'IrGroupingExpression', expression: inner };
     }
     this.error('Expected expression.', this.peek());
+    return null;
+  }
+
+  private parseIndexOrSlice(base: IrExpression): IrExpression | null {
+    // [:n] → LEFT
+    if (this.match(PyTokenKind.Colon)) {
+      const n = this.parseExpression();
+      if (!n) return null;
+      if (!this.match(PyTokenKind.RBracket)) {
+        this.error("Expected ']' after slice.", this.peek());
+        return null;
+      }
+      return { kind: 'IrCallExpression', callee: 'LEFT', args: [base, n] };
+    }
+
+    const first = this.parseExpression();
+    if (!first) return null;
+
+    if (this.match(PyTokenKind.Colon)) {
+      // [ -n : ] → RIGHT
+      if (this.match(PyTokenKind.RBracket)) {
+        if (
+          first.kind === 'IrUnaryExpression' &&
+          first.operator === '-'
+        ) {
+          return {
+            kind: 'IrCallExpression',
+            callee: 'RIGHT',
+            args: [base, unwrapGrouping(first.argument)],
+          };
+        }
+        this.error(
+          'Slice [n:] is only supported as [-n:] (Cambridge RIGHT).',
+          this.previous(),
+        );
+        return null;
+      }
+      const second = this.parseExpression();
+      if (!second) return null;
+      if (!this.match(PyTokenKind.RBracket)) {
+        this.error("Expected ']' after slice.", this.peek());
+        return null;
+      }
+      const mid = tryMidFromSlice(base, first, second);
+      if (mid) return mid;
+      // Fallback: MID(S, low+1, high-low)
+      return {
+        kind: 'IrCallExpression',
+        callee: 'MID',
+        args: [
+          base,
+          {
+            kind: 'IrBinaryExpression',
+            operator: '+',
+            left: first,
+            right: { kind: 'IrIntegerLiteral', value: 1 },
+          },
+          {
+            kind: 'IrBinaryExpression',
+            operator: '-',
+            left: second,
+            right: first,
+          },
+        ],
+      };
+    }
+
+    if (!this.match(PyTokenKind.RBracket)) {
+      this.error("Expected ']' after index.", this.peek());
+      return null;
+    }
+    if (base.kind === 'IrIdentifier') {
+      return {
+        kind: 'IrIndexExpression',
+        array: base,
+        indices: [first],
+      };
+    }
+    if (base.kind === 'IrIndexExpression') {
+      return {
+        kind: 'IrIndexExpression',
+        array: base.array,
+        indices: [...base.indices, first],
+      };
+    }
+    this.error('Array indexing is only supported on identifiers.', this.previous());
     return null;
   }
 
@@ -1189,6 +1427,259 @@ function pythonTypeToIr(name: string): IrTypeName | null {
     default:
       return null;
   }
+}
+
+function isLiteralExpr(expr: IrExpression): boolean {
+  if (
+    expr.kind === 'IrIntegerLiteral' ||
+    expr.kind === 'IrRealLiteral' ||
+    expr.kind === 'IrStringLiteral' ||
+    expr.kind === 'IrCharLiteral' ||
+    expr.kind === 'IrBooleanLiteral'
+  ) {
+    return true;
+  }
+  if (
+    expr.kind === 'IrUnaryExpression' &&
+    (expr.operator === '+' || expr.operator === '-') &&
+    (expr.argument.kind === 'IrIntegerLiteral' ||
+      expr.argument.kind === 'IrRealLiteral')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function commentTexts(
+  trivia: readonly { kind: string; text?: string }[],
+): string[] {
+  return trivia
+    .filter((t) => t.kind === 'Comment')
+    .map((t) => (t.text ?? '').trim());
+}
+
+function parseArrayBoundExpr(
+  text: string,
+): IrExpression | null {
+  const t = text.trim();
+  if (/^-?\d+$/.test(t)) {
+    return { kind: 'IrIntegerLiteral', value: Number(t) };
+  }
+  // Cambridge / PseudoPilot identifiers in ARRAY bounds comments.
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) {
+    return { kind: 'IrIdentifier', name: t };
+  }
+  return null;
+}
+
+function parseArrayBoundsComment(
+  text: string,
+): { lower: IrExpression; upper: IrExpression }[] | null {
+  const m = /^ARRAY\[(.+)\]$/i.exec(text.trim());
+  if (!m) return null;
+  const parts = m[1]!.split(',').map((p) => p.trim());
+  const dims: { lower: IrExpression; upper: IrExpression }[] = [];
+  for (const part of parts) {
+    const dm = /^(.+?)\s*:\s*(.+)$/.exec(part);
+    if (!dm) return null;
+    const lower = parseArrayBoundExpr(dm[1]!);
+    const upper = parseArrayBoundExpr(dm[2]!);
+    if (!lower || !upper) return null;
+    dims.push({ lower, upper });
+  }
+  return dims.length > 0 ? dims : null;
+}
+
+/**
+ * Apply PseudoPilot trailing-comment conventions after trivia attach:
+ * - `# CONSTANT` on literal assignment → IrConstantStatement
+ * - `# CHAR` on str declare → CHAR
+ * - `# ARRAY[l:u, …]` on list declare → real bounds
+ */
+function refineDeclareConstantFromTrivia(
+  statements: readonly IrStatement[],
+): IrStatement[] {
+  return statements.map((stmt) => refineOne(stmt));
+}
+
+function refineOne(stmt: IrStatement): IrStatement {
+  if (
+    stmt.kind === 'IrProcedureDeclaration' ||
+    stmt.kind === 'IrFunctionDeclaration'
+  ) {
+    return { ...stmt, body: stmt.body.map((s) => refineOne(s)) };
+  }
+  if (stmt.kind === 'IrIfStatement') {
+    return {
+      ...stmt,
+      consequent: stmt.consequent.map((s) => refineOne(s)),
+      elseIfClauses: stmt.elseIfClauses.map((c) => ({
+        ...c,
+        consequent: c.consequent.map((s) => refineOne(s)),
+      })),
+      alternate: stmt.alternate
+        ? stmt.alternate.map((s) => refineOne(s))
+        : null,
+    };
+  }
+  if (
+    stmt.kind === 'IrWhileStatement' ||
+    stmt.kind === 'IrRepeatStatement' ||
+    stmt.kind === 'IrForStatement'
+  ) {
+    return { ...stmt, body: stmt.body.map((s) => refineOne(s)) };
+  }
+  if (stmt.kind === 'IrCaseStatement') {
+    return {
+      ...stmt,
+      arms: stmt.arms.map((a) => ({
+        ...a,
+        body: a.body.map((s) => refineOne(s)),
+      })),
+      otherwise: stmt.otherwise
+        ? stmt.otherwise.map((s) => refineOne(s))
+        : null,
+    };
+  }
+
+  const comments = commentTexts(stmt.trailingTrivia);
+  const commentsUpper = comments.map((c) => c.toUpperCase());
+
+  if (
+    stmt.kind === 'IrAssignment' &&
+    stmt.target.kind === 'IrIdentifier' &&
+    isLiteralExpr(stmt.value) &&
+    commentsUpper.some((c) => c === 'CONSTANT')
+  ) {
+    return {
+      kind: 'IrConstantStatement',
+      name: stmt.target.name,
+      value: stmt.value,
+      leadingTrivia: stmt.leadingTrivia,
+      trailingTrivia: stmt.trailingTrivia.filter(
+        (t) =>
+          !(
+            t.kind === 'Comment' &&
+            (t.text ?? '').trim().toUpperCase() === 'CONSTANT'
+          ),
+      ),
+    };
+  }
+
+  if (stmt.kind === 'IrDeclareStatement') {
+    let typeRef = stmt.typeRef;
+    if (
+      typeRef.kind === 'IrScalarType' &&
+      typeRef.name === 'STRING' &&
+      commentsUpper.some((c) => c === 'CHAR')
+    ) {
+      typeRef = { kind: 'IrScalarType', name: 'CHAR' };
+    }
+    if (typeRef.kind === 'IrArrayType') {
+      for (const c of comments) {
+        const dims = parseArrayBoundsComment(c);
+        if (dims) {
+          typeRef = {
+            kind: 'IrArrayType',
+            elementType: typeRef.elementType,
+            dimensions: dims.map((d) => ({
+              kind: 'IrArrayDimension' as const,
+              lower: d.lower,
+              upper: d.upper,
+            })),
+          };
+          break;
+        }
+      }
+    }
+    return { ...stmt, typeRef };
+  }
+
+  return stmt;
+}
+
+/**
+ * Heuristic: is this Python `+` operand a string value for Cambridge `&`?
+ * LENGTH returns INTEGER — must not be treated as stringy.
+ * Identifiers alone are unknown (no types on reverse); stay as `+`.
+ */
+function looksStringyExpr(expr: IrExpression): boolean {
+  switch (expr.kind) {
+    case 'IrStringLiteral':
+    case 'IrCharLiteral':
+      return true;
+    case 'IrCallExpression': {
+      const n = expr.callee.toUpperCase();
+      return (
+        n === 'LEFT' ||
+        n === 'RIGHT' ||
+        n === 'MID' ||
+        n === 'LCASE' ||
+        n === 'UCASE'
+      );
+    }
+    case 'IrBinaryExpression':
+      return expr.operator === '&';
+    case 'IrGroupingExpression':
+      return looksStringyExpr(expr.expression);
+    default:
+      return false;
+  }
+}
+
+/**
+ * Recognize S[(start) - 1 : (start) - 1 + (len)] → MID(S, start, len).
+ * Groupings from the printer are stripped before structural match.
+ */
+function tryMidFromSlice(
+  base: IrExpression,
+  low: IrExpression,
+  high: IrExpression,
+): IrExpression | null {
+  const lowU = unwrapGrouping(low);
+  if (lowU.kind !== 'IrBinaryExpression' || lowU.operator !== '-') {
+    return null;
+  }
+  const lowRight = unwrapGrouping(lowU.right);
+  if (lowRight.kind !== 'IrIntegerLiteral' || lowRight.value !== 1) {
+    return null;
+  }
+  const start = unwrapGrouping(lowU.left);
+  const highU = unwrapGrouping(high);
+  if (highU.kind !== 'IrBinaryExpression' || highU.operator !== '+') {
+    return null;
+  }
+  const highLeft = unwrapGrouping(highU.left);
+  if (highLeft.kind !== 'IrBinaryExpression' || highLeft.operator !== '-') {
+    return null;
+  }
+  const highLeftRight = unwrapGrouping(highLeft.right);
+  if (
+    highLeftRight.kind !== 'IrIntegerLiteral' ||
+    highLeftRight.value !== 1
+  ) {
+    return null;
+  }
+  if (!irExprStructurallyEqual(unwrapGrouping(highLeft.left), start)) {
+    return null;
+  }
+  return {
+    kind: 'IrCallExpression',
+    callee: 'MID',
+    args: [base, start, unwrapGrouping(highU.right)],
+  };
+}
+
+function unwrapGrouping(expr: IrExpression): IrExpression {
+  let cur = expr;
+  while (cur.kind === 'IrGroupingExpression') {
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+function irExprStructurallyEqual(a: IrExpression, b: IrExpression): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function containsReturnIr(statements: readonly IrStatement[]): boolean {

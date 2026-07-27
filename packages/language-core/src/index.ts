@@ -6,7 +6,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/language-core' as const;
-export const PACKAGE_VERSION = '0.8.0' as const;
+export const PACKAGE_VERSION = '0.10.0' as const;
 
 export {
   parse,
@@ -32,6 +32,7 @@ export type {
   ForStatement,
   ElseIfClause,
   DeclareStatement,
+  ConstantStatement,
   ProcedureDeclaration,
   FunctionDeclaration,
   CallStatement,
@@ -65,6 +66,14 @@ export type {
   AstNode,
 } from './ast/nodes.js';
 export { TokenKind, type Token, isTypeToken, isFileModeToken } from './lexer/token.js';
+export {
+  CORE_BUILTINS,
+  lookupBuiltin,
+  isBuiltinName,
+  allBuiltinNames,
+  type BuiltinSpec,
+  type BuiltinParamSpec,
+} from './builtins/registry.js';
 export type {
   Diagnostic,
   DiagnosticSeverity,

@@ -141,6 +141,12 @@ export function lex(source: string): LexResult {
       emit(TokenKind.Plus, start, '+');
       continue;
     }
+    if (ch === '&') {
+      const start = currentPos();
+      advance();
+      emit(TokenKind.Ampersand, start, '&');
+      continue;
+    }
     if (ch === '-') {
       const start = currentPos();
       advance();

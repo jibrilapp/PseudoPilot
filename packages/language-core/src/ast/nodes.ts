@@ -33,6 +33,7 @@ export type Statement =
   | RepeatStatement
   | ForStatement
   | DeclareStatement
+  | ConstantStatement
   | ProcedureDeclaration
   | FunctionDeclaration
   | CallStatement
@@ -85,6 +86,17 @@ export type DeclareStatement = {
   readonly kind: 'DeclareStatement';
   readonly names: Identifier[];
   readonly typeRef: TypeReference;
+  readonly span: SourceSpan;
+};
+
+/**
+ * CONSTANT Name = <literal>
+ * Value must be a literal (optionally unary +/- on a number).
+ */
+export type ConstantStatement = {
+  readonly kind: 'ConstantStatement';
+  readonly name: Identifier;
+  readonly value: Expression;
   readonly span: SourceSpan;
 };
 
@@ -331,6 +343,7 @@ export type BinaryOperator =
   | '/'
   | 'DIV'
   | 'MOD'
+  | '&'
   | '='
   | '<>'
   | '<'

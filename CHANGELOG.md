@@ -10,20 +10,32 @@ with the usual **0.x** caveat: breaking changes may land in minor bumps until 1.
 
 ### Added
 
-- Open-source release scaffolding: `LICENSE` (MIT), `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, GitHub Actions CI, issue/PR templates
-- Source size limits on `@pseudopilot/language-core` `parse` and `@pseudopilot/translator` entrypoints (DoS / browser freeze guard)
-- Configurable `maxSourceChars` on `TranslateOptions`
-- Full IR type surface + `SourceSpan`/`Position` re-exports from `@pseudopilot/translator`
-- Package version identity tests; npm metadata (`repository`, `bugs`, `homepage`, `engines`)
+- Cambridge Core **builtins** + **`&`**: LENGTH, LEFT, RIGHT, MID, LCASE, UCASE, INT, RAND
+- `language-core` builtin registry (`CORE_BUILTINS`) shared by checker + translator
+- Diagnostics `C_BUILTIN_ARG_*`, `C_CONCAT_TYPE`
 
 ### Changed
 
-- Root and package READMEs updated to match the current V8 translator/IDE subset
-- Aligned `@pseudopilot/language-core` and `@pseudopilot/translator` package versions to `0.8.0`
-- `language-core` build excludes `*.test.ts` from `dist/`
-- Implementation checklist reconciled with V8 translator (CASE no longer marked Run ✅)
-- Web IDE: translate-only disclaimer, highlight length cap, dropped unused `language-core` direct dependency
-- Cambridge affiliation disclaimer on root README
+- Package versions: language-core `0.10.0`, translator `0.11.0`; subset `v11-…-builtins`
+- RAND returns **REAL** (Cambridge); Python `import random` + `random.random() * (x)`
+- MID uses 1-based start → Python `S[(start)-1 : (start)-1+(length)]`
+- RIGHT emits `S[-(n):]` (fixes `RIGHT(S, n+1)` precedence)
+- Python emit moved out of `language-core` into `translator/builtins/emit.ts`
+- Reverse: LENGTH is not treated as stringy for `+` → `&`
+
+## [0.10.0] — semantic checker
+
+### Added
+
+- **`@pseudopilot/checker`**: Cambridge semantic analysis (scopes, symbols, types, calls, returns)
+- `docs/language/SEMANTICS.md`
+- Translator option `semanticCheck` (default `true`) — parse → check → lower → print
+
+### Changed
+
+- Language duplicate/const diagnostics moved to `C_*` checker codes; translator keeps Python-target `T_*` rules
+- Checker: case-insensitive identifiers; structured `help`; diagnostic soft-cap; missing FUNCTION RETURN is an error
+- Translator: first-declaration casing rewritten into Python IR (avoids NameError)
 
 ## [0.8.0] - 2026-07-27
 

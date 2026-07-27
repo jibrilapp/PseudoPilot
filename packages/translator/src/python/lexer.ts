@@ -47,6 +47,7 @@ export enum PyTokenKind {
   RBracket = 'RBracket',
   Comma = 'Comma',
   Colon = 'Colon',
+  Dot = 'Dot',
 }
 
 export type PyToken = {
@@ -318,6 +319,11 @@ export function lexPython(source: string): PyLexResult {
     if (ch === ':') {
       advance();
       emit(PyTokenKind.Colon, ':', start);
+      continue;
+    }
+    if (ch === '.') {
+      advance();
+      emit(PyTokenKind.Dot, '.', start);
       continue;
     }
 

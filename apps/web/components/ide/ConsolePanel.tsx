@@ -54,6 +54,9 @@ export function ConsolePanel({ lines = [], diagnostics = [] }: ConsolePanelProps
                 <span className="text-white/40">[{d.code}]</span>{' '}
                 {d.line != null ? `Line ${d.line}: ` : ''}
                 {d.message}
+                {d.help ? (
+                  <span className="text-white/45"> — {d.help}</span>
+                ) : null}
               </span>
             </div>
           ))

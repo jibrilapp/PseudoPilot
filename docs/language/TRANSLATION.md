@@ -1,8 +1,8 @@
 # Translation Engine — Architecture (V1)
 
 **Package:** `@pseudopilot/translator`  
-**Dialect version:** Core subset V8 (assignment, I/O, expressions, CHAR, array indexes, IF / ELSE / ELSE IF, WHILE / ENDWHILE, REPEAT / UNTIL, FOR / NEXT / STEP, CASE OF / OTHERWISE / ENDCASE, PROCEDURE / CALL, **FUNCTION / RETURNS / RETURN**)  
-**Status:** FUNCTION translation milestone complete
+**Dialect version:** Core subset V11 (V10 + **builtins** + **`&`**)  
+**Status:** Builtins + `&` milestone complete — signatures in `language-core`, Python emit in `translator/builtins/emit.ts`, check + bidirectional translate. Semantic checker runs after parse, before IR lowering.
 
 ---
 
@@ -46,7 +46,9 @@ PseudoPilot does **not** translate by string rewrite. The engine is a classic mu
 
 - Deterministic: same input → same IR → same output (stable formatting).
 - Pure library: no I/O, network, or AI.
-- Fail loudly on unsupported constructs (DECLARE, …) with structured diagnostics — never invent control flow.
+- Fail loudly on unsupported constructs (BYREF, files, …) with structured diagnostics — never invent control flow.
+- **Semantic check** (default on): `@pseudopilot/checker` validates scopes/types/builtins before lowering. Disable with `semanticCheck: false` only for IR experiments.
+- **Builtins:** signatures in `language-core` `CORE_BUILTINS`; Python emission in `translator/src/builtins/emit.ts` (backend-owned, not in language-core).
 - New languages plug in as **frontend + printer** only; IR and rule registries stay shared.
 
 ---
@@ -166,15 +168,23 @@ Trivia is stored on IR nodes, not re-derived from target language, so Cambridge 
 | `FUNCTION` / `RETURNS` / `ENDFUNCTION` | `IrFunctionDeclaration` | `def Name(params) -> type:` |
 | `RETURN expr` | `IrReturnStatement` | `return expr` |
 | `F(args)` expression | `IrCallExpression` | `F(args)` |
+| `DECLARE` (scalar / array / multi-name) | `IrDeclareStatement` | `Name: type` / `Name: list[T]  # ARRAY[…]` |
+| `CONSTANT Name = literal` | `IrConstantStatement` | `Name = literal  # CONSTANT` |
 
-**INPUT typing:** Without `DECLARE` (out of current subset), Cambridge `INPUT` has no declared type. PseudoPilot maps to Python `input()` (always `str`). Coercion belongs with a later typechecker + DECLARE milestone — not invented here.
+**DECLARE / CONSTANT → Python strategy:** Scalar DECLARE becomes a PEP 526 annotation with no initializer (`Count: int`). CHAR is `str  # CHAR` so reverse can restore CHAR vs STRING. Arrays become `list[elem]  # ARRAY[l:u,…]` (bounds live in the comment for round-trip). Multi-name DECLARE expands to one annotation per name. CONSTANT becomes an assignment of a literal tagged `# CONSTANT`. Reverse translation only promises to recover this PseudoPilot-emitted subset.
+
+**INPUT typing:** `INPUT` still maps to Python `input()` (`str`). The checker requires the target to be a declared assignable name but does not invent runtime coercions.
 
 **CASE → Python decision:** Emit `match`/`case` (Python 3.10+). It is the clearest semantic match for Cambridge CASE; the project does not pin an older Python runtime. Range labels use a guarded capture `_v` so inclusive `TO` bounds round-trip.
 
 **PROCEDURE → Python:** Parameters are by-value (Cambridge default). `BYVAL`/`BYREF` keywords are not parsed. Types map INTEGER→int, REAL→float, STRING/CHAR→str, BOOLEAN→bool.
 
-**FUNCTION → Python:** Same parameter mapping. Return type becomes a Python `->` annotation so reverse translation can distinguish FUNCTION from PROCEDURE. `RETURN expr` maps 1:1 to `return expr`. Function calls in expressions (`OUTPUT Add(2, 3)`) become `print(Add(2, 3))`. A FUNCTION with no `RETURN` anywhere warns (`T_FUNC_NO_RETURN`). Statements after `RETURN` at the same block level warn (`T_UNREACHABLE_AFTER_RETURN`). Full path-coverage analysis is not performed.
+**FUNCTION → Python:** Same parameter mapping. Return type becomes a Python `->` annotation so reverse translation can distinguish FUNCTION from PROCEDURE. `RETURN expr` maps 1:1 to `return expr`. Function calls in expressions (`OUTPUT Add(2, 3)`) become `print(Add(2, 3))`. A FUNCTION with no `RETURN` anywhere errors via the checker (`C_FUNC_NO_RETURN`). Statements after `RETURN` at the same block level warn (`C_UNREACHABLE`). Full path-coverage analysis is not performed. (Python→pseudocode reverse may still emit `T_FUNC_NO_RETURN`.)
 
 **PROCEDURE/FUNCTION safety checks:** Routine/parameter names that are Python keywords are rejected (`T_PROC_PY_KEYWORD`). Duplicate parameters are rejected (`T_PROC_DUP_PARAM`). Nested `def` is rejected. Names that shadow `print`/`input`/`range` warn (`T_PROC_SHADOWS_BUILTIN`). Unannotated Python params warn and default to INTEGER (`T_PROC_DEFAULT_TYPE`). CALL before its definition warns (`T_CALL_BEFORE_PROC`).
 
-**Explicitly out of scope for this subset:** DECLARE, BYREF, file I/O, `&` concatenation, builtins, DATE literals.
+**DECLARE/CONSTANT diagnostics:** Duplicate names in a scope (`T_DUP_DECLARE` / `T_DUP_CONSTANT`), assignment / INPUT / FOR update of a CONSTANT (`T_ASSIGN_TO_CONSTANT`, statement not emitted), Python-keyword names (`T_DECL_PY_KEYWORD`), builtin shadow warnings (`T_DECL_SHADOWS_BUILTIN`). Locals may shadow globals. Malformed CONSTANT non-literals (`E_CONSTANT_LITERAL` from the parser).
+
+**Builtin emission (Python):** `RIGHT` uses `s[-(n):]` and `RAND` uses `random.random() * (x)` so additive count expressions keep correct precedence. `MID` uses parenthesized `s[(start)-1:(start)-1+(length)]`. Reverse maps those forms back; `len(x) + …` stays numeric `+` (LENGTH is not stringy).
+
+**Explicitly out of scope for this subset:** BYREF, file I/O, DATE literals, typed INPUT coercion, ASC/CHR and other exam-insert-only builtins (except PseudoPilot Core `LEFT`).

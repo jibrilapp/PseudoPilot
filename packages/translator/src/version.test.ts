@@ -24,9 +24,9 @@ describe('package version identity', () => {
     expect(PACKAGE_NAME).toBe(pkg.name);
   });
 
-  it('TRANSLATOR_SUBSET tags the V8 control+routines dialect', () => {
+  it('TRANSLATOR_SUBSET tags the V10 declare+checker dialect', () => {
     expect(TRANSLATOR_SUBSET).toBe(
-      'v8-assign-io-expr-control-procedure-function',
+      'v11-assign-io-expr-control-procedure-function-declare-check-builtins',
     );
   });
 });

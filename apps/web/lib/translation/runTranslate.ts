@@ -12,6 +12,17 @@ export type SafeTranslateResult = {
 };
 
 function toIdeDiagnostic(d: TranslateDiagnostic, index: number): IdeDiagnostic {
+  if (d.help !== undefined) {
+    return {
+      id: `t-${index}-${d.code}`,
+      severity: d.severity,
+      message: d.message,
+      code: d.code,
+      line: d.span?.start.line,
+      column: d.span?.start.column,
+      help: d.help,
+    };
+  }
   return {
     id: `t-${index}-${d.code}`,
     severity: d.severity,

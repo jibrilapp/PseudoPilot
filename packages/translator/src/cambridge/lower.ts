@@ -3,10 +3,12 @@ import type {
   Expression,
   Program,
   Statement,
+  TypeReference,
 } from '@pseudopilot/language-core';
 import {
   emptyTrivia,
   withEmptyTrivia,
+  type IrArrayDimension,
   type IrAssignTarget,
   type IrCaseArm,
   type IrCaseLabel,
@@ -14,6 +16,7 @@ import {
   type IrExpression,
   type IrProgram,
   type IrStatement,
+  type IrTypeReference,
 } from '../ir/nodes.js';
 import { cambridgeBinaryToIr, cambridgeUnaryToIr } from '../rules/operators.js';
 import {
@@ -28,30 +31,144 @@ export type LowerResult = {
   readonly diagnostics: TranslateDiagnostic[];
 };
 
+type BindingKind = 'var' | 'const';
+
+type ScopeBinding = {
+  readonly kind: BindingKind;
+  readonly canonical: string;
+};
+
+type ScopeFrame = {
+  readonly bindings: Map<string, ScopeBinding>;
+};
+
+type LowerCtx = {
+  readonly diagnostics: TranslateDiagnostic[];
+  readonly scopes: ScopeFrame[];
+};
+
+/** Cambridge identifiers are case-insensitive — match checker binding. */
+function bindingKey(name: string): string {
+  return name.toLowerCase();
+}
+
+function pushScope(ctx: LowerCtx): void {
+  ctx.scopes.push({ bindings: new Map() });
+}
+
+function popScope(ctx: LowerCtx): void {
+  ctx.scopes.pop();
+}
+
+/**
+ * Resolve an identifier to first-declaration casing in the nearest scope.
+ * Python is case-sensitive; Cambridge is not — without this, `Count`/`count`
+ * become different Python names and crash at runtime.
+ */
+function resolveName(ctx: LowerCtx, name: string): string {
+  const key = bindingKey(name);
+  for (let i = ctx.scopes.length - 1; i >= 0; i--) {
+    const found = ctx.scopes[i]!.bindings.get(key);
+    if (found) return found.canonical;
+  }
+  return name;
+}
+
+/** Register a binding; keeps first-seen casing within the current frame. */
+function registerBinding(
+  ctx: LowerCtx,
+  name: string,
+  kind: BindingKind,
+): string {
+  const key = bindingKey(name);
+  const frame = ctx.scopes[ctx.scopes.length - 1]!;
+  const existing = frame.bindings.get(key);
+  if (existing) return existing.canonical;
+  frame.bindings.set(key, { kind, canonical: name });
+  return name;
+}
+
+/** Register a name (routine) without treating it as assignable storage. */
+function registerName(ctx: LowerCtx, name: string): string {
+  return registerBinding(ctx, name, 'var');
+}
+
+function bindName(
+  ctx: LowerCtx,
+  name: string,
+  kind: BindingKind,
+  span: Statement['span'],
+  what: 'DECLARE' | 'CONSTANT',
+): string | null {
+  // Language duplicate / type rules live in `@pseudopilot/checker`.
+  // Lower only enforces Python-target name constraints.
+  if (isPythonSyntaxKeyword(name)) {
+    ctx.diagnostics.push({
+      severity: 'error',
+      code: 'T_DECL_PY_KEYWORD',
+      message: `${what} name '${name}' is a Python keyword and cannot be translated.`,
+      span,
+    });
+    return null;
+  }
+  if (isPythonTranslatorBuiltin(name)) {
+    ctx.diagnostics.push({
+      severity: 'warning',
+      code: 'T_DECL_SHADOWS_BUILTIN',
+      message: `${what} name '${name}' shadows a Python builtin used by the translator (print/input/range).`,
+      span,
+    });
+  }
+  return registerBinding(ctx, name, kind);
+}
+
+function lookupBinding(ctx: LowerCtx, name: string): BindingKind | undefined {
+  const key = bindingKey(name);
+  for (let i = ctx.scopes.length - 1; i >= 0; i--) {
+    const found = ctx.scopes[i]!.bindings.get(key);
+    if (found) return found.kind;
+  }
+  return undefined;
+}
+
+/** Skip emitting when target is a CONSTANT (checker already diagnosed). */
+function checkAssignToConstant(
+  ctx: LowerCtx,
+  target: AssignTarget,
+): boolean {
+  const name = target.kind === 'Identifier' ? target.name : target.array.name;
+  return lookupBinding(ctx, name) !== 'const';
+}
+
+function checkForVariableNotConstant(ctx: LowerCtx, variable: string): boolean {
+  return lookupBinding(ctx, variable) !== 'const';
+}
+
 function lowerTarget(
   target: AssignTarget,
-  diagnostics: TranslateDiagnostic[],
+  ctx: LowerCtx,
 ): IrAssignTarget | null {
   if (target.kind === 'Identifier') {
-    return { kind: 'IrIdentifier', name: target.name };
+    return { kind: 'IrIdentifier', name: resolveName(ctx, target.name) };
   }
   const indices: IrExpression[] = [];
   for (const idx of target.indices) {
-    const lowered = lowerExpression(idx, diagnostics);
+    const lowered = lowerExpression(idx, ctx);
     if (!lowered) return null;
     indices.push(lowered);
   }
   return {
     kind: 'IrIndexExpression',
-    array: { kind: 'IrIdentifier', name: target.array.name },
+    array: { kind: 'IrIdentifier', name: resolveName(ctx, target.array.name) },
     indices,
   };
 }
 
 function lowerExpression(
   expr: Expression,
-  diagnostics: TranslateDiagnostic[],
+  ctx: LowerCtx,
 ): IrExpression | null {
+  const diagnostics = ctx.diagnostics;
   switch (expr.kind) {
     case 'IntegerLiteral':
       return { kind: 'IrIntegerLiteral', value: expr.value };
@@ -64,22 +181,25 @@ function lowerExpression(
     case 'BooleanLiteral':
       return { kind: 'IrBooleanLiteral', value: expr.value };
     case 'Identifier':
-      return { kind: 'IrIdentifier', name: expr.name };
+      return { kind: 'IrIdentifier', name: resolveName(ctx, expr.name) };
     case 'IndexExpression': {
       const indices: IrExpression[] = [];
       for (const idx of expr.indices) {
-        const lowered = lowerExpression(idx, diagnostics);
+        const lowered = lowerExpression(idx, ctx);
         if (!lowered) return null;
         indices.push(lowered);
       }
       return {
         kind: 'IrIndexExpression',
-        array: { kind: 'IrIdentifier', name: expr.array.name },
+        array: {
+          kind: 'IrIdentifier',
+          name: resolveName(ctx, expr.array.name),
+        },
         indices,
       };
     }
     case 'UnaryExpression': {
-      const argument = lowerExpression(expr.argument, diagnostics);
+      const argument = lowerExpression(expr.argument, ctx);
       if (!argument) return null;
       return {
         kind: 'IrUnaryExpression',
@@ -88,8 +208,8 @@ function lowerExpression(
       };
     }
     case 'BinaryExpression': {
-      const left = lowerExpression(expr.left, diagnostics);
-      const right = lowerExpression(expr.right, diagnostics);
+      const left = lowerExpression(expr.left, ctx);
+      const right = lowerExpression(expr.right, ctx);
       if (!left || !right) return null;
       return {
         kind: 'IrBinaryExpression',
@@ -99,7 +219,7 @@ function lowerExpression(
       };
     }
     case 'GroupingExpression': {
-      const inner = lowerExpression(expr.expression, diagnostics);
+      const inner = lowerExpression(expr.expression, ctx);
       if (!inner) return null;
       return { kind: 'IrGroupingExpression', expression: inner };
     }
@@ -115,13 +235,13 @@ function lowerExpression(
       }
       const args: IrExpression[] = [];
       for (const arg of expr.args) {
-        const lowered = lowerExpression(arg, diagnostics);
+        const lowered = lowerExpression(arg, ctx);
         if (!lowered) return null;
         args.push(lowered);
       }
       return {
         kind: 'IrCallExpression',
-        callee: expr.callee.name,
+        callee: resolveName(ctx, expr.callee.name),
         args,
       };
     }
@@ -140,31 +260,40 @@ function lowerExpression(
   }
 }
 
-/** Lower a statement list; skip unsupported nodes (diagnostics already emitted).
- * Warns on statements after RETURN at the same block level.
- */
+/** Lower a statement list; skip unsupported nodes (diagnostics already emitted). */
 function lowerBlock(
   statements: Statement[],
-  diagnostics: TranslateDiagnostic[],
+  ctx: LowerCtx,
 ): IrStatement[] {
   const out: IrStatement[] = [];
-  let seenReturn = false;
   for (const stmt of statements) {
-    if (seenReturn) {
-      diagnostics.push({
-        severity: 'warning',
-        code: 'T_UNREACHABLE_AFTER_RETURN',
-        message: 'Unreachable statement after RETURN.',
-        span: stmt.span,
-      });
-    }
-    const lowered = lowerStatement(stmt, diagnostics);
+    const lowered = lowerStatement(stmt, ctx);
     if (lowered) {
       out.push(lowered.ir);
-      if (lowered.ir.kind === 'IrReturnStatement') seenReturn = true;
     }
   }
   return out;
+}
+
+function lowerTypeRef(
+  typeRef: TypeReference,
+  ctx: LowerCtx,
+): IrTypeReference | null {
+  if (typeRef.kind === 'TypeName') {
+    return { kind: 'IrScalarType', name: typeRef.name };
+  }
+  const dimensions: IrArrayDimension[] = [];
+  for (const dim of typeRef.dimensions) {
+    const lower = lowerExpression(dim.lower, ctx);
+    const upper = lowerExpression(dim.upper, ctx);
+    if (!lower || !upper) return null;
+    dimensions.push({ kind: 'IrArrayDimension', lower, upper });
+  }
+  return {
+    kind: 'IrArrayType',
+    dimensions,
+    elementType: typeRef.elementType.name,
+  };
 }
 
 function validateRoutineBinding(
@@ -190,7 +319,6 @@ function validateRoutineBinding(
       span: name.span,
     });
   }
-  const seen = new Set<string>();
   for (const p of parameters) {
     const pname = p.name.name;
     if (isPythonSyntaxKeyword(pname)) {
@@ -202,53 +330,21 @@ function validateRoutineBinding(
       });
       return false;
     }
-    if (seen.has(pname)) {
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_PROC_DUP_PARAM',
-        message: `Duplicate parameter name '${pname}' in ${kind} '${name.name}'.`,
-        span: p.name.span,
-      });
-      return false;
-    }
-    seen.add(pname);
+    // Duplicate parameters are diagnosed by `@pseudopilot/checker`.
   }
   return true;
 }
 
-function containsReturn(statements: readonly IrStatement[]): boolean {
-  for (const stmt of statements) {
-    if (stmt.kind === 'IrReturnStatement') return true;
-    if (stmt.kind === 'IrIfStatement') {
-      if (containsReturn(stmt.consequent)) return true;
-      for (const c of stmt.elseIfClauses) {
-        if (containsReturn(c.consequent)) return true;
-      }
-      if (stmt.alternate && containsReturn(stmt.alternate)) return true;
-    } else if (
-      stmt.kind === 'IrWhileStatement' ||
-      stmt.kind === 'IrRepeatStatement' ||
-      stmt.kind === 'IrForStatement'
-    ) {
-      if (containsReturn(stmt.body)) return true;
-    } else if (stmt.kind === 'IrCaseStatement') {
-      for (const arm of stmt.arms) {
-        if (containsReturn(arm.body)) return true;
-      }
-      if (stmt.otherwise && containsReturn(stmt.otherwise)) return true;
-    }
-  }
-  return false;
-}
-
 function lowerStatement(
   stmt: Statement,
-  diagnostics: TranslateDiagnostic[],
+  ctx: LowerCtx,
 ): { ir: IrStatement; span: Statement['span'] } | null {
+  const diagnostics = ctx.diagnostics;
   switch (stmt.kind) {
     case 'AssignmentStatement': {
-      const target = lowerTarget(stmt.target, diagnostics);
-      const value = lowerExpression(stmt.value, diagnostics);
+      if (!checkAssignToConstant(ctx, stmt.target)) return null;
+      const target = lowerTarget(stmt.target, ctx);
+      const value = lowerExpression(stmt.value, ctx);
       if (!target || !value) return null;
       return {
         span: stmt.span,
@@ -260,7 +356,8 @@ function lowerStatement(
       };
     }
     case 'InputStatement': {
-      const target = lowerTarget(stmt.target, diagnostics);
+      if (!checkAssignToConstant(ctx, stmt.target)) return null;
+      const target = lowerTarget(stmt.target, ctx);
       if (!target) return null;
       return {
         span: stmt.span,
@@ -274,7 +371,7 @@ function lowerStatement(
     case 'OutputStatement': {
       const values: IrExpression[] = [];
       for (const e of stmt.expressions) {
-        const lowered = lowerExpression(e, diagnostics);
+        const lowered = lowerExpression(e, ctx);
         if (!lowered) return null;
         values.push(lowered);
       }
@@ -287,21 +384,21 @@ function lowerStatement(
       };
     }
     case 'IfStatement': {
-      const condition = lowerExpression(stmt.condition, diagnostics);
+      const condition = lowerExpression(stmt.condition, ctx);
       if (!condition) return null;
-      const consequent = lowerBlock(stmt.consequent, diagnostics);
+      const consequent = lowerBlock(stmt.consequent, ctx);
       const elseIfClauses: IrElseIfClause[] = [];
       for (const clause of stmt.elseIfClauses) {
-        const c = lowerExpression(clause.condition, diagnostics);
+        const c = lowerExpression(clause.condition, ctx);
         if (!c) return null;
         elseIfClauses.push({
           kind: 'IrElseIfClause',
           condition: c,
-          consequent: lowerBlock(clause.consequent, diagnostics),
+          consequent: lowerBlock(clause.consequent, ctx),
         });
       }
       const alternate =
-        stmt.alternate === null ? null : lowerBlock(stmt.alternate, diagnostics);
+        stmt.alternate === null ? null : lowerBlock(stmt.alternate, ctx);
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
@@ -314,29 +411,29 @@ function lowerStatement(
       };
     }
     case 'CaseStatement': {
-      const discriminant = lowerExpression(stmt.discriminant, diagnostics);
+      const discriminant = lowerExpression(stmt.discriminant, ctx);
       if (!discriminant) return null;
       const arms: IrCaseArm[] = [];
       for (const arm of stmt.arms) {
         let label: IrCaseLabel;
         if (arm.label.kind === 'Value') {
-          const value = lowerExpression(arm.label.value, diagnostics);
+          const value = lowerExpression(arm.label.value, ctx);
           if (!value) return null;
           label = { kind: 'IrCaseValue', value };
         } else {
-          const low = lowerExpression(arm.label.low, diagnostics);
-          const high = lowerExpression(arm.label.high, diagnostics);
+          const low = lowerExpression(arm.label.low, ctx);
+          const high = lowerExpression(arm.label.high, ctx);
           if (!low || !high) return null;
           label = { kind: 'IrCaseRange', low, high };
         }
         arms.push({
           kind: 'IrCaseArm',
           label,
-          body: lowerBlock(arm.body, diagnostics),
+          body: lowerBlock(arm.body, ctx),
         });
       }
       const otherwise =
-        stmt.otherwise === null ? null : lowerBlock(stmt.otherwise, diagnostics);
+        stmt.otherwise === null ? null : lowerBlock(stmt.otherwise, ctx);
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
@@ -348,58 +445,94 @@ function lowerStatement(
       };
     }
     case 'WhileStatement': {
-      const condition = lowerExpression(stmt.condition, diagnostics);
+      const condition = lowerExpression(stmt.condition, ctx);
       if (!condition) return null;
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
           kind: 'IrWhileStatement' as const,
           condition,
-          body: lowerBlock(stmt.body, diagnostics),
+          body: lowerBlock(stmt.body, ctx),
         }),
       };
     }
     case 'RepeatStatement': {
-      const condition = lowerExpression(stmt.condition, diagnostics);
+      const condition = lowerExpression(stmt.condition, ctx);
       if (!condition) return null;
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
           kind: 'IrRepeatStatement' as const,
-          body: lowerBlock(stmt.body, diagnostics),
+          body: lowerBlock(stmt.body, ctx),
           condition,
         }),
       };
     }
     case 'ForStatement': {
-      const start = lowerExpression(stmt.start, diagnostics);
-      const end = lowerExpression(stmt.end, diagnostics);
+      if (!checkForVariableNotConstant(ctx, stmt.variable)) {
+        return null;
+      }
+      const start = lowerExpression(stmt.start, ctx);
+      const end = lowerExpression(stmt.end, ctx);
       if (!start || !end) return null;
       let step: IrExpression | null = null;
       if (stmt.step) {
-        step = lowerExpression(stmt.step, diagnostics);
+        step = lowerExpression(stmt.step, ctx);
         if (!step) return null;
       }
+      const variable = registerBinding(ctx, stmt.variable, 'var');
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
           kind: 'IrForStatement' as const,
-          variable: stmt.variable,
+          variable,
           start,
           end,
           step,
-          body: lowerBlock(stmt.body, diagnostics),
+          body: lowerBlock(stmt.body, ctx),
         }),
       };
     }
-    case 'DeclareStatement':
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_UNSUPPORTED_DECLARE',
-        message: 'Translator does not support DECLARE (yet).',
+    case 'DeclareStatement': {
+      const typeRef = lowerTypeRef(stmt.typeRef, ctx);
+      if (!typeRef) return null;
+      const names: string[] = [];
+      for (const id of stmt.names) {
+        // Duplicate DECLARE names are diagnosed by `@pseudopilot/checker`.
+        const canonical = bindName(ctx, id.name, 'var', id.span, 'DECLARE');
+        if (canonical === null) continue;
+        if (!names.includes(canonical)) names.push(canonical);
+      }
+      if (names.length === 0) return null;
+      return {
         span: stmt.span,
-      });
-      return null;
+        ir: withEmptyTrivia({
+          kind: 'IrDeclareStatement' as const,
+          names,
+          typeRef,
+        }),
+      };
+    }
+    case 'ConstantStatement': {
+      const value = lowerExpression(stmt.value, ctx);
+      if (!value) return null;
+      const name = bindName(
+        ctx,
+        stmt.name.name,
+        'const',
+        stmt.name.span,
+        'CONSTANT',
+      );
+      if (name === null) return null;
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrConstantStatement' as const,
+          name,
+          value,
+        }),
+      };
+    }
     case 'ProcedureDeclaration': {
       if (
         !validateRoutineBinding(
@@ -411,18 +544,27 @@ function lowerStatement(
       ) {
         return null;
       }
-      const parameters = stmt.parameters.map((p) => ({
-        kind: 'IrParameter' as const,
-        name: p.name.name,
-        typeName: p.typeName.name,
-      }));
+      const procName = registerName(ctx, stmt.name.name);
+      pushScope(ctx);
+      const parameters = stmt.parameters.map((p) => {
+        const pname =
+          bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE') ??
+          p.name.name;
+        return {
+          kind: 'IrParameter' as const,
+          name: pname,
+          typeName: p.typeName.name,
+        };
+      });
+      const body = lowerBlock(stmt.body, ctx);
+      popScope(ctx);
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
           kind: 'IrProcedureDeclaration' as const,
-          name: stmt.name.name,
+          name: procName,
           parameters,
-          body: lowerBlock(stmt.body, diagnostics),
+          body,
         }),
       };
     }
@@ -437,25 +579,26 @@ function lowerStatement(
       ) {
         return null;
       }
-      const parameters = stmt.parameters.map((p) => ({
-        kind: 'IrParameter' as const,
-        name: p.name.name,
-        typeName: p.typeName.name,
-      }));
-      const body = lowerBlock(stmt.body, diagnostics);
-      if (!containsReturn(body)) {
-        diagnostics.push({
-          severity: 'warning',
-          code: 'T_FUNC_NO_RETURN',
-          message: `FUNCTION '${stmt.name.name}' has no RETURN statement.`,
-          span: stmt.span,
-        });
-      }
+      const fnName = registerName(ctx, stmt.name.name);
+      pushScope(ctx);
+      const parameters = stmt.parameters.map((p) => {
+        const pname =
+          bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE') ??
+          p.name.name;
+        return {
+          kind: 'IrParameter' as const,
+          name: pname,
+          typeName: p.typeName.name,
+        };
+      });
+      const body = lowerBlock(stmt.body, ctx);
+      popScope(ctx);
+      // Missing RETURN / unreachable-after-RETURN: `@pseudopilot/checker` (`C_*`).
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
           kind: 'IrFunctionDeclaration' as const,
-          name: stmt.name.name,
+          name: fnName,
           parameters,
           returnType: stmt.returnType.name,
           body,
@@ -463,19 +606,20 @@ function lowerStatement(
       };
     }
     case 'CallStatement': {
-      const callee = stmt.callee.name;
-      if (isPythonSyntaxKeyword(callee)) {
+      const calleeRaw = stmt.callee.name;
+      if (isPythonSyntaxKeyword(calleeRaw)) {
         diagnostics.push({
           severity: 'error',
           code: 'T_CALL_PY_KEYWORD',
-          message: `CALL target '${callee}' is a Python keyword and cannot be translated to a Python call.`,
+          message: `CALL target '${calleeRaw}' is a Python keyword and cannot be translated to a Python call.`,
           span: stmt.callee.span,
         });
         return null;
       }
+      const callee = resolveName(ctx, calleeRaw);
       const args: IrExpression[] = [];
       for (const arg of stmt.args) {
-        const lowered = lowerExpression(arg, diagnostics);
+        const lowered = lowerExpression(arg, ctx);
         if (!lowered) return null;
         args.push(lowered);
       }
@@ -489,7 +633,7 @@ function lowerStatement(
       };
     }
     case 'ReturnStatement': {
-      const value = lowerExpression(stmt.value, diagnostics);
+      const value = lowerExpression(stmt.value, ctx);
       if (!value) return null;
       return {
         span: stmt.span,
@@ -527,10 +671,24 @@ export function lowerCambridgeProgram(
   preserveTrivia: boolean,
 ): LowerResult {
   const diagnostics: TranslateDiagnostic[] = [];
+  const ctx: LowerCtx = {
+    diagnostics,
+    scopes: [{ bindings: new Map() }],
+  };
+
+  // Hoist routine names so CALL-before-def still emits first-declaration casing.
+  for (const stmt of program.body) {
+    if (
+      stmt.kind === 'ProcedureDeclaration' ||
+      stmt.kind === 'FunctionDeclaration'
+    ) {
+      registerName(ctx, stmt.name.name);
+    }
+  }
   const paired: { stmt: IrStatement; span: Statement['span'] }[] = [];
 
   for (const stmt of program.body) {
-    const lowered = lowerStatement(stmt, diagnostics);
+    const lowered = lowerStatement(stmt, ctx);
     if (lowered) {
       paired.push({ stmt: lowered.ir, span: lowered.span });
     }
@@ -573,15 +731,18 @@ function warnForwardProcedureCalls(
       stmt.kind === 'IrProcedureDeclaration' ||
       stmt.kind === 'IrFunctionDeclaration'
     ) {
-      defined.add(stmt.name);
+      defined.add(bindingKey(stmt.name));
       continue;
     }
-    if (stmt.kind === 'IrCallStatement' && !defined.has(stmt.callee)) {
+    if (
+      stmt.kind === 'IrCallStatement' &&
+      !defined.has(bindingKey(stmt.callee))
+    ) {
       const declaredLater = paired.some(
         (p) =>
           (p.stmt.kind === 'IrProcedureDeclaration' ||
             p.stmt.kind === 'IrFunctionDeclaration') &&
-          p.stmt.name === stmt.callee,
+          bindingKey(p.stmt.name) === bindingKey(stmt.callee),
       );
       if (declaredLater) {
         diagnostics.push({

@@ -17,7 +17,7 @@ import { pushError, type TokenCursor } from './cursor.js';
  *    1  OR
  *    2  AND
  *    3  relational  = <> < <= > >=
- *   10  + -
+ *   10  + - &
  *   20  * / DIV MOD
  *   30  unary + - NOT
  */
@@ -300,6 +300,7 @@ const INFIX_BP: Partial<Record<TokenKind, BindingPower>> = {
   [TokenKind.GreaterEqual]: { left: 5, right: 6 },
   [TokenKind.Plus]: { left: 10, right: 11 },
   [TokenKind.Minus]: { left: 10, right: 11 },
+  [TokenKind.Ampersand]: { left: 10, right: 11 },
   [TokenKind.Star]: { left: 20, right: 21 },
   [TokenKind.Slash]: { left: 20, right: 21 },
   [TokenKind.Div]: { left: 20, right: 21 },
@@ -316,6 +317,8 @@ function binaryOperatorFromToken(token: Token): BinaryOperator | null {
       return '+';
     case TokenKind.Minus:
       return '-';
+    case TokenKind.Ampersand:
+      return '&';
     case TokenKind.Star:
       return '*';
     case TokenKind.Slash:

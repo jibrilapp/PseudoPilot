@@ -4,6 +4,7 @@ import type {
   IrExpression,
   IrProgram,
   IrStatement,
+  IrTypeReference,
   IrUnaryExpression,
 } from '../ir/nodes.js';
 import {
@@ -78,6 +79,14 @@ function printBinary(expr: IrBinaryExpression, parentPrec: number): string {
   const right = printExpr(expr.right, prec + 1);
   const core = `${left} ${op} ${right}`;
   return prec < parentPrec ? `(${core})` : core;
+}
+
+function printTypeRef(typeRef: IrTypeReference): string {
+  if (typeRef.kind === 'IrScalarType') return typeRef.name;
+  const dims = typeRef.dimensions
+    .map((d) => `${printExpr(d.lower, 0)}:${printExpr(d.upper, 0)}`)
+    .join(', ');
+  return `ARRAY[${dims}] OF ${typeRef.elementType}`;
 }
 
 function pad(level: number): string {
@@ -175,6 +184,16 @@ function printStatement(
       lines.push(`${p}NEXT ${stmt.variable}`);
       break;
     }
+    case 'IrDeclareStatement': {
+      lines.push(
+        `${p}DECLARE ${stmt.names.join(', ')} : ${printTypeRef(stmt.typeRef)}`,
+      );
+      break;
+    }
+    case 'IrConstantStatement': {
+      lines.push(`${p}CONSTANT ${stmt.name} = ${printExpr(stmt.value, 0)}`);
+      break;
+    }
     case 'IrProcedureDeclaration': {
       const params = stmt.parameters
         .map((param) => `${param.name} : ${param.typeName}`)
@@ -219,6 +238,8 @@ function printStatement(
     stmt.kind !== 'IrWhileStatement' &&
     stmt.kind !== 'IrRepeatStatement' &&
     stmt.kind !== 'IrForStatement' &&
+    stmt.kind !== 'IrDeclareStatement' &&
+    stmt.kind !== 'IrConstantStatement' &&
     stmt.kind !== 'IrProcedureDeclaration' &&
     stmt.kind !== 'IrFunctionDeclaration' &&
     trailing.length > 0 &&

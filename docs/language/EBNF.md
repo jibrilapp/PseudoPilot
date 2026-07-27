@@ -40,7 +40,7 @@ comment      = "//" { any_char_except_NL } NL ;
 ```ebnf
 assign_op    = "←" | "<-" ;
 rel_op       = "=" | "<>" | "<" | "<=" | ">" | ">=" ;
-add_op       = "+" | "-" | "&" ;                       (* "&" ❌ *)
+add_op       = "+" | "-" | "&" ;
 mul_op       = "*" | "/" | "DIV" | "MOD" ;
 ```
 
@@ -90,7 +90,7 @@ param           = [ "BYVAL" | "BYREF" ] identifier ":" type_name ;
 declare_stmt    = "DECLARE" identifier { "," identifier }
                   ":" type_ref ;                          (* ✅ *)
 
-constant_stmt   = "CONSTANT" identifier "=" literal ;     (* ❌ *)
+constant_stmt   = "CONSTANT" identifier "=" literal ;     (* ✅ *)
 
 type_ref        = type_name                               (* ✅ *)
                 | array_type                              (* ✅ *)
@@ -239,7 +239,6 @@ rel_expr        = add_expr [ rel_op add_expr ] ;
                   (* no chaining x < y < z as range — resolved in SPEC §13 *)
 
 add_expr        = mul_expr { ( "+" | "-" | "&" ) mul_expr } ;
-                  (* "&" ❌ *)
 
 mul_expr        = unary_expr { ( "*" | "/" | "DIV" | "MOD" ) unary_expr } ;
 
@@ -320,7 +319,7 @@ class_member    = [ "PUBLIC" | "PRIVATE" ]
 | --- | --- |
 | Program / block / comments | ✅ |
 | DECLARE + ARRAY types | ✅ |
-| CONSTANT | ❌ |
+| CONSTANT | ✅ |
 | Assignment / INPUT / OUTPUT | ✅ |
 | IF / ELSE / ELSE IF / ENDIF | ✅ |
 | CASE / ENDCASE | ✅ |
@@ -332,8 +331,8 @@ class_member    = [ "PUBLIC" | "PRIVATE" ]
 | Text files + EOF | ✅ |
 | Random files | ❌ |
 | Core expression operators | ✅ |
-| `&` concat | ❌ |
-| Builtins LENGTH/RIGHT/… | ❌ |
+| `&` concat | ✅ |
+| Builtins LENGTH/RIGHT/… | ✅ |
 | CHAR / DATE literals | ❌ / ❌ |
 | TYPE / CLASS | ❌ |
 

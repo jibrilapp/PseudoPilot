@@ -10,6 +10,8 @@ export type IdeDiagnostic = {
   readonly code: string;
   readonly line?: number;
   readonly column?: number;
+  /** Optional remediation hint from the compiler. */
+  readonly help?: string;
 };
 
 export type TranslationStatus = 'idle' | 'ok' | 'error';

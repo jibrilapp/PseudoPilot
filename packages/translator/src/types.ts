@@ -5,6 +5,8 @@ export type TranslateDiagnostic = {
   readonly message: string;
   readonly code: string;
   readonly span?: SourceSpan;
+  /** Optional remediation hint (from checker `help`, etc.). */
+  readonly help?: string;
 };
 
 export type AssignmentArrow = 'unicode' | 'ascii';
@@ -28,6 +30,11 @@ export type TranslateOptions = {
    * Default: {@link DEFAULT_MAX_SOURCE_CHARS}. Capped by {@link ABSOLUTE_MAX_SOURCE_CHARS}.
    */
   readonly maxSourceChars?: number;
+  /**
+   * Run `@pseudopilot/checker` after parse (scopes, types, undeclared names).
+   * Default: true. Set false only for low-level IR experiments.
+   */
+  readonly semanticCheck?: boolean;
 };
 
 export type TranslateResult = {
@@ -42,6 +49,7 @@ export const DEFAULT_OPTIONS: Required<TranslateOptions> = {
   assignmentArrow: 'unicode',
   preserveTrivia: true,
   maxSourceChars: DEFAULT_MAX_SOURCE_CHARS,
+  semanticCheck: true,
 };
 
 export function mergeOptions(
@@ -57,6 +65,7 @@ export function mergeOptions(
     assignmentArrow: options?.assignmentArrow ?? DEFAULT_OPTIONS.assignmentArrow,
     preserveTrivia: options?.preserveTrivia ?? DEFAULT_OPTIONS.preserveTrivia,
     maxSourceChars,
+    semanticCheck: options?.semanticCheck ?? DEFAULT_OPTIONS.semanticCheck,
   };
 }
 

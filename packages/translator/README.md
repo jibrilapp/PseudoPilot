@@ -2,59 +2,51 @@
 
 Bidirectional **Cambridge 9618 pseudocode ↔ Python** translation via a canonical IR.
 
-**Version:** `0.8.0` · **Subset id:** `v8-assign-io-expr-control-procedure-function`
+**Version:** `0.11.0` · **Subset id:** `v11-assign-io-expr-control-procedure-function-declare-check-builtins`
 
 ## Supported subset (current)
 
 | Supported | Not supported |
 | --- | --- |
-| Assignment (`←` / `<-` / Python `=`) including `A[i]` / `A[i, j]` | DECLARE, CONSTANT |
-| `INPUT` / `OUTPUT` (incl. indexed targets) | BYREF / BYVAL |
-| `IF` / `THEN` / `ELSE` / `ELSE IF` / `ENDIF` | File I/O |
-| `WHILE` / `[DO]` / `ENDWHILE` | `&` concatenation |
-| `REPEAT` / `UNTIL` | Builtins (`LENGTH`, `MID`, …) |
-| `FOR` / `TO` / `[STEP]` / `NEXT` | DATE / OOP / Extended |
-| `CASE OF` / `OTHERWISE` / `ENDCASE` | |
-| `PROCEDURE` / `ENDPROCEDURE` / `CALL` | |
-| `FUNCTION` / `RETURNS` / `ENDFUNCTION` / `RETURN` + expression calls | |
-| Literals: integer, real, string, char, boolean | |
-| Arithmetic / relational / logical expressions | |
+| Assignment (`←` / `<-` / Python `=`) including `A[i]` / `A[i, j]` | BYREF / BYVAL |
+| `INPUT` / `OUTPUT` (incl. indexed targets) | File I/O |
+| Control flow, PROCEDURE/FUNCTION, DECLARE/CONSTANT | DATE / OOP / Extended |
+| **Semantic check** via `@pseudopilot/checker` | |
+| **Builtins:** LENGTH, LEFT, RIGHT, MID, LCASE, UCASE, INT, RAND | |
+| **`&` string concatenation** | |
+| Literals + arithmetic / relational / logical expressions | |
 
-### Notable mappings
+See [`docs/language/SEMANTICS.md`](../../docs/language/SEMANTICS.md) and [`docs/language/TRANSLATION.md`](../../docs/language/TRANSLATION.md).
 
-- **FOR** inclusive bounds → Python `range(start, end±1 [, step])`
-- **CASE OF \<expr\>** (Cambridge order) → Python `match` / `case`
-- **PROCEDURE** → `def name(...):` (no return annotation)
-- **FUNCTION** → `def name(...) -> type:` with `return`
-- **REPEAT** → `while True:` + trailing `if condition: break`
+### Builtin → Python mappings
 
-### Limits
-
-Public entrypoints reject oversized sources by default (`maxSourceChars`, default 256 KiB characters) to avoid browser freezes and DoS. Override via `TranslateOptions.maxSourceChars` (hard ceiling still applies).
+| Cambridge | Python |
+| --- | --- |
+| `LENGTH(s)` | `len(s)` |
+| `LEFT(s, n)` | `s[:n]` |
+| `RIGHT(s, n)` | `s[-(n):]` (parens so `n+1` cannot become `-n+1`) |
+| `MID(s, start, length)` | `s[(start)-1 : (start)-1+(length)]` (1-based) |
+| `LCASE(s)` / `UCASE(s)` | `s.lower()` / `s.upper()` |
+| `INT(x)` | `int(x)` (truncate toward zero) |
+| `RAND(x)` | `random.random() * (x)` (+ `import random`) → REAL in `[0, x)` |
+| `a & b` | `a + b` |
 
 ## Usage
 
 ```ts
-import {
-  translatePseudocodeToPython,
-  translatePythonToPseudocode,
-} from '@pseudopilot/translator';
+import { translatePseudocodeToPython } from '@pseudopilot/translator';
 
 const py = translatePseudocodeToPython(`
-FUNCTION Double(n : INTEGER) RETURNS INTEGER
-    RETURN n * 2
-ENDFUNCTION
-
-OUTPUT Double(21)
+DECLARE Name : STRING
+OUTPUT UCASE(LEFT(Name, 3)) & "!"
 `);
 ```
 
-## Architecture
-
-See [`docs/language/TRANSLATION.md`](../../docs/language/TRANSLATION.md) and [ADR 0006](../../docs/adr/0006-canonical-ir-translation.md).
+Pipeline: **parse → semantic check (default) → lower → print**.
 
 ## Test
 
 ```bash
 pnpm --filter @pseudopilot/translator test
+pnpm --filter @pseudopilot/checker test
 ```

@@ -15,15 +15,16 @@ Bidirectional **Cambridge International Computer Science (9618) pseudocode ↔ P
 | Surface | Status |
 | --- | --- |
 | `@pseudopilot/language-core` | Lexer + parser + AST for a large Core subset (control flow, procedures, functions, DECLARE/arrays/files parsed) |
-| `@pseudopilot/translator` | Bidirectional translation via IR for assignment, I/O, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE, FUNCTION |
+| `@pseudopilot/checker` | Semantic checker: scopes, symbols, types, undeclared names, call arity/types |
+| `@pseudopilot/translator` | Bidirectional translation via IR (runs checker by default before lowering) |
 | `apps/web` | Student IDE: **translate-only** — edit pseudocode → live Python (Python pane read-only). **No code execution.** |
 | Interpreter / debugger / AI coach / remote sandbox | Scaffold / placeholders only — **not** production-ready |
 
-**Translator supported subset (V8):** assignment (`←`/`<-`), INPUT/OUTPUT, expressions, CHAR, indexes, IF/ELSE/ELSE IF, WHILE, REPEAT, FOR/STEP, CASE OF, PROCEDURE/CALL, FUNCTION/RETURNS/RETURN.
+**Translator supported subset (V11):** assignment, I/O, expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, semantic check, **builtins** (LENGTH/LEFT/RIGHT/MID/LCASE/UCASE/INT/RAND), **`&` concat**.
 
-**Not translated yet:** DECLARE, BYREF, file I/O, `&` concatenation, builtins, OOP/Extended constructs.
+**Not translated yet:** BYREF, file I/O, OOP/Extended constructs.
 
-Language docs: [`docs/language/`](./docs/language/).
+Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md)).
 
 ---
 

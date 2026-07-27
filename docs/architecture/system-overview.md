@@ -2,6 +2,16 @@
 
 PseudoPilot is a **modular monorepo**. Deployables live under `apps/` and `services/`. Shared deterministic teaching engines live under `packages/`.
 
+## Language pipeline
+
+```
+Lexer → Parser → AST → Semantic Checker → IR → Translator → Interpreter
+         (@pseudopilot/language-core)   (@pseudopilot/checker)
+                                        (@pseudopilot/translator)
+```
+
+Semantic rules live only in `@pseudopilot/checker` (`C_*` diagnostics). The translator may add Python-target diagnostics (`T_*`) after checking.
+
 ## Package dependency rules
 
 ```
@@ -10,6 +20,8 @@ services/* ──────► packages/*     (allowed)
 packages/A ──────► packages/B     (allowed if acyclic and documented)
 packages/* ─╳───► apps/*          (FORBIDDEN)
 language-core ─╳► ai-coach        (FORBIDDEN — AI never owns language truth)
+checker ─────────► language-core  (AST + spans only)
+translator ──────► language-core + checker
 ```
 
 ## Deployables

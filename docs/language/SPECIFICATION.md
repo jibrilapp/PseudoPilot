@@ -42,7 +42,7 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | Keyword | Role | Parser | Notes |
 | --- | --- | --- | --- |
 | `DECLARE` | Variable declaration | ✅ | Scalars + arrays |
-| `CONSTANT` | Named constant | ❌ | Value must be a literal |
+| `CONSTANT` | Named constant | ✅ | Value must be a literal |
 | `INTEGER` | Type name | ✅ | |
 | `REAL` | Type name | ✅ | |
 | `CHAR` | Type name | ✅ | |
@@ -144,14 +144,15 @@ These are identifiers with special semantics; PseudoPilot treats them as **built
 
 | Name | Parser |
 | --- | --- |
-| `LENGTH` | ❌ |
-| `RIGHT` | ❌ |
-| `MID` | ❌ |
-| `LCASE` | ❌ |
-| `UCASE` | ❌ |
-| `INT` | ❌ |
-| `RAND` | ❌ |
+| `LENGTH` | ✅ (soft CallExpression + registry) |
+| `RIGHT` | ✅ |
+| `MID` | ✅ |
+| `LCASE` | ✅ |
+| `UCASE` | ✅ |
+| `INT` | ✅ |
+| `RAND` | ✅ |
 | `EOF` | ✅ |
+| `LEFT` | ✅ (PseudoPilot Core / exam-insert style) |
 
 ### 1.10 Object-oriented / A Level (Extended)
 
@@ -230,7 +231,7 @@ Exponentiation is **not** a Cambridge arithmetic operator in the guide. The care
 
 | Operator | Meaning | Parser |
 | --- | --- | --- |
-| `&` | Concatenation | ❌ |
+| `&` | Concatenation | ✅ |
 
 ### 2.6 Member / pointer (Extended)
 
@@ -295,13 +296,14 @@ See §6. Fixed-length, homogeneous elements, consecutive integer indices.
 
 | Signature | Description | Parser | Runtime |
 | --- | --- | --- | --- |
-| `LENGTH(ThisString : STRING) RETURNS INTEGER` | Character count | ❌ | ❌ |
-| `RIGHT(ThisString : STRING, x : INTEGER) RETURNS STRING` | Rightmost `x` chars | ❌ | ❌ |
-| `MID(ThisString : STRING, x : INTEGER, y : INTEGER) RETURNS STRING` | Substring length `y` from position `x` (1-based) | ❌ | ❌ |
-| `LCASE(ThisChar : CHAR) RETURNS CHAR` | Lower-case letter | ❌ | ❌ |
-| `UCASE(ThisChar : CHAR) RETURNS CHAR` | Upper-case letter | ❌ | ❌ |
-| `INT(x : REAL) RETURNS INTEGER` | Truncate toward zero (integer part) | ❌ | ❌ |
-| `RAND(x : INTEGER) RETURNS REAL` | Random in `[0, x)` | ❌ | ❌ |
+| `LENGTH(ThisString : STRING) RETURNS INTEGER` | Character count | ✅ | ❌ |
+| `LEFT(ThisString : STRING, x : INTEGER) RETURNS STRING` | Leftmost `x` chars (PseudoPilot Core) | ✅ | ❌ |
+| `RIGHT(ThisString : STRING, x : INTEGER) RETURNS STRING` | Rightmost `x` chars | ✅ | ❌ |
+| `MID(ThisString : STRING, x : INTEGER, y : INTEGER) RETURNS STRING` | Substring length `y` from position `x` (1-based) | ✅ | ❌ |
+| `LCASE(ThisChar : CHAR) RETURNS CHAR` | Lower-case letter | ✅ | ❌ |
+| `UCASE(ThisChar : CHAR) RETURNS CHAR` | Upper-case letter | ✅ | ❌ |
+| `INT(x : REAL) RETURNS INTEGER` | Truncate toward zero (integer part) | ✅ | ❌ |
+| `RAND(x : INTEGER) RETURNS REAL` | Random in `[0, x)` | ✅ | ❌ |
 | `EOF(FileId) RETURNS BOOLEAN` | No more lines to read | ✅ | ❌ |
 
 **Notes**
@@ -568,11 +570,11 @@ An expression is one of:
 | Unary | `-x`, `NOT Flag` | ✅ |
 | Binary | `a + b`, `x DIV y`, `p AND q` | ✅ |
 | Grouping | `(a + b) * c` | ✅ |
-| Call | `Max(a, b)`, `LENGTH(s)` | 🟡 user funcs ✅; builtins mostly ❌ |
+| Call | `Max(a, b)`, `LENGTH(s)` | ✅ |
 | Index | `Grid[i, j]` | ✅ |
 | Member | `Pupil.LastName` | ❌ |
 | Pointer | `MyPtr^`, `^Var` | ❌ |
-| Concat | `a & b` | ❌ |
+| Concat | `a & b` | ✅ |
 | EOF | `EOF(path)` | ✅ |
 
 ### 10.2 Typing (semantic; mostly future)

@@ -8,9 +8,17 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  translatePseudocodeToPython,
+  translatePseudocodeToPython as translateCam,
   translatePythonToPseudocode,
 } from '../dist/index.js';
+import type { TranslateOptions } from './types.js';
+
+function translatePseudocodeToPython(
+  source: string,
+  options?: TranslateOptions,
+) {
+  return translateCam(source, { semanticCheck: false, ...options });
+}
 
 function norm(s: string): string {
   return s.replace(/\r\n/g, '\n');
@@ -220,5 +228,26 @@ X ← Double(5)
     expect(norm(back.code)).toContain('FUNCTION Double');
     expect(norm(back.code)).toContain('RETURNS INTEGER');
     expect(norm(back.code)).toContain('RETURN N * 2');
+  });
+
+  it('translates DECLARE and CONSTANT — IDE smoke', () => {
+    const result = translatePseudocodeToPython(`DECLARE Count : INTEGER
+CONSTANT PI = 3.14
+Count ← 1
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'Count: int\nPI = 3.14  # CONSTANT\nCount = 1\n',
+    );
+  });
+
+  it('round-trips DECLARE through dist printers', () => {
+    const py = translatePseudocodeToPython(`DECLARE Scores : ARRAY[1:3] OF INTEGER
+Scores[1] ← 9
+`);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('DECLARE Scores : ARRAY[1:3] OF INTEGER');
   });
 });

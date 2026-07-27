@@ -1,3 +1,4 @@
+import { check as checkCambridge } from '@pseudopilot/checker';
 import { parse as parseCambridge } from '@pseudopilot/language-core';
 import { lowerCambridgeProgram } from '../cambridge/lower.js';
 import { printCambridge } from '../cambridge/print.js';
@@ -29,8 +30,9 @@ function rejectIfTooLarge(
 /**
  * Cambridge pseudocode → Python.
  *
- * On parse errors, still lowers any recovered statements so callers get
- * partial `code` plus diagnostics (`ok: false`).
+ * Pipeline: parse → semantic check → lower IR → print Python.
+ * On errors, still lowers recovered statements so callers get partial `code`
+ * plus diagnostics (`ok: false`).
  *
  * @experimental Stable enough for IDE use in 0.x; API may change before 1.0.
  */
@@ -53,6 +55,28 @@ export function translatePseudocodeToPython(
       span: d.span,
     }),
   );
+
+  if (opts.semanticCheck) {
+    const checked = checkCambridge(parsed.ast);
+    for (const d of checked.diagnostics) {
+      if (d.help !== undefined) {
+        diagnostics.push({
+          severity: d.severity,
+          message: d.message,
+          code: d.code,
+          span: d.span,
+          help: d.help,
+        });
+      } else {
+        diagnostics.push({
+          severity: d.severity,
+          message: d.message,
+          code: d.code,
+          span: d.span,
+        });
+      }
+    }
+  }
 
   const lowered = lowerCambridgeProgram(parsed.ast, source, opts.preserveTrivia);
   diagnostics.push(...lowered.diagnostics);

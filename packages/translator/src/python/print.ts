@@ -4,6 +4,7 @@ import type {
   IrExpression,
   IrProgram,
   IrStatement,
+  IrTypeReference,
   IrUnaryExpression,
 } from '../ir/nodes.js';
 import {
@@ -19,6 +20,7 @@ import {
   irUnaryToPython,
   isWordOperator,
 } from '../rules/operators.js';
+import { tryPrintBuiltinPython } from '../builtins/emit.js';
 import { printTrivia } from '../trivia/attach.js';
 
 const INDENT = '    ';
@@ -55,6 +57,37 @@ function irTypeToPython(typeName: string): string {
   }
 }
 
+/**
+ * Python emission strategy (DECLARE / CONSTANT):
+ * - Scalar DECLARE → `Name: pytype` (annotation only; CHAR adds `# CHAR`)
+ * - Array DECLARE → `Name: list[elem]  # ARRAY[l:u, …]`
+ * - Multi-name DECLARE → one annotation line per name
+ * - CONSTANT → `Name = literal  # CONSTANT`
+ */
+function printDeclarePython(
+  names: readonly string[],
+  typeRef: IrTypeReference,
+  level: number,
+): string[] {
+  const p = pad(level);
+  if (typeRef.kind === 'IrScalarType') {
+    const py = irTypeToPython(typeRef.name);
+    const charTag = typeRef.name === 'CHAR' ? '  # CHAR' : '';
+    return names.map((name) => `${p}${name}: ${py}${charTag}`);
+  }
+  const elem = irTypeToPython(typeRef.elementType);
+  const dims = typeRef.dimensions
+    .map((d) => `${printExpr(d.lower, 0)}:${printExpr(d.upper, 0)}`)
+    .join(', ');
+  return names.map(
+    (name) => `${p}${name}: list[${elem}]  # ARRAY[${dims}]`,
+  );
+}
+
+function pad(level: number): string {
+  return INDENT.repeat(level);
+}
+
 function printTarget(target: IrAssignTarget): string {
   if (target.kind === 'IrIdentifier') return target.name;
   return target.indices.reduce(
@@ -79,8 +112,15 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return expr.name;
     case 'IrIndexExpression':
       return printTarget(expr);
-    case 'IrCallExpression':
+    case 'IrCallExpression': {
+      const builtin = tryPrintBuiltinPython(
+        expr.callee,
+        expr.args,
+        printExpr,
+      );
+      if (builtin !== null) return builtin;
       return `${expr.callee}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
+    }
     case 'IrGroupingExpression':
       return `(${printExpr(expr.expression, 0)})`;
     case 'IrUnaryExpression':
@@ -110,10 +150,6 @@ function printBinary(expr: IrBinaryExpression, parentPrec: number): string {
   const right = printExpr(expr.right, prec + 1);
   const core = `${left} ${op} ${right}`;
   return prec < parentPrec ? `(${core})` : core;
-}
-
-function pad(level: number): string {
-  return INDENT.repeat(level);
 }
 
 function printBlock(
@@ -222,6 +258,12 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       lines.push(...printBlock(stmt.body, level + 1));
       break;
     }
+    case 'IrDeclareStatement':
+      lines.push(...printDeclarePython(stmt.names, stmt.typeRef, level));
+      break;
+    case 'IrConstantStatement':
+      lines.push(`${p}${stmt.name} = ${printExpr(stmt.value, 0)}  # CONSTANT`);
+      break;
     case 'IrProcedureDeclaration': {
       const params = stmt.parameters
         .map((param) => `${param.name}: ${irTypeToPython(param.typeName)}`)
@@ -265,6 +307,8 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     stmt.kind !== 'IrWhileStatement' &&
     stmt.kind !== 'IrRepeatStatement' &&
     stmt.kind !== 'IrForStatement' &&
+    stmt.kind !== 'IrDeclareStatement' &&
+    stmt.kind !== 'IrConstantStatement' &&
     stmt.kind !== 'IrProcedureDeclaration' &&
     stmt.kind !== 'IrFunctionDeclaration' &&
     trailing.length > 0 &&
@@ -291,9 +335,82 @@ function finalizeOutput(lines: string[]): string {
 
 export function printPython(program: IrProgram): string {
   const lines: string[] = [...printTrivia(program.leadingTrivia, 'hash')];
+  if (irUsesRand(program)) {
+    lines.push('import random');
+    lines.push('');
+  }
   for (const stmt of program.body) {
     lines.push(...printStatement(stmt, 0));
   }
   lines.push(...printTrivia(program.trailingTrivia, 'hash'));
   return finalizeOutput(lines);
+}
+
+function irUsesRand(program: IrProgram): boolean {
+  const walkExpr = (e: IrExpression): boolean => {
+    switch (e.kind) {
+      case 'IrCallExpression':
+        if (e.callee.toLowerCase() === 'rand') return true;
+        return e.args.some(walkExpr);
+      case 'IrUnaryExpression':
+        return walkExpr(e.argument);
+      case 'IrBinaryExpression':
+        return walkExpr(e.left) || walkExpr(e.right);
+      case 'IrGroupingExpression':
+        return walkExpr(e.expression);
+      case 'IrIndexExpression':
+        return e.indices.some(walkExpr);
+      default:
+        return false;
+    }
+  };
+  const walkStmt = (s: IrStatement): boolean => {
+    switch (s.kind) {
+      case 'IrAssignment':
+        return walkExpr(s.value);
+      case 'IrOutput':
+        return s.values.some(walkExpr);
+      case 'IrInput':
+        return s.prompt ? walkExpr(s.prompt) : false;
+      case 'IrIfStatement':
+        return (
+          walkExpr(s.condition) ||
+          s.consequent.some(walkStmt) ||
+          s.elseIfClauses.some(
+            (c) => walkExpr(c.condition) || c.consequent.some(walkStmt),
+          ) ||
+          (s.alternate?.some(walkStmt) ?? false)
+        );
+      case 'IrWhileStatement':
+      case 'IrRepeatStatement':
+        return walkExpr(s.condition) || s.body.some(walkStmt);
+      case 'IrForStatement':
+        return (
+          walkExpr(s.start) ||
+          walkExpr(s.end) ||
+          (s.step ? walkExpr(s.step) : false) ||
+          s.body.some(walkStmt)
+        );
+      case 'IrCaseStatement':
+        return (
+          walkExpr(s.discriminant) ||
+          s.arms.some((a) => a.body.some(walkStmt)) ||
+          (s.otherwise?.some(walkStmt) ?? false)
+        );
+      case 'IrProcedureDeclaration':
+      case 'IrFunctionDeclaration':
+        return s.body.some(walkStmt);
+      case 'IrCallStatement':
+        return (
+          s.callee.toLowerCase() === 'rand' || s.args.some(walkExpr)
+        );
+      case 'IrReturnStatement':
+        return walkExpr(s.value);
+      case 'IrConstantStatement':
+        return walkExpr(s.value);
+      default:
+        return false;
+    }
+  };
+  return program.body.some(walkStmt);
 }

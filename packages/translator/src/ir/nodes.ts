@@ -25,6 +25,8 @@ export type IrStatement =
   | IrWhileStatement
   | IrRepeatStatement
   | IrForStatement
+  | IrDeclareStatement
+  | IrConstantStatement
   | IrProcedureDeclaration
   | IrFunctionDeclaration
   | IrCallStatement
@@ -122,8 +124,48 @@ export type IrForStatement = WithTrivia & {
   readonly body: IrStatement[];
 };
 
-/** Cambridge scalar type names on procedure parameters. */
+/** Cambridge scalar type names on procedure parameters / DECLARE / RETURNS. */
 export type IrTypeName = 'INTEGER' | 'REAL' | 'STRING' | 'BOOLEAN' | 'CHAR';
+
+export type IrArrayDimension = {
+  readonly kind: 'IrArrayDimension';
+  readonly lower: IrExpression;
+  readonly upper: IrExpression;
+};
+
+export type IrScalarType = {
+  readonly kind: 'IrScalarType';
+  readonly name: IrTypeName;
+};
+
+/** ARRAY[l:u, …] OF elementType */
+export type IrArrayType = {
+  readonly kind: 'IrArrayType';
+  readonly dimensions: IrArrayDimension[];
+  readonly elementType: IrTypeName;
+};
+
+export type IrTypeReference = IrScalarType | IrArrayType;
+
+/**
+ * DECLARE Name[, Name]* : Type
+ * Emitted as Python annotated names (`Name: int`) — one IR node may list many names.
+ */
+export type IrDeclareStatement = WithTrivia & {
+  readonly kind: 'IrDeclareStatement';
+  readonly names: string[];
+  readonly typeRef: IrTypeReference;
+};
+
+/**
+ * CONSTANT Name = <literal>
+ * Emitted as `Name = literal  # CONSTANT`.
+ */
+export type IrConstantStatement = WithTrivia & {
+  readonly kind: 'IrConstantStatement';
+  readonly name: string;
+  readonly value: IrExpression;
+};
 
 export type IrParameter = {
   readonly kind: 'IrParameter';
@@ -232,6 +274,7 @@ export type IrBinaryOp =
   | '/'
   | '//'
   | '%'
+  | '&'
   | '=='
   | '!='
   | '<'

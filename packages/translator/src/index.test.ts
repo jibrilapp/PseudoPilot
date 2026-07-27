@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
-  translatePseudocodeToPython,
+  translatePseudocodeToPython as translateCam,
   translatePythonToPseudocode,
 } from './index.js';
-import { ABSOLUTE_MAX_SOURCE_CHARS } from './types.js';
+import {
+  ABSOLUTE_MAX_SOURCE_CHARS,
+  type TranslateOptions,
+} from './types.js';
+
+/** Golden IR/print tests disable the checker so undeclared demo vars still translate. */
+function translatePseudocodeToPython(
+  source: string,
+  options?: TranslateOptions,
+) {
+  return translateCam(source, { semanticCheck: false, ...options });
+}
 
 function norm(s: string): string {
   return s.replace(/\r\n/g, '\n').trimEnd() + '\n';
@@ -351,11 +362,21 @@ UNTIL
     expect(result.diagnostics.length).toBeGreaterThan(0);
   });
 
-  it('rejects DECLARE', () => {
-    const result = translatePseudocodeToPython(`DECLARE X : INTEGER\n`);
+  it('translates DECLARE scalars', () => {
+    const result = translatePseudocodeToPython(`DECLARE Count : INTEGER\n`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('Count: int\n');
+  });
+
+  it('still emits partial code when a later unsupported stmt fails', () => {
+    const result = translatePseudocodeToPython(`
+X ← 1
+OPENFILE "f.txt" FOR READ
+`);
     expect(result.ok).toBe(false);
+    expect(result.code).toContain('X = 1');
     expect(
-      result.diagnostics.some((d) => d.code === 'T_UNSUPPORTED_DECLARE'),
+      result.diagnostics.some((d) => d.code === 'T_UNSUPPORTED_FILE'),
     ).toBe(true);
   });
 
@@ -406,18 +427,6 @@ OUTPUT Scores[1]
     const result = translatePseudocodeToPython(`X ← +3\n`);
     expect(result.ok).toBe(true);
     expect(norm(result.code)).toBe('X = +3\n');
-  });
-
-  it('still emits partial code when a later unsupported stmt fails', () => {
-    const result = translatePseudocodeToPython(`
-X ← 1
-DECLARE Y : INTEGER
-`);
-    expect(result.ok).toBe(false);
-    expect(result.code).toContain('X = 1');
-    expect(
-      result.diagnostics.some((d) => d.code === 'T_UNSUPPORTED_DECLARE'),
-    ).toBe(true);
   });
 });
 
@@ -1346,15 +1355,16 @@ ENDPROCEDURE
     expect(result.ok).toBe(false);
   });
 
-  it('rejects DECLARE inside PROCEDURE', () => {
+  it('translates DECLARE inside PROCEDURE', () => {
     const result = translatePseudocodeToPython(`
 PROCEDURE Bad()
     DECLARE X : INTEGER
     OUTPUT X
 ENDPROCEDURE
 `);
-    expect(result.ok).toBe(false);
-    expect(result.diagnostics.some((d) => d.code === 'T_UNSUPPORTED_DECLARE')).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('X: int');
+    expect(norm(result.code)).toContain('print(X)');
   });
 
   it('rejects missing ENDPROCEDURE', () => {
@@ -1376,13 +1386,18 @@ ENDPROCEDURE
   });
 
   it('rejects duplicate procedure parameters', () => {
-    const result = translatePseudocodeToPython(`
+    const result = translatePseudocodeToPython(
+      `
 PROCEDURE P(A : INTEGER, A : INTEGER)
     OUTPUT A
 ENDPROCEDURE
-`);
+`,
+      { semanticCheck: true },
+    );
     expect(result.ok).toBe(false);
-    expect(result.diagnostics.some((d) => d.code === 'T_PROC_DUP_PARAM')).toBe(true);
+    expect(result.diagnostics.some((d) => d.code === 'C_DUP_PARAMETER')).toBe(
+      true,
+    );
   });
 
   it('warns when CALL appears before PROCEDURE', () => {
@@ -1574,27 +1589,35 @@ X ← Add(1, 2)
     expect(norm(result.code)).toContain('X = Add(1, 2)');
   });
 
-  it('warns when FUNCTION has no RETURN', () => {
-    const result = translatePseudocodeToPython(`
+  it('errors when FUNCTION has no RETURN', () => {
+    const result = translatePseudocodeToPython(
+      `
 FUNCTION Bad() RETURNS INTEGER
     OUTPUT 1
 ENDFUNCTION
-`);
-    expect(result.ok).toBe(true);
-    expect(result.diagnostics.some((d) => d.code === 'T_FUNC_NO_RETURN')).toBe(true);
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'C_FUNC_NO_RETURN')).toBe(
+      true,
+    );
   });
 
   it('warns on unreachable code after RETURN', () => {
-    const result = translatePseudocodeToPython(`
+    const result = translatePseudocodeToPython(
+      `
 FUNCTION Bad() RETURNS INTEGER
     RETURN 1
     OUTPUT 2
 ENDFUNCTION
-`);
+`,
+      { semanticCheck: true },
+    );
     expect(result.ok).toBe(true);
-    expect(
-      result.diagnostics.some((d) => d.code === 'T_UNREACHABLE_AFTER_RETURN'),
-    ).toBe(true);
+    expect(result.diagnostics.some((d) => d.code === 'C_UNREACHABLE')).toBe(
+      true,
+    );
   });
 
   it('rejects missing ENDFUNCTION', () => {
@@ -1615,13 +1638,18 @@ ENDFUNCTION
   });
 
   it('rejects duplicate FUNCTION parameters', () => {
-    const result = translatePseudocodeToPython(`
+    const result = translatePseudocodeToPython(
+      `
 FUNCTION Bad(A : INTEGER, A : INTEGER) RETURNS INTEGER
     RETURN A
 ENDFUNCTION
-`);
+`,
+      { semanticCheck: true },
+    );
     expect(result.ok).toBe(false);
-    expect(result.diagnostics.some((d) => d.code === 'T_PROC_DUP_PARAM')).toBe(true);
+    expect(result.diagnostics.some((d) => d.code === 'C_DUP_PARAMETER')).toBe(
+      true,
+    );
   });
 });
 
@@ -1693,6 +1721,273 @@ describe('operators module / precedence printing', () => {
   });
 });
 
+describe('operators module / precedence printing', () => {
+  it('does not over-parenthesize left-assoc chains', () => {
+    const result = translatePseudocodeToPython(`X ← 1 + 2 + 3\n`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('X = 1 + 2 + 3\n');
+  });
+
+  it('parenthesizes when mixed precedence requires it from source grouping', () => {
+    const result = translatePythonToPseudocode(`x = 2 * (3 + 4)\n`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('x ← 2 * (3 + 4)\n');
+  });
+});
+
+describe('DECLARE and CONSTANT (V9)', () => {
+  it('translates every scalar DECLARE type', () => {
+    const result = translatePseudocodeToPython(`
+DECLARE Count : INTEGER
+DECLARE Name : STRING
+DECLARE Finished : BOOLEAN
+DECLARE Grade : CHAR
+DECLARE Average : REAL
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'Count: int\nName: str\nFinished: bool\nGrade: str  # CHAR\nAverage: float\n',
+    );
+  });
+
+  it('translates multi-name DECLARE', () => {
+    const result = translatePseudocodeToPython(`DECLARE A, B : INTEGER\n`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('A: int\nB: int\n');
+  });
+
+  it('translates array DECLARE with bounds comment', () => {
+    const result = translatePseudocodeToPython(
+      `DECLARE Scores : ARRAY[1:10] OF INTEGER\n`,
+    );
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('Scores: list[int]  # ARRAY[1:10]\n');
+  });
+
+  it('translates CONSTANT literals', () => {
+    const result = translatePseudocodeToPython(`
+CONSTANT PI = 3.14159
+CONSTANT Greeting = "Hello"
+CONSTANT Letter = 'A'
+CONSTANT Flag = TRUE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'PI = 3.14159  # CONSTANT\nGreeting = "Hello"  # CONSTANT\nLetter = \'A\'  # CONSTANT\nFlag = True  # CONSTANT\n',
+    );
+  });
+
+  it('translates DECLARE/CONSTANT inside PROCEDURE and FUNCTION', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE P()
+    DECLARE X : INTEGER
+    CONSTANT Max = 10
+    X ← Max
+    OUTPUT X
+ENDPROCEDURE
+
+FUNCTION F() RETURNS INTEGER
+    DECLARE Y : INTEGER
+    Y ← 1
+    RETURN Y
+ENDFUNCTION
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('X: int');
+    expect(result.code).toContain('Max = 10  # CONSTANT');
+    expect(result.code).toContain('Y: int');
+  });
+
+  it('round-trips DECLARE and CONSTANT', () => {
+    const src = `
+DECLARE Count : INTEGER
+DECLARE Grade : CHAR
+DECLARE Scores : ARRAY[1:5] OF INTEGER
+CONSTANT PI = 3.14
+Count ← 1
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('DECLARE Count : INTEGER');
+    expect(norm(back.code)).toContain('DECLARE Grade : CHAR');
+    expect(norm(back.code)).toContain('DECLARE Scores : ARRAY[1:5] OF INTEGER');
+    expect(norm(back.code)).toContain('CONSTANT PI = 3.14');
+  });
+
+  it('diagnostics: duplicate DECLARE', () => {
+    const result = translatePseudocodeToPython(
+      `
+DECLARE X : INTEGER
+DECLARE X : REAL
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'C_DUP_VARIABLE')).toBe(true);
+  });
+
+  it('diagnostics: duplicate CONSTANT', () => {
+    const result = translatePseudocodeToPython(
+      `
+CONSTANT A = 1
+CONSTANT A = 2
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'C_DUP_CONSTANT')).toBe(true);
+  });
+
+  it('diagnostics: assign to CONSTANT', () => {
+    const result = translatePseudocodeToPython(
+      `
+CONSTANT Max = 10
+Max ← 11
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'C_ASSIGN_TO_CONSTANT')).toBe(
+      true,
+    );
+    expect(result.code).not.toContain('Max = 11');
+    expect(result.code).toContain('Max = 10  # CONSTANT');
+  });
+
+  it('diagnostics: INPUT to CONSTANT', () => {
+    const result = translatePseudocodeToPython(
+      `
+CONSTANT Max = 10
+INPUT Max
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'C_ASSIGN_TO_CONSTANT')).toBe(
+      true,
+    );
+    expect(result.code).not.toContain('input()');
+  });
+
+  it('diagnostics: FOR cannot use CONSTANT as loop variable', () => {
+    const result = translatePseudocodeToPython(
+      `
+CONSTANT I = 1
+FOR I ← 1 TO 5
+    OUTPUT I
+NEXT I
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'C_ASSIGN_TO_CONSTANT')).toBe(
+      true,
+    );
+    expect(result.code).not.toContain('for I in range');
+  });
+
+  it('diagnostics: REJECT Python keyword DECLARE/CONSTANT names', () => {
+    const decl = translatePseudocodeToPython(`DECLARE class : INTEGER\n`, {
+      semanticCheck: false,
+    });
+    expect(decl.ok).toBe(false);
+    expect(decl.diagnostics.some((d) => d.code === 'T_DECL_PY_KEYWORD')).toBe(true);
+    expect(decl.code).not.toContain('class:');
+
+    const cons = translatePseudocodeToPython(`CONSTANT def = 1\n`, {
+      semanticCheck: false,
+    });
+    expect(cons.ok).toBe(false);
+    expect(cons.diagnostics.some((d) => d.code === 'T_DECL_PY_KEYWORD')).toBe(true);
+    expect(cons.code).not.toContain('def =');
+  });
+
+  it('diagnostics: DECLARE then CONSTANT same name', () => {
+    const result = translatePseudocodeToPython(
+      `
+DECLARE X : INTEGER
+CONSTANT X = 1
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'C_DUP_CONSTANT')).toBe(true);
+  });
+
+  it('warns when DECLARE shadows translator builtins', () => {
+    const result = translatePseudocodeToPython(`DECLARE print : INTEGER\n`, {
+      semanticCheck: false,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.some((d) => d.code === 'T_DECL_SHADOWS_BUILTIN')).toBe(
+      true,
+    );
+  });
+
+  it('semantic check: undeclared identifier fails translate ok', () => {
+    const result = translatePseudocodeToPython(`OUTPUT X\n`, {
+      semanticCheck: true,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'C_UNDECL_IDENT')).toBe(true);
+    expect(result.code).toContain('print(X)');
+  });
+
+  it('canonicalizes identifier casing for Python (Cambridge case-insensitive)', () => {
+    const result = translatePseudocodeToPython(
+      `
+DECLARE Count : INTEGER
+count ← 1
+OUTPUT COUNT
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('Count: int\nCount = 1\nprint(Count)\n');
+  });
+
+  it('allows shadowing CONSTANT in nested PROCEDURE scope', () => {
+    const result = translatePseudocodeToPython(`
+CONSTANT Max = 1
+PROCEDURE P()
+    DECLARE Max : INTEGER
+    Max ← 2
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(true);
+  });
+
+  it('reverse: annotation-only declare', () => {
+    const result = translatePythonToPseudocode(`Count: int\nName: str\n`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'DECLARE Count : INTEGER\nDECLARE Name : STRING\n',
+    );
+  });
+
+  it('reverse: case-insensitive CONSTANT/CHAR tags', () => {
+    const result = translatePythonToPseudocode(
+      `PI = 3.14  # constant\nGrade: str  # char\n`,
+    );
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('CONSTANT PI = 3.14');
+    expect(norm(result.code)).toContain('DECLARE Grade : CHAR');
+  });
+
+  it('round-trips ARRAY bounds with identifier upper', () => {
+    const py = translatePseudocodeToPython(
+      `DECLARE N : INTEGER\nDECLARE Scores : ARRAY[1:N] OF INTEGER\n`,
+    );
+    expect(py.ok).toBe(true);
+    expect(py.code).toContain('# ARRAY[1:N]');
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('DECLARE Scores : ARRAY[1:N] OF INTEGER');
+  });
+});
+
 describe('source size limits', () => {
   it('rejects oversized Cambridge source with T_SOURCE_TOO_LARGE', () => {
     const source = 'X ← 1\n'.repeat(100);
@@ -1719,5 +2014,96 @@ describe('source size limits', () => {
       maxSourceChars: ABSOLUTE_MAX_SOURCE_CHARS + 1_000_000,
     });
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('builtins and & translation', () => {
+  it('translates string builtins and & to Python', () => {
+    const result = translatePseudocodeToPython(
+      `
+DECLARE Name : STRING
+OUTPUT LENGTH(Name)
+OUTPUT LEFT(Name, 3)
+OUTPUT RIGHT(Name, 2)
+OUTPUT MID(Name, 2, 3)
+OUTPUT LCASE(Name)
+OUTPUT UCASE(Name)
+OUTPUT Name & "!"
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(true);
+    const code = result.code;
+    expect(code).toContain('len(Name)');
+    expect(code).toContain('Name[:3]');
+    expect(code).toContain('Name[-2:]');
+    expect(code).toContain('Name[(2) - 1 : (2) - 1 + (3)]');
+    expect(code).toContain('Name.lower()');
+    expect(code).toContain('Name.upper()');
+    expect(code).toContain('Name + "!"');
+    expect(code).not.toContain('&');
+  });
+
+  it('parenthesizes RIGHT and RAND count expressions (precedence)', () => {
+    const result = translatePseudocodeToPython(
+      `
+DECLARE S : STRING
+DECLARE N : INTEGER
+OUTPUT RIGHT(S, N + 1)
+OUTPUT RAND(N + 1)
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(true);
+    // Must NOT emit S[-N + 1:] or random.random() * N + 1
+    expect(result.code).toContain('S[-(N + 1):]');
+    expect(result.code).not.toMatch(/S\[-N \+ 1:\]/);
+    expect(result.code).toContain('random.random() * (N + 1)');
+    expect(result.code).not.toMatch(/random\.random\(\) \* N \+ 1/);
+  });
+
+  it('translates INT and RAND', () => {
+    const result = translatePseudocodeToPython(
+      `
+OUTPUT INT(4.8)
+OUTPUT RAND(10)
+`,
+      { semanticCheck: true },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('import random');
+    expect(result.code).toContain('int(4.8)');
+    expect(result.code).toContain('random.random() * 10');
+  });
+
+  it('round-trips builtins via Python', () => {
+    const py = translatePseudocodeToPython(
+      `
+DECLARE S : STRING
+OUTPUT LENGTH(S)
+OUTPUT LEFT(S, 1)
+OUTPUT RIGHT(S, 1)
+OUTPUT MID(S, 2, 3)
+OUTPUT LCASE(S)
+OUTPUT S & "x"
+`,
+      { semanticCheck: true },
+    );
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(back.code).toContain('LENGTH(S)');
+    expect(back.code).toContain('LEFT(S, 1)');
+    expect(back.code).toContain('RIGHT(S, 1)');
+    expect(back.code).toContain('MID(S, 2, 3)');
+    expect(back.code).toContain('LCASE(S)');
+    expect(back.code).toContain('&');
+  });
+
+  it('does not treat LENGTH as stringy for reverse + → &', () => {
+    const back = translatePythonToPseudocode('print(len(S) + 1)');
+    expect(back.ok).toBe(true);
+    expect(back.code).toContain('LENGTH(S) + 1');
+    expect(back.code).not.toContain('&');
   });
 });

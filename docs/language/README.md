@@ -9,9 +9,10 @@ PseudoPilot targets the **Cambridge International AS & A Level Computer Science 
 | [SPECIFICATION.md](./SPECIFICATION.md) | Full language rules, ambiguities, and PseudoPilot resolutions |
 | [EBNF.md](./EBNF.md) | Complete EBNF grammar for the dialect |
 | [PARSER_COVERAGE.md](./PARSER_COVERAGE.md) | What `@pseudopilot/language-core` can parse today |
-| [IMPLEMENTATION_CHECKLIST.md](./IMPLEMENTATION_CHECKLIST.md) | Parser + translator + runtime progress |
+| [IMPLEMENTATION_CHECKLIST.md](./IMPLEMENTATION_CHECKLIST.md) | Parser + checker + translator + runtime progress |
+| [SEMANTICS.md](./SEMANTICS.md) | Semantic checker: scopes, types, diagnostics (`C_*`) |
 | [SPEC_REVIEW.md](./SPEC_REVIEW.md) | Production readiness review of this suite (errata + priorities) |
-| [TRANSLATION.md](./TRANSLATION.md) | Translation engine architecture and V1 mapping |
+| [TRANSLATION.md](./TRANSLATION.md) | Translation engine architecture and V10 mapping |
 
 ## Status legend
 

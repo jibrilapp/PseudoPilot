@@ -82,9 +82,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@pseudopilot/language-core':
-        specifier: workspace:*
-        version: link:../../packages/language-core
       '@pseudopilot/translator':
         specifier: workspace:*
         version: link:../../packages/translator
@@ -167,6 +164,28 @@ importers:
         version: 2.1.9(@types/node@22.20.1)
 
   packages/auth:
+    devDependencies:
+      '@pseudopilot/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@pseudopilot/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      eslint:
+        specifier: ^9.17.0
+        version: 9.39.5(jiti@1.21.7)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)
+
+  packages/checker:
+    dependencies:
+      '@pseudopilot/language-core':
+        specifier: workspace:*
+        version: link:../language-core
     devDependencies:
       '@pseudopilot/eslint-config':
         specifier: workspace:*
@@ -306,6 +325,9 @@ importers:
 
   packages/translator:
     dependencies:
+      '@pseudopilot/checker':
+        specifier: workspace:*
+        version: link:../checker
       '@pseudopilot/language-core':
         specifier: workspace:*
         version: link:../language-core
