@@ -26,5 +26,5 @@ Editing the **Pseudocode** pane debounces (~250ms) and calls
 - On failure, the last successful Python text stays visible and diagnostics
   appear in the bottom Console / Diagnostics panel.
 
-Translator subset: assignment, INPUT/OUTPUT, expressions, CHAR, indexes, **IF**, **WHILE**, **REPEAT**, **FOR**, **CASE**.
-Unsupported constructs (DECLARE, routines, …) show diagnostics without crashing the UI.
+Translator subset: assignment, INPUT/OUTPUT, expressions, CHAR, indexes, **IF**, **WHILE**, **REPEAT**, **FOR**, **CASE**, **PROCEDURE**/**CALL**.
+Unsupported constructs (FUNCTION, DECLARE, routines depth, …) show diagnostics without crashing the UI.

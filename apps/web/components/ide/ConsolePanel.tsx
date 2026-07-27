@@ -22,7 +22,14 @@ export function ConsolePanel({ lines = [], diagnostics = [] }: ConsolePanelProps
           {hasDiagnostics ? 'Translation' : 'Output'}
         </span>
         {hasDiagnostics && (
-          <span className="ml-auto text-[11px] text-rose-300/80">
+          <span
+            className={cn(
+              'ml-auto text-[11px]',
+              diagnostics.some((d) => d.severity === 'error')
+                ? 'text-rose-300/80'
+                : 'text-amber-300/80',
+            )}
+          >
             {diagnostics.length} issue{diagnostics.length === 1 ? '' : 's'}
           </span>
         )}
@@ -31,8 +38,19 @@ export function ConsolePanel({ lines = [], diagnostics = [] }: ConsolePanelProps
         {hasDiagnostics ? (
           diagnostics.map((d) => (
             <div key={d.id} className="flex gap-3">
-              <span className="w-4 shrink-0 select-none text-rose-300/70">!</span>
-              <span className="text-rose-300/90">
+              <span
+                className={cn(
+                  'w-4 shrink-0 select-none',
+                  d.severity === 'warning' ? 'text-amber-300/70' : 'text-rose-300/70',
+                )}
+              >
+                {d.severity === 'warning' ? '~' : '!'}
+              </span>
+              <span
+                className={
+                  d.severity === 'warning' ? 'text-amber-200/90' : 'text-rose-300/90'
+                }
+              >
                 <span className="text-white/40">[{d.code}]</span>{' '}
                 {d.line != null ? `Line ${d.line}: ` : ''}
                 {d.message}

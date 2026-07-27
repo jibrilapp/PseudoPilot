@@ -1,8 +1,8 @@
 # Translation Engine — Architecture (V1)
 
 **Package:** `@pseudopilot/translator`  
-**Dialect version:** Core subset V6 (assignment, I/O, expressions, CHAR, array indexes, IF / ELSE / ELSE IF, WHILE / ENDWHILE, REPEAT / UNTIL, FOR / NEXT / STEP, **CASE OF / OTHERWISE / ENDCASE**)  
-**Status:** CASE translation milestone complete
+**Dialect version:** Core subset V7 (assignment, I/O, expressions, CHAR, array indexes, IF / ELSE / ELSE IF, WHILE / ENDWHILE, REPEAT / UNTIL, FOR / NEXT / STEP, CASE OF / OTHERWISE / ENDCASE, **PROCEDURE / CALL**)  
+**Status:** PROCEDURE translation milestone complete
 
 ---
 
@@ -46,7 +46,7 @@ PseudoPilot does **not** translate by string rewrite. The engine is a classic mu
 
 - Deterministic: same input → same IR → same output (stable formatting).
 - Pure library: no I/O, network, or AI.
-- Fail loudly on unsupported constructs (routines, …) with structured diagnostics — never invent control flow.
+- Fail loudly on unsupported constructs (FUNCTION, DECLARE, …) with structured diagnostics — never invent control flow.
 - New languages plug in as **frontend + printer** only; IR and rule registries stay shared.
 
 ---
@@ -77,6 +77,8 @@ This is a **single-pass recursive descent over the AST** (visitor by explicit `s
    - `while True` + trailing `if <condition>: break` patterns → `REPEAT ... UNTIL`
    - `for <var> in range(...)` → `FOR ... NEXT`
    - `match` / `case` / `case _` → `CASE OF` / arms / `OTHERWISE`
+   - `def Name(params):` → `PROCEDURE … ENDPROCEDURE`
+   - statement-level `Name(args)` → `CALL Name(args)`
 3. Same IR printers as the Cambridge path.
 
 ### IR → text
@@ -156,9 +158,15 @@ Trivia is stored on IR nodes, not re-derived from target language, so Cambridge 
 | `REPEAT` / `UNTIL` | `IrRepeatStatement` | `while True` + trailing `if cond: break` |
 | `FOR` / `TO` / `STEP` / `NEXT` | `IrForStatement` | `for … in range(start, end±1 [, step])` |
 | `CASE OF` / `OTHERWISE` / `ENDCASE` | `IrCaseStatement` | Python 3.10+ `match` / `case` / `case _` (ranges → `case _v if low <= _v and _v <= high`) |
+| `PROCEDURE` / `ENDPROCEDURE` | `IrProcedureDeclaration` | `def Name(params):` with `int`/`float`/`str`/`bool` annotations |
+| `CALL Name(args)` | `IrCallStatement` | `Name(args)` statement |
 
 **INPUT typing:** Without `DECLARE` (out of current subset), Cambridge `INPUT` has no declared type. PseudoPilot maps to Python `input()` (always `str`). Coercion belongs with a later typechecker + DECLARE milestone — not invented here.
 
 **CASE → Python decision:** Emit `match`/`case` (Python 3.10+). It is the clearest semantic match for Cambridge CASE; the project does not pin an older Python runtime. Range labels use a guarded capture `_v` so inclusive `TO` bounds round-trip.
 
-**Explicitly out of scope for this subset:** DECLARE, routines, file I/O, `&` concatenation, builtins, DATE literals.
+**PROCEDURE → Python:** Parameters are by-value (Cambridge default). `BYVAL`/`BYREF` keywords are not parsed. Types map INTEGER→int, REAL→float, STRING/CHAR→str, BOOLEAN→bool. Expression-level calls (`F(...)` in expressions) remain unsupported — use `CALL` for procedures only.
+
+**PROCEDURE safety checks:** Procedure/parameter names that are Python keywords are rejected (`T_PROC_PY_KEYWORD`). Duplicate parameters are rejected (`T_PROC_DUP_PARAM`). Nested `def` is rejected. Names that shadow `print`/`input`/`range` warn (`T_PROC_SHADOWS_BUILTIN`). Unannotated Python params warn and default to INTEGER (`T_PROC_DEFAULT_TYPE`). CALL before its PROCEDURE definition warns (`T_CALL_BEFORE_PROC`).
+
+**Explicitly out of scope for this subset:** FUNCTION / RETURN / RETURNS, DECLARE, BYREF, file I/O, `&` concatenation, builtins, DATE literals.

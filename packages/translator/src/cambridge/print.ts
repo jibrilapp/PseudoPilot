@@ -173,6 +173,21 @@ function printStatement(
       lines.push(`${p}NEXT ${stmt.variable}`);
       break;
     }
+    case 'IrProcedureDeclaration': {
+      const params = stmt.parameters
+        .map((param) => `${param.name} : ${param.typeName}`)
+        .join(', ');
+      lines.push(`${p}PROCEDURE ${stmt.name}(${params})`);
+      lines.push(...printBlock(stmt.body, arrow, level + 1));
+      lines.push(`${p}ENDPROCEDURE`);
+      break;
+    }
+    case 'IrCallStatement': {
+      lines.push(
+        `${p}CALL ${stmt.callee}(${stmt.args.map((a) => printExpr(a, 0)).join(', ')})`,
+      );
+      break;
+    }
     case 'IrBreakStatement':
       break;
     default: {
@@ -188,6 +203,7 @@ function printStatement(
     stmt.kind !== 'IrWhileStatement' &&
     stmt.kind !== 'IrRepeatStatement' &&
     stmt.kind !== 'IrForStatement' &&
+    stmt.kind !== 'IrProcedureDeclaration' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('//')
   ) {

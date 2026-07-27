@@ -38,6 +38,23 @@ function isNegativeLiteral(expr: IrExpression | null): boolean {
   return false;
 }
 
+function irTypeToPython(typeName: string): string {
+  switch (typeName) {
+    case 'INTEGER':
+      return 'int';
+    case 'REAL':
+      return 'float';
+    case 'STRING':
+      return 'str';
+    case 'BOOLEAN':
+      return 'bool';
+    case 'CHAR':
+      return 'str';
+    default:
+      return 'int';
+  }
+}
+
 function printTarget(target: IrAssignTarget): string {
   if (target.kind === 'IrIdentifier') return target.name;
   return target.indices.reduce(
@@ -203,6 +220,20 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       lines.push(...printBlock(stmt.body, level + 1));
       break;
     }
+    case 'IrProcedureDeclaration': {
+      const params = stmt.parameters
+        .map((param) => `${param.name}: ${irTypeToPython(param.typeName)}`)
+        .join(', ');
+      lines.push(`${p}def ${stmt.name}(${params}):`);
+      lines.push(...printBlock(stmt.body, level + 1));
+      break;
+    }
+    case 'IrCallStatement': {
+      lines.push(
+        `${p}${stmt.callee}(${stmt.args.map((a) => printExpr(a, 0)).join(', ')})`,
+      );
+      break;
+    }
     case 'IrBreakStatement':
       lines.push(`${p}break`);
       break;
@@ -219,6 +250,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     stmt.kind !== 'IrWhileStatement' &&
     stmt.kind !== 'IrRepeatStatement' &&
     stmt.kind !== 'IrForStatement' &&
+    stmt.kind !== 'IrProcedureDeclaration' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('#')
   ) {

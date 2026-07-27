@@ -16,6 +16,10 @@ import {
   type IrStatement,
 } from '../ir/nodes.js';
 import { cambridgeBinaryToIr, cambridgeUnaryToIr } from '../rules/operators.js';
+import {
+  isPythonSyntaxKeyword,
+  isPythonTranslatorBuiltin,
+} from '../rules/python-names.js';
 import { attachTriviaToStatements } from '../trivia/attach.js';
 import type { TranslateDiagnostic } from '../types.js';
 
@@ -294,23 +298,99 @@ function lowerStatement(
         span: stmt.span,
       });
       return null;
-    case 'ProcedureDeclaration':
+    case 'ProcedureDeclaration': {
+      const name = stmt.name.name;
+      if (isPythonSyntaxKeyword(name)) {
+        diagnostics.push({
+          severity: 'error',
+          code: 'T_PROC_PY_KEYWORD',
+          message: `Procedure name '${name}' is a Python keyword and cannot be translated to 'def ${name}(...):'.`,
+          span: stmt.name.span,
+        });
+        return null;
+      }
+      if (isPythonTranslatorBuiltin(name)) {
+        diagnostics.push({
+          severity: 'warning',
+          code: 'T_PROC_SHADOWS_BUILTIN',
+          message: `Procedure name '${name}' shadows a Python builtin used by the translator (print/input/range).`,
+          span: stmt.name.span,
+        });
+      }
+
+      const seen = new Set<string>();
+      for (const p of stmt.parameters) {
+        const pname = p.name.name;
+        if (isPythonSyntaxKeyword(pname)) {
+          diagnostics.push({
+            severity: 'error',
+            code: 'T_PROC_PY_KEYWORD',
+            message: `Parameter name '${pname}' is a Python keyword and cannot be translated.`,
+            span: p.name.span,
+          });
+          return null;
+        }
+        if (seen.has(pname)) {
+          diagnostics.push({
+            severity: 'error',
+            code: 'T_PROC_DUP_PARAM',
+            message: `Duplicate parameter name '${pname}' in PROCEDURE '${name}'.`,
+            span: p.name.span,
+          });
+          return null;
+        }
+        seen.add(pname);
+      }
+
+      const parameters = stmt.parameters.map((p) => ({
+        kind: 'IrParameter' as const,
+        name: p.name.name,
+        typeName: p.typeName.name,
+      }));
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrProcedureDeclaration' as const,
+          name,
+          parameters,
+          body: lowerBlock(stmt.body, diagnostics),
+        }),
+      };
+    }
     case 'FunctionDeclaration':
       diagnostics.push({
         severity: 'error',
-        code: 'T_UNSUPPORTED_ROUTINE',
-        message: 'Translator does not support procedures/functions.',
+        code: 'T_UNSUPPORTED_FUNCTION',
+        message: 'Translator does not support FUNCTION (PROCEDURE only in this milestone).',
         span: stmt.span,
       });
       return null;
-    case 'CallStatement':
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_UNSUPPORTED_CALL',
-        message: 'Translator does not support CALL statements.',
+    case 'CallStatement': {
+      const callee = stmt.callee.name;
+      if (isPythonSyntaxKeyword(callee)) {
+        diagnostics.push({
+          severity: 'error',
+          code: 'T_CALL_PY_KEYWORD',
+          message: `CALL target '${callee}' is a Python keyword and cannot be translated to a Python call.`,
+          span: stmt.callee.span,
+        });
+        return null;
+      }
+      const args: IrExpression[] = [];
+      for (const arg of stmt.args) {
+        const lowered = lowerExpression(arg, diagnostics);
+        if (!lowered) return null;
+        args.push(lowered);
+      }
+      return {
         span: stmt.span,
-      });
-      return null;
+        ir: withEmptyTrivia({
+          kind: 'IrCallStatement' as const,
+          callee,
+          args,
+        }),
+      };
+    }
     case 'ReturnStatement':
       diagnostics.push({
         severity: 'error',
@@ -356,6 +436,8 @@ export function lowerCambridgeProgram(
     }
   }
 
+  warnForwardProcedureCalls(paired, diagnostics);
+
   if (!preserveTrivia) {
     return {
       diagnostics,
@@ -378,4 +460,33 @@ export function lowerCambridgeProgram(
       trailingTrivia: attached.trailingTrivia,
     },
   };
+}
+
+/** Warn when a top-level CALL appears before its PROCEDURE (invalid at Python import time). */
+function warnForwardProcedureCalls(
+  paired: { stmt: IrStatement; span: Statement['span'] }[],
+  diagnostics: TranslateDiagnostic[],
+): void {
+  const defined = new Set<string>();
+  for (const { stmt, span } of paired) {
+    if (stmt.kind === 'IrProcedureDeclaration') {
+      defined.add(stmt.name);
+      continue;
+    }
+    if (stmt.kind === 'IrCallStatement' && !defined.has(stmt.callee)) {
+      // May still be defined later — only warn if a later PROCEDURE with that name exists.
+      const declaredLater = paired.some(
+        (p) =>
+          p.stmt.kind === 'IrProcedureDeclaration' && p.stmt.name === stmt.callee,
+      );
+      if (declaredLater) {
+        diagnostics.push({
+          severity: 'warning',
+          code: 'T_CALL_BEFORE_PROC',
+          message: `CALL '${stmt.callee}' appears before its PROCEDURE definition; generated Python will raise NameError if the call runs first.`,
+          span,
+        });
+      }
+    }
+  }
 }

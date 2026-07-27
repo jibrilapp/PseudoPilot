@@ -43,12 +43,12 @@ export function IdeShell() {
 
   useEffect(() => setMounted(true), []);
 
-  // Surface diagnostics: keep console open when translation fails.
+  // Surface diagnostics: keep console open when there are issues (errors or warnings).
   useEffect(() => {
-    if (translationStatus === 'error' && diagnostics.length > 0) {
+    if (diagnostics.length > 0) {
       setConsoleOpen(true);
     }
-  }, [translationStatus, diagnostics.length]);
+  }, [diagnostics.length]);
 
   return (
     <div

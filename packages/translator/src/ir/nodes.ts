@@ -25,6 +25,8 @@ export type IrStatement =
   | IrWhileStatement
   | IrRepeatStatement
   | IrForStatement
+  | IrProcedureDeclaration
+  | IrCallStatement
   | IrBreakStatement;
 
 type WithTrivia = {
@@ -116,6 +118,30 @@ export type IrForStatement = WithTrivia & {
   readonly end: IrExpression;
   readonly step: IrExpression | null;
   readonly body: IrStatement[];
+};
+
+/** Cambridge scalar type names on procedure parameters. */
+export type IrTypeName = 'INTEGER' | 'REAL' | 'STRING' | 'BOOLEAN' | 'CHAR';
+
+export type IrParameter = {
+  readonly kind: 'IrParameter';
+  readonly name: string;
+  readonly typeName: IrTypeName;
+};
+
+/** PROCEDURE … ENDPROCEDURE — maps to Python def. */
+export type IrProcedureDeclaration = WithTrivia & {
+  readonly kind: 'IrProcedureDeclaration';
+  readonly name: string;
+  readonly parameters: IrParameter[];
+  readonly body: IrStatement[];
+};
+
+/** CALL Name[(args)] — maps to Python Name(args) statement. */
+export type IrCallStatement = WithTrivia & {
+  readonly kind: 'IrCallStatement';
+  readonly callee: string;
+  readonly args: IrExpression[];
 };
 
 /** Internal-only for Python pattern recognition; not a Cambridge surface feature. */

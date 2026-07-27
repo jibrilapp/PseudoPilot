@@ -170,4 +170,29 @@ ENDCASE
     expect(norm(back.code)).toContain('1 TO 5');
     expect(norm(back.code)).toContain('OTHERWISE');
   });
+
+  it('translates PROCEDURE — IDE smoke', () => {
+    const result = translatePseudocodeToPython(`PROCEDURE DisplaySum(A : INTEGER, B : INTEGER)
+    OUTPUT A + B
+ENDPROCEDURE
+CALL DisplaySum(3, 4)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'def DisplaySum(A: int, B: int):\n    print(A + B)\nDisplaySum(3, 4)\n',
+    );
+  });
+
+  it('round-trips PROCEDURE through dist printers', () => {
+    const py = translatePseudocodeToPython(`PROCEDURE Ping()
+    OUTPUT "pong"
+ENDPROCEDURE
+CALL Ping()
+`);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('PROCEDURE Ping');
+    expect(norm(back.code)).toContain('CALL Ping()');
+  });
 });

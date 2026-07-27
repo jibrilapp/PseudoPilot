@@ -33,18 +33,17 @@ export function usePseudocodeTranslation(
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const result = runPseudocodeToPython(pseudocode);
+      setDiagnostics(result.diagnostics);
 
       if (result.ok) {
         lastGoodPython.current = result.code;
         setPython(result.code);
-        setDiagnostics([]);
         setStatus('ok');
         return;
       }
 
       // Keep previous successful translation visible.
       setPython(lastGoodPython.current);
-      setDiagnostics(result.diagnostics);
       setStatus('error');
     }, TRANSLATE_DEBOUNCE_MS);
 

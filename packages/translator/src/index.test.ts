@@ -1246,6 +1246,251 @@ match N:
   });
 });
 
+describe('PROCEDURE translation', () => {
+  it('translates PROCEDURE and CALL to def and call', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE DisplaySum(A : INTEGER, B : INTEGER)
+    OUTPUT A + B
+ENDPROCEDURE
+
+CALL DisplaySum(3, 4)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'def DisplaySum(A: int, B: int):\n    print(A + B)\n\nDisplaySum(3, 4)\n',
+    );
+  });
+
+  it('translates parameterless PROCEDURE', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE Hello
+    OUTPUT "hi"
+ENDPROCEDURE
+CALL Hello
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('def Hello():');
+    expect(norm(result.code)).toContain('Hello()');
+  });
+
+  it('translates empty PROCEDURE body', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE Nop()
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('pass');
+  });
+
+  it('translates typed STRING and BOOLEAN params', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE Show(Msg : STRING, Flag : BOOLEAN)
+    OUTPUT Msg, Flag
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('def Show(Msg: str, Flag: bool):');
+  });
+
+  it('translates nested CALL inside PROCEDURE', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE Inner()
+    OUTPUT "inner"
+ENDPROCEDURE
+PROCEDURE Outer()
+    CALL Inner()
+ENDPROCEDURE
+CALL Outer()
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('def Inner():');
+    expect(norm(result.code)).toContain('def Outer():');
+    expect(norm(result.code)).toContain('Inner()');
+    expect(norm(result.code)).toContain('Outer()');
+  });
+
+  it('translates PROCEDURE containing IF and FOR', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE CountUp(N : INTEGER)
+    FOR I ← 1 TO N
+        IF I > 0 THEN
+            OUTPUT I
+        ENDIF
+    NEXT I
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('def CountUp(N: int):');
+    expect(norm(result.code)).toContain('for I in range(1, N + 1):');
+    expect(norm(result.code)).toContain('if I > 0:');
+  });
+
+  it('translates CALL with expression arguments', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE P(A : INTEGER)
+    OUTPUT A
+ENDPROCEDURE
+CALL P(X + 1)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('P(X + 1)');
+  });
+
+  it('rejects FUNCTION', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Double(N : INTEGER) RETURNS INTEGER
+    RETURN N * 2
+ENDFUNCTION
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'T_UNSUPPORTED_FUNCTION')).toBe(true);
+  });
+
+  it('rejects RETURN', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE Bad()
+    RETURN 1
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects DECLARE inside PROCEDURE', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE Bad()
+    DECLARE X : INTEGER
+    OUTPUT X
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'T_UNSUPPORTED_DECLARE')).toBe(true);
+  });
+
+  it('rejects missing ENDPROCEDURE', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE Bad()
+    OUTPUT 1
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects Python-keyword procedure names', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE import()
+    OUTPUT 1
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'T_PROC_PY_KEYWORD')).toBe(true);
+  });
+
+  it('rejects duplicate procedure parameters', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE P(A : INTEGER, A : INTEGER)
+    OUTPUT A
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'T_PROC_DUP_PARAM')).toBe(true);
+  });
+
+  it('warns when CALL appears before PROCEDURE', () => {
+    const result = translatePseudocodeToPython(`
+CALL Foo()
+PROCEDURE Foo()
+    OUTPUT 1
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.some((d) => d.code === 'T_CALL_BEFORE_PROC')).toBe(true);
+  });
+
+  it('warns when procedure shadows print', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE print()
+    OUTPUT 1
+ENDPROCEDURE
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.some((d) => d.code === 'T_PROC_SHADOWS_BUILTIN')).toBe(true);
+  });
+});
+
+describe('PROCEDURE reverse translation (Python → Cambridge)', () => {
+  it('translates def and call to PROCEDURE and CALL', () => {
+    const result = translatePythonToPseudocode(`
+def DisplaySum(A: int, B: int):
+    print(A + B)
+
+DisplaySum(3, 4)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'PROCEDURE DisplaySum(A : INTEGER, B : INTEGER)\n    OUTPUT A + B\nENDPROCEDURE\nCALL DisplaySum(3, 4)\n',
+    );
+  });
+
+  it('defaults unannotated params to INTEGER', () => {
+    const result = translatePythonToPseudocode(`
+def Foo(A, B):
+    print(A)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('A : INTEGER');
+    expect(norm(result.code)).toContain('B : INTEGER');
+    expect(result.diagnostics.some((d) => d.code === 'T_PROC_DEFAULT_TYPE')).toBe(true);
+  });
+
+  it('rejects nested def', () => {
+    const result = translatePythonToPseudocode(`
+def Outer():
+    def Inner():
+        print(1)
+    Inner()
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.message.includes('Nested'))).toBe(true);
+  });
+
+  it('rejects def with return annotation', () => {
+    const result = translatePythonToPseudocode(`
+def Foo() -> int:
+    print(1)
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.message.includes('->'))).toBe(true);
+  });
+
+  it('rejects duplicate Python parameters', () => {
+    const result = translatePythonToPseudocode(`
+def Foo(A: int, A: int):
+    print(A)
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.message.includes('Duplicate'))).toBe(true);
+  });
+
+  it('round-trips PROCEDURE with CALL', () => {
+    const source = `PROCEDURE DisplaySum(A : INTEGER, B : INTEGER)\n    OUTPUT A + B\nENDPROCEDURE\nCALL DisplaySum(3, 4)\n`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(norm(source));
+  });
+
+  it('round-trips nested procedure calls', () => {
+    const source = `PROCEDURE Inner()\n    OUTPUT "inner"\nENDPROCEDURE\nPROCEDURE Outer()\n    CALL Inner()\nENDPROCEDURE\nCALL Outer()\n`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('PROCEDURE Inner');
+    expect(norm(back.code)).toContain('CALL Inner()');
+    expect(norm(back.code)).toContain('CALL Outer()');
+  });
+});
+
 describe('operators module / precedence printing', () => {
   it('does not over-parenthesize left-assoc chains', () => {
     const result = translatePseudocodeToPython(`X ← 1 + 2 + 3\n`);

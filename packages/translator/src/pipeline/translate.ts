@@ -18,7 +18,7 @@ function finalize(
 }
 
 /**
- * Cambridge pseudocode → Python (assign / I/O / expr / IF / WHILE / REPEAT subset).
+ * Cambridge pseudocode → Python.
  *
  * On parse errors, still lowers any recovered statements so callers get
  * partial `code` plus diagnostics (`ok: false`).
@@ -46,7 +46,7 @@ export function translatePseudocodeToPython(
 }
 
 /**
- * Python (assign / I/O / expr / IF / WHILE / REPEAT subset) → Cambridge pseudocode.
+ * Python subset → Cambridge pseudocode.
  */
 export function translatePythonToPseudocode(
   source: string,

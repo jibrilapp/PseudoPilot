@@ -6,12 +6,18 @@ import {
   type IrCaseArm,
   type IrElseIfClause,
   type IrExpression,
+  type IrParameter,
   type IrProgram,
   type IrStatement,
+  type IrTypeName,
   type IrUnaryOp,
 } from '../ir/nodes.js';
 import { attachTriviaToStatements } from '../trivia/attach.js';
 import type { TranslateDiagnostic } from '../types.js';
+import {
+  isPythonSyntaxKeyword,
+  isPythonTranslatorBuiltin,
+} from '../rules/python-names.js';
 import { lexPython, PyTokenKind, type PyToken } from './lexer.js';
 
 type StmtSpan = {
@@ -82,7 +88,7 @@ class PyParser {
         this.advance();
         continue;
       }
-      const stmt = this.parseStatement();
+      const stmt = this.parseStatement(false, true);
       if (stmt) {
         if (stmt.stmt.kind === 'IrBreakStatement') {
           this.error('Standalone break is not supported in this translator subset.', this.peek());
@@ -118,7 +124,7 @@ class PyParser {
     };
   }
 
-  private parseStatement(allowBreak = false): ParsedStatement | null {
+  private parseStatement(allowBreak = false, allowDef = false): ParsedStatement | null {
     if (this.check(PyTokenKind.If)) {
       return this.parseIf(allowBreak);
     }
@@ -130,6 +136,16 @@ class PyParser {
     }
     if (this.check(PyTokenKind.Match)) {
       return this.parseMatch();
+    }
+    if (this.check(PyTokenKind.Def)) {
+      if (!allowDef) {
+        this.error(
+          "Nested 'def' is not supported (Cambridge PROCEDURE cannot be nested).",
+          this.peek(),
+        );
+        return null;
+      }
+      return this.parseDef();
     }
     if (this.check(PyTokenKind.Print)) {
       return this.parsePrint();
@@ -145,7 +161,7 @@ class PyParser {
 
     if (this.isUnsupportedBlockKeyword()) {
       this.error(
-        `Translator does not support '${this.peek().lexeme}' (IF/WHILE/REPEAT/FOR/CASE pattern only among control-flow).`,
+        `Translator does not support '${this.peek().lexeme}' (IF/WHILE/REPEAT/FOR/CASE/PROCEDURE pattern only among control-flow).`,
         this.peek(),
       );
       return null;
@@ -153,6 +169,12 @@ class PyParser {
 
     if (this.check(PyTokenKind.Identifier)) {
       const nameTok = this.advance();
+
+      // Statement-level procedure call: Name(args)
+      if (this.check(PyTokenKind.LParen)) {
+        return this.parseCallStatement(nameTok);
+      }
+
       let target: IrAssignTarget = {
         kind: 'IrIdentifier',
         name: nameTok.lexeme,
@@ -177,7 +199,7 @@ class PyParser {
 
       if (!this.match(PyTokenKind.Equal)) {
         this.error(
-          'Expected "=" after assignment target (subset supports assignments, print, if, and while).',
+          'Expected "=" after assignment target (subset supports assignments, print, if, while, for, match, and def).',
           this.peek(),
         );
         return null;
@@ -200,8 +222,189 @@ class PyParser {
       };
     }
 
-    this.error('Expected assignment, print, if, or while statement.', this.peek());
+    this.error('Expected assignment, print, if, while, for, match, def, or call.', this.peek());
     return null;
+  }
+
+  private parseCallStatement(nameTok: PyToken): ParsedStatement | null {
+    if (isPythonSyntaxKeyword(nameTok.lexeme)) {
+      this.error(
+        `Call target '${nameTok.lexeme}' is a Python keyword and cannot map to CALL.`,
+        nameTok,
+      );
+      return null;
+    }
+    this.expect(PyTokenKind.LParen);
+    const args: IrExpression[] = [];
+    if (!this.check(PyTokenKind.RParen)) {
+      const first = this.parseExpression();
+      if (!first) return null;
+      args.push(first);
+      while (this.match(PyTokenKind.Comma)) {
+        if (this.check(PyTokenKind.RParen)) {
+          this.error('Trailing comma in call arguments is not supported.', this.peek());
+          return null;
+        }
+        const arg = this.parseExpression();
+        if (!arg) return null;
+        args.push(arg);
+      }
+    }
+    if (!this.match(PyTokenKind.RParen)) {
+      this.error("Expected ')' after call arguments.", this.peek());
+      return null;
+    }
+    return {
+      span: tokenSpan(nameTok, this.previous()),
+      stmt: withEmptyTrivia({
+        kind: 'IrCallStatement' as const,
+        callee: nameTok.lexeme,
+        args,
+      }),
+    };
+  }
+
+  /**
+   * Parse `def Name(params):` as IrProcedureDeclaration.
+   * Optional annotations: int/float/str/bool → INTEGER/REAL/STRING/BOOLEAN.
+   * Missing annotations default to INTEGER (with a warning).
+   * Top-level only — nested def is rejected in parseStatement.
+   */
+  private parseDef(): ParsedStatement | null {
+    const defTok = this.expect(PyTokenKind.Def)!;
+    if (!this.check(PyTokenKind.Identifier)) {
+      this.error("Expected procedure name after 'def'.", this.peek());
+      return null;
+    }
+    const nameTok = this.advance();
+    const name = nameTok.lexeme;
+
+    if (isPythonSyntaxKeyword(name)) {
+      this.error(
+        `Procedure name '${name}' is a Python keyword and cannot map to PROCEDURE.`,
+        nameTok,
+      );
+      return null;
+    }
+    if (isPythonTranslatorBuiltin(name)) {
+      this.diagnostics.push({
+        severity: 'warning',
+        code: 'T_PROC_SHADOWS_BUILTIN',
+        message: `Procedure name '${name}' shadows a Python builtin used by the translator (print/input/range).`,
+        span: {
+          start: { offset: nameTok.offset, line: nameTok.line, column: nameTok.column },
+          end: {
+            offset: nameTok.offset + nameTok.lexeme.length,
+            line: nameTok.line,
+            column: nameTok.column + Math.max(nameTok.lexeme.length, 1) - 1,
+          },
+        },
+      });
+    }
+
+    if (!this.match(PyTokenKind.LParen)) {
+      this.error("Expected '(' after procedure name.", this.peek());
+      return null;
+    }
+
+    const parameters: IrParameter[] = [];
+    const seen = new Set<string>();
+    if (!this.check(PyTokenKind.RParen)) {
+      const first = this.parseDefParameter(seen);
+      if (!first) return null;
+      parameters.push(first);
+      while (this.match(PyTokenKind.Comma)) {
+        if (this.check(PyTokenKind.RParen)) {
+          this.error('Trailing comma in parameter list is not supported.', this.peek());
+          return null;
+        }
+        const next = this.parseDefParameter(seen);
+        if (!next) return null;
+        parameters.push(next);
+      }
+    }
+
+    if (!this.match(PyTokenKind.RParen)) {
+      this.error("Expected ')' after parameter list.", this.peek());
+      return null;
+    }
+
+    // `def Foo() -> int:` is FUNCTION territory — reject clearly.
+    if (this.check(PyTokenKind.Minus)) {
+      this.error(
+        "Return annotations ('->') are not supported; use PROCEDURE (no RETURNS), not FUNCTION.",
+        this.peek(),
+      );
+      return null;
+    }
+
+    this.expect(PyTokenKind.Colon);
+    this.skipNewlines();
+    const body = this.parseSuite(false);
+
+    return {
+      span: tokenSpan(defTok, this.previous()),
+      stmt: withEmptyTrivia({
+        kind: 'IrProcedureDeclaration' as const,
+        name,
+        parameters,
+        body,
+      }),
+    };
+  }
+
+  private parseDefParameter(seen: Set<string>): IrParameter | null {
+    if (!this.check(PyTokenKind.Identifier)) {
+      this.error('Expected parameter name.', this.peek());
+      return null;
+    }
+    const nameTok = this.advance();
+    const name = nameTok.lexeme;
+
+    if (isPythonSyntaxKeyword(name)) {
+      this.error(
+        `Parameter name '${name}' is a Python keyword and cannot map to PROCEDURE.`,
+        nameTok,
+      );
+      return null;
+    }
+    if (seen.has(name)) {
+      this.error(`Duplicate parameter name '${name}'.`, nameTok);
+      return null;
+    }
+    seen.add(name);
+
+    let typeName: IrTypeName = 'INTEGER';
+    if (this.match(PyTokenKind.Colon)) {
+      if (!this.check(PyTokenKind.Identifier)) {
+        this.error('Expected type name after ":".', this.peek());
+        return null;
+      }
+      const mapped = pythonTypeToIr(this.advance().lexeme);
+      if (!mapped) {
+        this.error(
+          'Unsupported parameter type annotation (use int, float, str, bool).',
+          this.previous(),
+        );
+        return null;
+      }
+      typeName = mapped;
+    } else {
+      this.diagnostics.push({
+        severity: 'warning',
+        code: 'T_PROC_DEFAULT_TYPE',
+        message: `Parameter '${name}' has no type annotation; defaulting to INTEGER for Cambridge PROCEDURE.`,
+        span: {
+          start: { offset: nameTok.offset, line: nameTok.line, column: nameTok.column },
+          end: {
+            offset: nameTok.offset + nameTok.lexeme.length,
+            line: nameTok.line,
+            column: nameTok.column + Math.max(nameTok.lexeme.length, 1) - 1,
+          },
+        },
+      });
+    }
+    return { kind: 'IrParameter', name, typeName };
   }
 
   /**
@@ -834,7 +1037,7 @@ class PyParser {
 
   private isUnsupportedBlockKeyword(): boolean {
     const lex = this.peek().lexeme;
-    return ['def', 'class', 'return', 'with'].includes(lex);
+    return ['class', 'return', 'with'].includes(lex);
   }
 
   private skipNewlines(): void {
@@ -880,6 +1083,21 @@ class PyParser {
       code: 'T_PY_PARSE',
       span: tokenSpan(tok),
     });
+  }
+}
+
+function pythonTypeToIr(name: string): IrTypeName | null {
+  switch (name) {
+    case 'int':
+      return 'INTEGER';
+    case 'float':
+      return 'REAL';
+    case 'str':
+      return 'STRING';
+    case 'bool':
+      return 'BOOLEAN';
+    default:
+      return null;
   }
 }
 

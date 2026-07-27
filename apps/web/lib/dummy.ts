@@ -70,27 +70,18 @@ export const DUMMY_TABS: EditorTab[] = [
   },
 ];
 
-export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes CASE + FOR)
-FOR Choice ← 1 TO 3
-    CASE OF Choice
-        1 :
-            OUTPUT "one"
-        2 :
-            OUTPUT "two"
-        OTHERWISE
-            OUTPUT Choice
-    ENDCASE
-NEXT Choice
+export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes PROCEDURE + CALL)
+PROCEDURE DisplaySum(A : INTEGER, B : INTEGER)
+    OUTPUT A + B
+ENDPROCEDURE
+
+CALL DisplaySum(3, 4)
 `;
 
-export const DUMMY_PYTHON = `for Choice in range(1, 3 + 1):
-    match Choice:
-        case 1:
-            print("one")
-        case 2:
-            print("two")
-        case _:
-            print(Choice)
+export const DUMMY_PYTHON = `def DisplaySum(A: int, B: int):
+    print(A + B)
+
+DisplaySum(3, 4)
 `;
 
 export const DUMMY_CONSOLE: ConsoleLine[] = [

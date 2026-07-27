@@ -105,11 +105,11 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| PROCEDURE definition | ✅ | ❌ | ❌ | ❌ | ❌ |
+| PROCEDURE definition | ✅ | ❌ | ❌ | ✅ | ✅ |
 | FUNCTION + RETURNS | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Typed parameters | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Typed parameters | ✅ | ❌ | ❌ | ✅ | ✅ |
 | `BYVAL` / `BYREF` | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `CALL` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `CALL` | ✅ | ❌ | ❌ | ✅ | ✅ |
 | `RETURN` | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Recursion (runtime stack) | 🟡 | ❌ | ❌ | ❌ | ❌ | parse OK |
 | Nested routines rejected | ✅ | — | — | — | — |
@@ -169,7 +169,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | Parser coverage checklist | ✅ |
 | IDE Monaco binding to parser | ❌ |
 | Interpreter / debugger | ❌ |
-| Pseudocode ↔ Python translator | 🟡 | Assign/I/O/expr/CHAR/index/IF/WHILE/REPEAT/FOR/**CASE**; no routines |
+| Pseudocode ↔ Python translator | 🟡 | Assign/I/O/expr/IF/WHILE/REPEAT/FOR/CASE/**PROCEDURE+CALL**; no FUNCTION/DECLARE |
 | AI coach grounded on this dialect | ❌ |
 
 ---

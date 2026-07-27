@@ -234,4 +234,4 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Constants / BYREF / CHAR lit / DATE | ❌ |
 | Extended TYPE / OOP / random files | ❌ |
 
-**Estimate:** Core Paper 2 surface is **mostly complete** for selection and iteration (IF / CASE / FOR / WHILE / REPEAT); still blocked on routines translation, DECLARE, and several builtins before a full Paper 2 translator can be truthful.
+**Estimate:** Core Paper 2 surface covers selection, iteration, and **PROCEDURE/CALL** translation; still blocked on FUNCTION translation, DECLARE, BYREF, and several builtins.
