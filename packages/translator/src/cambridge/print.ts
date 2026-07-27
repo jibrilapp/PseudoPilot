@@ -143,6 +143,14 @@ function printStatement(
       lines.push(`${p}ENDWHILE`);
       break;
     }
+    case 'IrRepeatStatement': {
+      lines.push(`${p}REPEAT`);
+      lines.push(...printBlock(stmt.body, arrow, level + 1));
+      lines.push(`${p}UNTIL ${printExpr(stmt.condition, 0)}`);
+      break;
+    }
+    case 'IrBreakStatement':
+      break;
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
@@ -153,6 +161,7 @@ function printStatement(
   if (
     stmt.kind !== 'IrIfStatement' &&
     stmt.kind !== 'IrWhileStatement' &&
+    stmt.kind !== 'IrRepeatStatement' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('//')
   ) {

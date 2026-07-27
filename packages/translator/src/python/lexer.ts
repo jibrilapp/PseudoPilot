@@ -20,6 +20,7 @@ export enum PyTokenKind {
   Else = 'Else',
   While = 'While',
   Pass = 'Pass',
+  Break = 'Break',
   Equal = 'Equal',
   EqEq = 'EqEq',
   NotEq = 'NotEq',
@@ -62,6 +63,7 @@ const KEYWORDS: ReadonlyMap<string, PyTokenKind> = new Map([
   ['else', PyTokenKind.Else],
   ['while', PyTokenKind.While],
   ['pass', PyTokenKind.Pass],
+  ['break', PyTokenKind.Break],
 ]);
 
 export type PyLexResult = {

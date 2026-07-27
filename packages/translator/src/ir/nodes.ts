@@ -21,7 +21,9 @@ export type IrStatement =
   | IrInput
   | IrOutput
   | IrIfStatement
-  | IrWhileStatement;
+  | IrWhileStatement
+  | IrRepeatStatement
+  | IrBreakStatement;
 
 type WithTrivia = {
   readonly leadingTrivia: IrTrivia[];
@@ -72,6 +74,18 @@ export type IrWhileStatement = WithTrivia & {
   readonly kind: 'IrWhileStatement';
   readonly condition: IrExpression;
   readonly body: IrStatement[];
+};
+
+/** REPEAT … UNTIL — prints to `while True` + trailing `if cond: break`. */
+export type IrRepeatStatement = WithTrivia & {
+  readonly kind: 'IrRepeatStatement';
+  readonly body: IrStatement[];
+  readonly condition: IrExpression;
+};
+
+/** Internal-only for Python pattern recognition; not a Cambridge surface feature. */
+export type IrBreakStatement = WithTrivia & {
+  readonly kind: 'IrBreakStatement';
 };
 
 export type IrExpression =

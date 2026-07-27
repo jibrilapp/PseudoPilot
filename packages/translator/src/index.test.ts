@@ -253,6 +253,103 @@ WHILE TRUE
     expect(result.diagnostics.length).toBeGreaterThan(0);
   });
 
+  it('translates REPEAT UNTIL', () => {
+    const result = translatePseudocodeToPython(`
+REPEAT
+    OUTPUT Count
+    Count ← Count + 1
+UNTIL Count > 10
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'while True:\n    print(Count)\n    Count = Count + 1\n    if Count > 10:\n        break\n',
+    );
+  });
+
+  it('translates empty REPEAT body', () => {
+    const result = translatePseudocodeToPython(`
+REPEAT
+UNTIL TRUE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('while True:\n    pass\n    if True:\n        break\n');
+  });
+
+  it('translates REPEAT inside WHILE', () => {
+    const result = translatePseudocodeToPython(`
+WHILE Flag = TRUE
+    REPEAT
+        OUTPUT Count
+    UNTIL Count > 10
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'while Flag == True:\n    while True:\n        print(Count)\n        if Count > 10:\n            break\n',
+    );
+  });
+
+  it('translates WHILE inside REPEAT', () => {
+    const result = translatePseudocodeToPython(`
+REPEAT
+    WHILE Count < 10
+        OUTPUT Count
+    ENDWHILE
+UNTIL Done = TRUE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'while True:\n    while Count < 10:\n        print(Count)\n    if Done == True:\n        break\n',
+    );
+  });
+
+  it('translates IF inside REPEAT', () => {
+    const result = translatePseudocodeToPython(`
+REPEAT
+    IF Count > 5 THEN
+        OUTPUT Count
+    ENDIF
+UNTIL Count > 10
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'while True:\n    if Count > 5:\n        print(Count)\n    if Count > 10:\n        break\n',
+    );
+  });
+
+  it('translates REPEAT inside IF', () => {
+    const result = translatePseudocodeToPython(`
+IF Run = TRUE THEN
+    REPEAT
+        OUTPUT Count
+    UNTIL Count > 10
+ENDIF
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'if Run == True:\n    while True:\n        print(Count)\n        if Count > 10:\n            break\n',
+    );
+  });
+
+  it('reports diagnostics for missing UNTIL', () => {
+    const result = translatePseudocodeToPython(`
+REPEAT
+    OUTPUT Count
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.message.includes('UNTIL'))).toBe(true);
+  });
+
+  it('reports diagnostics for malformed REPEAT condition', () => {
+    const result = translatePseudocodeToPython(`
+REPEAT
+    OUTPUT Count
+UNTIL
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+  });
+
   it('rejects DECLARE', () => {
     const result = translatePseudocodeToPython(`DECLARE X : INTEGER\n`);
     expect(result.ok).toBe(false);
@@ -501,6 +598,95 @@ while False:
     expect(norm(result.code)).toBe('WHILE FALSE DO\nENDWHILE\n');
   });
 
+  it('translates repeat-until pattern', () => {
+    const result = translatePythonToPseudocode(`
+while True:
+    print(Count)
+    Count = Count + 1
+    if Count > 10:
+        break
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'REPEAT\n    OUTPUT Count\n    Count ← Count + 1\nUNTIL Count > 10\n',
+    );
+  });
+
+  it('translates repeat inside while', () => {
+    const result = translatePythonToPseudocode(`
+while flag:
+    while True:
+        print(Count)
+        if Count > 10:
+            break
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'WHILE flag DO\n    REPEAT\n        OUTPUT Count\n    UNTIL Count > 10\nENDWHILE\n',
+    );
+  });
+
+  it('translates while inside repeat', () => {
+    const result = translatePythonToPseudocode(`
+while True:
+    while count < 10:
+        print(count)
+    if done:
+        break
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'REPEAT\n    WHILE count < 10 DO\n        OUTPUT count\n    ENDWHILE\nUNTIL done\n',
+    );
+  });
+
+  it('translates if inside repeat', () => {
+    const result = translatePythonToPseudocode(`
+while True:
+    if Count > 5:
+        print(Count)
+    if Count > 10:
+        break
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'REPEAT\n    IF Count > 5 THEN\n        OUTPUT Count\n    ENDIF\nUNTIL Count > 10\n',
+    );
+  });
+
+  it('translates repeat inside if', () => {
+    const result = translatePythonToPseudocode(`
+if run:
+    while True:
+        print(Count)
+        if Count > 10:
+            break
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'IF run THEN\n    REPEAT\n        OUTPUT Count\n    UNTIL Count > 10\nENDIF\n',
+    );
+  });
+
+  it('rejects malformed repeat body', () => {
+    const result = translatePythonToPseudocode(`
+while True:
+print(Count)
+    if Count > 10:
+        break
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects unsupported break outside repeat pattern', () => {
+    const result = translatePythonToPseudocode(`
+while x > 0:
+    break
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'T_PY_PARSE')).toBe(true);
+  });
+
   it('rejects for loops', () => {
     const result = translatePythonToPseudocode(`
 for i in range(3):
@@ -605,6 +791,19 @@ ENDIF
     const source = `WHILE Count < 10 DO
     Count ← Count + 1
 ENDWHILE
+`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(norm(source));
+  });
+
+  it('round-trips REPEAT', () => {
+    const source = `REPEAT
+    OUTPUT Count
+    Count ← Count + 1
+UNTIL Count > 10
 `;
     const py = translatePseudocodeToPython(source);
     expect(py.ok).toBe(true);

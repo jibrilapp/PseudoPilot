@@ -94,8 +94,8 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | `WHILE` | Pre-condition loop | ✅ |
 | `DO` | Optional after WHILE condition | ✅ |
 | `ENDWHILE` | End WHILE | ✅ |
-| `REPEAT` | Post-condition loop | 🟡 | Lexed; statement ❌ |
-| `UNTIL` | REPEAT terminator | 🟡 | Lexed; statement ❌ |
+| `REPEAT` | Post-condition loop | ✅ |
+| `UNTIL` | REPEAT terminator | ✅ |
 
 ### 1.6 Procedures and functions
 
@@ -532,7 +532,7 @@ REPEAT
 UNTIL <condition>
 ```
 
-Body runs at least once; exit when condition is `TRUE`. Parser ❌
+Body runs at least once; exit when condition is `TRUE`. Parser ✅
 
 ### 9.3 WHILE … [DO] … ENDWHILE (pre-condition)
 
@@ -628,8 +628,8 @@ statement =
   | ifStmt
   | caseStmt              (* future *)
   | forStmt               (* future *)
-  | whileStmt             (* future *)
-  | repeatStmt            (* future *)
+  | whileStmt
+  | repeatStmt
   | callStmt
   | returnStmt
   | openFileStmt

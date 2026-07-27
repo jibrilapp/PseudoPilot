@@ -18,6 +18,10 @@ type StmtSpan = {
   readonly end: { offset: number; line: number; column: number };
 };
 
+type ParsedStatement =
+  | { stmt: IrStatement; span: StmtSpan }
+  | { stmt: ReturnType<typeof makeBreak>; span: StmtSpan };
+
 function tokenSpan(t: PyToken, end?: PyToken): StmtSpan {
   const e = end ?? t;
   return {
@@ -28,6 +32,18 @@ function tokenSpan(t: PyToken, end?: PyToken): StmtSpan {
       column: e.column + Math.max(e.lexeme.length, 1) - 1,
     },
   };
+}
+
+function makeBreak() {
+  return withEmptyTrivia({ kind: 'IrBreakStatement' as const });
+}
+
+function isBreakStatement(stmt: IrStatement): boolean {
+  return stmt.kind === 'IrBreakStatement';
+}
+
+function isTrueLiteral(expr: IrExpression): boolean {
+  return expr.kind === 'IrBooleanLiteral' && expr.value === true;
 }
 
 class PyParser {
@@ -67,7 +83,11 @@ class PyParser {
       }
       const stmt = this.parseStatement();
       if (stmt) {
-        paired.push(stmt);
+        if (stmt.stmt.kind === 'IrBreakStatement') {
+          this.error('Standalone break is not supported in this translator subset.', this.peek());
+        } else {
+          paired.push(stmt as { stmt: IrStatement; span: StmtSpan });
+        }
       } else {
         while (
           !this.check(PyTokenKind.Eof) &&
@@ -97,9 +117,9 @@ class PyParser {
     };
   }
 
-  private parseStatement(): { stmt: IrStatement; span: StmtSpan } | null {
+  private parseStatement(allowBreak = false): ParsedStatement | null {
     if (this.check(PyTokenKind.If)) {
-      return this.parseIf();
+      return this.parseIf(allowBreak);
     }
     if (this.check(PyTokenKind.While)) {
       return this.parseWhile();
@@ -111,10 +131,14 @@ class PyParser {
       this.advance();
       return null;
     }
+    if (allowBreak && this.check(PyTokenKind.Break)) {
+      const breakTok = this.advance();
+      return { stmt: makeBreak(), span: tokenSpan(breakTok) };
+    }
 
     if (this.isUnsupportedBlockKeyword()) {
       this.error(
-        `Translator does not support '${this.peek().lexeme}' (IF/WHILE only among control-flow).`,
+        `Translator does not support '${this.peek().lexeme}' (IF/WHILE/REPEAT pattern only among control-flow).`,
         this.peek(),
       );
       return null;
@@ -179,7 +203,10 @@ class PyParser {
     if (!condition) return null;
     this.expect(PyTokenKind.Colon);
     this.skipNewlines();
-    const body = this.parseSuite();
+    const rawBody = this.parseSuite(true);
+    const repeat = this.tryParseRepeat(condition, rawBody, whileTok);
+    if (repeat) return repeat;
+    const body = this.stripUnsupportedBreaks(rawBody);
     return {
       span: tokenSpan(whileTok, this.previous()),
       stmt: withEmptyTrivia({
@@ -190,13 +217,13 @@ class PyParser {
     };
   }
 
-  private parseIf(): { stmt: IrStatement; span: StmtSpan } | null {
+  private parseIf(allowBreak = false): ParsedStatement | null {
     const ifTok = this.expect(PyTokenKind.If)!;
     const condition = this.parseExpression();
     if (!condition) return null;
     this.expect(PyTokenKind.Colon);
     this.skipNewlines();
-    const consequent = this.parseSuite();
+    const consequent = this.parseSuite(allowBreak);
 
     const elseIfClauses: IrElseIfClause[] = [];
     while (this.check(PyTokenKind.Elif)) {
@@ -208,7 +235,9 @@ class PyParser {
       elseIfClauses.push({
         kind: 'IrElseIfClause',
         condition: c,
-        consequent: this.parseSuite(),
+        consequent: allowBreak
+          ? this.parseSuite(true)
+          : this.stripUnsupportedBreaks(this.parseSuite(false)),
       });
     }
 
@@ -217,7 +246,9 @@ class PyParser {
       this.advance();
       this.expect(PyTokenKind.Colon);
       this.skipNewlines();
-      alternate = this.parseSuite();
+      alternate = allowBreak
+        ? this.parseSuite(true)
+        : this.stripUnsupportedBreaks(this.parseSuite(false));
     }
 
     return {
@@ -225,7 +256,7 @@ class PyParser {
       stmt: withEmptyTrivia({
         kind: 'IrIfStatement' as const,
         condition,
-        consequent,
+        consequent: allowBreak ? consequent : this.stripUnsupportedBreaks(consequent),
         elseIfClauses,
         alternate,
       }),
@@ -233,7 +264,7 @@ class PyParser {
   }
 
   /** Parse an indented block; `pass` alone yields an empty statement list. */
-  private parseSuite(): IrStatement[] {
+  private parseSuite(allowBreak = false): IrStatement[] {
     if (!this.match(PyTokenKind.Indent)) {
       // Single-line suite not supported in this subset
       this.error('Expected indented block after ":".', this.peek());
@@ -254,7 +285,7 @@ class PyParser {
       }
 
       onlyPass = false;
-      const stmt = this.parseStatement();
+      const stmt = this.parseStatement(allowBreak);
       if (stmt) body.push(stmt.stmt);
       else {
         while (
@@ -270,6 +301,70 @@ class PyParser {
 
     this.expect(PyTokenKind.Dedent);
     return onlyPass && body.length === 0 ? [] : body;
+  }
+
+  private stripUnsupportedBreaks(body: IrStatement[]): IrStatement[] {
+    const out: IrStatement[] = [];
+    for (const stmt of body) {
+      if (isBreakStatement(stmt)) {
+        this.error(
+          'Python break is only supported as the final `if <condition>: break` in REPEAT translation.',
+          this.previous(),
+        );
+        continue;
+      }
+      if (stmt.kind === 'IrIfStatement') {
+        out.push({
+          ...stmt,
+          consequent: this.stripUnsupportedBreaks(stmt.consequent),
+          elseIfClauses: stmt.elseIfClauses.map((clause) => ({
+            ...clause,
+            consequent: this.stripUnsupportedBreaks(clause.consequent),
+          })),
+          alternate:
+            stmt.alternate === null
+              ? null
+              : this.stripUnsupportedBreaks(stmt.alternate),
+        });
+        continue;
+      }
+      if (stmt.kind === 'IrWhileStatement') {
+        out.push({ ...stmt, body: this.stripUnsupportedBreaks(stmt.body) });
+        continue;
+      }
+      if (stmt.kind === 'IrRepeatStatement') {
+        out.push({ ...stmt, body: this.stripUnsupportedBreaks(stmt.body) });
+        continue;
+      }
+      out.push(stmt);
+    }
+    return out;
+  }
+
+  private tryParseRepeat(
+    condition: IrExpression,
+    rawBody: IrStatement[],
+    whileTok: PyToken,
+  ): { stmt: IrStatement; span: StmtSpan } | null {
+    if (!isTrueLiteral(condition) || rawBody.length === 0) return null;
+    const last = rawBody[rawBody.length - 1];
+    if (!last || last.kind !== 'IrIfStatement') return null;
+    if (last.elseIfClauses.length > 0 || last.alternate !== null) return null;
+    if (
+      last.consequent.length !== 1 ||
+      !isBreakStatement(last.consequent[0]!)
+    ) {
+      return null;
+    }
+
+    return {
+      span: tokenSpan(whileTok, this.previous()),
+      stmt: withEmptyTrivia({
+        kind: 'IrRepeatStatement' as const,
+        body: this.stripUnsupportedBreaks(rawBody.slice(0, -1)),
+        condition: last.condition,
+      }),
+    };
   }
 
   private parseInputAssign(

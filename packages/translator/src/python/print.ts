@@ -140,6 +140,20 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       lines.push(...printBlock(stmt.body, level + 1));
       break;
     }
+    case 'IrRepeatStatement': {
+      lines.push(`${p}while True:`);
+      if (stmt.body.length === 0) {
+        lines.push(`${pad(level + 1)}pass`);
+      } else {
+        lines.push(...printBlock(stmt.body, level + 1));
+      }
+      lines.push(`${pad(level + 1)}if ${printExpr(stmt.condition, 0)}:`);
+      lines.push(`${pad(level + 2)}break`);
+      break;
+    }
+    case 'IrBreakStatement':
+      lines.push(`${p}break`);
+      break;
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
@@ -150,6 +164,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
   if (
     stmt.kind !== 'IrIfStatement' &&
     stmt.kind !== 'IrWhileStatement' &&
+    stmt.kind !== 'IrRepeatStatement' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('#')
   ) {

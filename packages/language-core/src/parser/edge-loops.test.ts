@@ -145,7 +145,7 @@ ENDFUNCTION
 `);
     });
 
-    it.fails('14. minimal REPEAT … UNTIL', () => {
+    it('14. minimal REPEAT … UNTIL', () => {
       expect(parseOk(`
 REPEAT
     INPUT X
@@ -153,14 +153,14 @@ UNTIL X > 0
 `).body[0]?.kind).toBe('RepeatStatement');
     });
 
-    it.fails('15. REPEAT with empty body', () => {
+    it('15. REPEAT with empty body', () => {
       parseOk(`
 REPEAT
 UNTIL TRUE
 `);
     });
 
-    it.fails('16. nested REPEAT', () => {
+    it('16. nested REPEAT', () => {
       parseOk(`
 REPEAT
     REPEAT
@@ -170,7 +170,7 @@ UNTIL OuterDone = TRUE
 `);
     });
 
-    it.fails('17. REPEAT containing WHILE and IF', () => {
+    it('17. REPEAT containing WHILE and IF', () => {
       parseOk(`
 REPEAT
     WHILE Temp > 0

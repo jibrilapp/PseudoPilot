@@ -19,6 +19,7 @@ import type {
   Program,
   CallStatement,
   ReadFileStatement,
+  RepeatStatement,
   ReturnStatement,
   Statement,
   TypeName,
@@ -81,6 +82,7 @@ export class Parser {
     if (token.kind === TokenKind.Output) return this.parseOutput();
     if (token.kind === TokenKind.If) return this.parseIf();
     if (token.kind === TokenKind.While) return this.parseWhile();
+    if (token.kind === TokenKind.Repeat) return this.parseRepeat();
     if (token.kind === TokenKind.Declare) return this.parseDeclare();
     if (token.kind === TokenKind.Call) return this.parseCallStatement();
     if (token.kind === TokenKind.Return) return this.parseReturn();
@@ -591,6 +593,33 @@ export class Parser {
     };
   }
 
+  /** REPEAT NL <block> UNTIL <condition> */
+  private parseRepeat(): RepeatStatement | null {
+    const startToken = this.cursor.advance(); // REPEAT
+    this.skipNewlines();
+
+    const body = this.parseBlock(() => this.cursor.check(TokenKind.Until));
+
+    if (!this.cursor.match(TokenKind.Until)) {
+      pushError(
+        this.diagnostics,
+        "Expected 'UNTIL' to close REPEAT statement.",
+        this.cursor.peek(),
+      );
+      return null;
+    }
+
+    const condition = this.expressions().parseExpression();
+    if (!condition) return null;
+
+    return {
+      kind: 'RepeatStatement',
+      body,
+      condition,
+      span: span(startToken.span.start, condition.span.end),
+    };
+  }
+
   private parseElseIfClause(): ElseIfClause | null {
     const elseToken = this.cursor.advance();
     this.cursor.advance(); // IF
@@ -747,6 +776,7 @@ export class Parser {
         TokenKind.Else,
         TokenKind.Endif,
         TokenKind.Endwhile,
+        TokenKind.Until,
         TokenKind.Endprocedure,
         TokenKind.Endfunction,
       )
@@ -783,6 +813,7 @@ function isUnexpectedStructuralKeyword(kind: TokenKind): boolean {
     kind === TokenKind.Endif ||
     kind === TokenKind.Do ||
     kind === TokenKind.Endwhile ||
+    kind === TokenKind.Until ||
     kind === TokenKind.Endprocedure ||
     kind === TokenKind.Endfunction ||
     kind === TokenKind.Returns
@@ -794,7 +825,6 @@ function isReservedFutureKeyword(kind: TokenKind): boolean {
     kind === TokenKind.For ||
     kind === TokenKind.To ||
     kind === TokenKind.Next ||
-    kind === TokenKind.Repeat ||
-    kind === TokenKind.Until
+    kind === TokenKind.Repeat
   );
 }

@@ -90,4 +90,30 @@ ENDWHILE
       result.diagnostics.some((d) => d.code.startsWith('T_UNSUPPORTED')),
     ).toBe(false);
   });
+
+  it('translates REPEAT UNTIL — IDE smoke', () => {
+    const result = translatePseudocodeToPython(`REPEAT
+    OUTPUT Count
+    Count ← Count + 1
+UNTIL Count > 10
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(norm(result.code)).toBe(
+      'while True:\n    print(Count)\n    Count = Count + 1\n    if Count > 10:\n        break\n',
+    );
+  });
+
+  it('round-trips REPEAT through dist printers', () => {
+    const py = translatePseudocodeToPython(`REPEAT
+    OUTPUT Count
+    Count ← Count + 1
+UNTIL Count > 10
+`);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('REPEAT');
+    expect(norm(back.code)).toContain('UNTIL Count > 10');
+  });
 });

@@ -27,6 +27,7 @@ export type Statement =
   | OutputStatement
   | IfStatement
   | WhileStatement
+  | RepeatStatement
   | DeclareStatement
   | ProcedureDeclaration
   | FunctionDeclaration
@@ -158,6 +159,14 @@ export type WhileStatement = {
   readonly body: Statement[];
   /** True when source included an explicit `DO` after the condition. */
   readonly hasDo: boolean;
+  readonly span: SourceSpan;
+};
+
+/** REPEAT … UNTIL <condition> */
+export type RepeatStatement = {
+  readonly kind: 'RepeatStatement';
+  readonly body: Statement[];
+  readonly condition: Expression;
   readonly span: SourceSpan;
 };
 

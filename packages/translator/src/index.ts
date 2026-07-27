@@ -2,17 +2,17 @@
  * @pseudopilot/translator — bidirectional Cambridge ↔ Python via canonical IR.
  *
  * Supported: assignment, INPUT/OUTPUT, IF/ELSE/ELSE IF, WHILE/ENDWHILE,
- * literals, variables, arithmetic / relational / logical expressions, CHAR,
- * array indexes.
- * Not supported: CASE, FOR, REPEAT, DECLARE, routines, files, builtins.
+ * REPEAT/UNTIL, literals, variables, arithmetic / relational / logical
+ * expressions, CHAR, array indexes.
+ * Not supported: CASE, FOR, DECLARE, routines, files, builtins.
  *
  * @see docs/language/TRANSLATION.md
  * @see docs/adr/0006-canonical-ir-translation.md
  */
 
 export const PACKAGE_NAME = '@pseudopilot/translator' as const;
-export const PACKAGE_VERSION = '0.3.0-while' as const;
-export const TRANSLATOR_SUBSET = 'v3-assign-io-expr-if-while' as const;
+export const PACKAGE_VERSION = '0.4.0-repeat' as const;
+export const TRANSLATOR_SUBSET = 'v4-assign-io-expr-if-while-repeat' as const;
 
 export {
   translatePseudocodeToPython,

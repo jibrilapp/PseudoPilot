@@ -217,6 +217,18 @@ function lowerStatement(
         }),
       };
     }
+    case 'RepeatStatement': {
+      const condition = lowerExpression(stmt.condition, diagnostics);
+      if (!condition) return null;
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrRepeatStatement' as const,
+          body: lowerBlock(stmt.body, diagnostics),
+          condition,
+        }),
+      };
+    }
     case 'DeclareStatement':
       diagnostics.push({
         severity: 'error',

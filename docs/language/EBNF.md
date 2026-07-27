@@ -121,7 +121,7 @@ statement       = declare_stmt                            (* ✅ *)
                 | case_stmt                               (* ❌ *)
                 | for_stmt                                (* ❌ *)
                 | while_stmt                              (* ✅ *)
-                | repeat_stmt                             (* ❌ *)
+                | repeat_stmt                             (* ✅ *)
                 | call_stmt                               (* ✅ *)
                 | return_stmt                             (* ✅ *)
                 | openfile_stmt                           (* ✅ *)
@@ -190,7 +190,7 @@ while_stmt      = "WHILE" expression ["DO"] NL
 
 repeat_stmt     = "REPEAT" NL
                   block
-                  "UNTIL" expression ;                    (* ❌ *)
+                  "UNTIL" expression ;                    (* ✅ *)
 ```
 
 ### 4.4 Calls and return
@@ -325,7 +325,8 @@ class_member    = [ "PUBLIC" | "PRIVATE" ]
 | IF / ELSE / ELSE IF / ENDIF | ✅ |
 | CASE / ENDCASE | ❌ |
 | WHILE / ENDWHILE | ✅ |
-| FOR / REPEAT | ❌ |
+| REPEAT / UNTIL | ✅ |
+| FOR | ❌ |
 | PROCEDURE / FUNCTION / CALL / RETURN | ✅ |
 | BYVAL / BYREF | ❌ |
 | Text files + EOF | ✅ |

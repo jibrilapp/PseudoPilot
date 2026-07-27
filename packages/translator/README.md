@@ -7,9 +7,10 @@ Bidirectional **Cambridge 9618 pseudocode ↔ Python** translation via a canonic
 | Supported | Not supported |
 | --- | --- |
 | Assignment (`←` / `=`) including `A[i]` / `A[i, j]` | CASE |
-| `INPUT` / `OUTPUT` (incl. indexed targets) | `FOR` / `REPEAT` |
+| `INPUT` / `OUTPUT` (incl. indexed targets) | `FOR` |
 | **`IF` / `THEN` / `ELSE` / `ELSE IF` / `ENDIF`** | DECLARE, routines |
 | **`WHILE` / `[DO]` / `ENDWHILE`** | File I/O, builtins, `&` |
+| **`REPEAT` / `UNTIL`** | |
 | Literals: integer, real, string, char, boolean | |
 | Variables + arithmetic / relational / logical exprs | |
 
@@ -35,6 +36,19 @@ ENDWHILE
 
 `DO` is optional on input (Teacher Guide omits it); Cambridge print always emits `DO`. Nested WHILE and WHILE↔IF nesting are supported. Empty body → Python `pass`.
 
+### REPEAT mapping
+
+```
+REPEAT                      while True:
+    OUTPUT Count               print(Count)
+    Count ← Count + 1          Count = Count + 1
+UNTIL Count > 10           if Count > 10:
+                                break
+```
+
+REPEAT requires a final condition. Reverse translation recognizes the specific Python pattern `while True:` with a trailing `if <condition>:
+    break`. Nested REPEAT↔WHILE↔IF combinations are supported.
+
 ## Usage
 
 ```ts
@@ -44,10 +58,10 @@ import {
 } from '@pseudopilot/translator';
 
 const py = translatePseudocodeToPython(`
-WHILE Count < 10
+REPEAT
     OUTPUT Count
     Count ← Count + 1
-ENDWHILE
+UNTIL Count > 10
 `);
 ```
 

@@ -1,8 +1,8 @@
 # Translation Engine — Architecture (V1)
 
 **Package:** `@pseudopilot/translator`  
-**Dialect version:** Core subset V3 (assignment, I/O, expressions, CHAR, array indexes, IF / ELSE / ELSE IF, **WHILE / ENDWHILE**)  
-**Status:** WHILE translation milestone complete
+**Dialect version:** Core subset V4 (assignment, I/O, expressions, CHAR, array indexes, IF / ELSE / ELSE IF, **WHILE / ENDWHILE, REPEAT / UNTIL**)  
+**Status:** REPEAT translation milestone complete
 
 ---
 
@@ -46,7 +46,7 @@ PseudoPilot does **not** translate by string rewrite. The engine is a classic mu
 
 - Deterministic: same input → same IR → same output (stable formatting).
 - Pure library: no I/O, network, or AI.
-- Fail loudly on unsupported constructs (CASE, FOR, REPEAT, routines, …) with structured diagnostics — never invent control flow.
+- Fail loudly on unsupported constructs (CASE, FOR, routines, …) with structured diagnostics — never invent control flow.
 - New languages plug in as **frontend + printer** only; IR and rule registries stay shared.
 
 ---
@@ -56,7 +56,7 @@ PseudoPilot does **not** translate by string rewrite. The engine is a classic mu
 ### Cambridge → IR
 
 1. `parse(source)` from `language-core` yields a `Program`.
-2. A **lowering walker** visits `Program.body` in order, recursively lowering nested blocks (`IF` / `WHILE` bodies).
+2. A **lowering walker** visits `Program.body` in order, recursively lowering nested blocks (`IF` / `WHILE` / `REPEAT` bodies).
 3. Each `Statement` is pattern-matched by `kind`:
    - Supported → IR node
    - Unsupported → diagnostic `T_UNSUPPORTED_*`, statement skipped or pipeline `ok = false`
@@ -74,6 +74,7 @@ This is a **single-pass recursive descent over the AST** (visitor by explicit `s
    - `print(...)` → `IrOutput`
    - `if` / `elif` / `else` suites (indented blocks; empty → `pass`)
    - `while` suites (indented blocks; empty → `pass`)
+   - `while True` + trailing `if <condition>: break` patterns → `REPEAT ... UNTIL`
 3. Same IR printers as the Cambridge path.
 
 ### IR → text
@@ -123,7 +124,7 @@ IR stability is the scalability bottleneck we protect: prefer evolving IR carefu
 
 | Concern | Behaviour |
 | --- | --- |
-| **Indentation** | Regenerated. Nested `IF` / `WHILE` blocks use 4 spaces per level in both Cambridge and Python printers. Top-level statements have no indent. |
+| **Indentation** | Regenerated. Nested `IF` / `WHILE` / `REPEAT` blocks use 4 spaces per level in both Cambridge and Python printers. Top-level statements have no indent. |
 | **Assignment glyph** | Default Cambridge print uses `←`; option `assignmentArrow: 'ascii'` → `<-`. |
 | **Whitespace inside exprs** | Canonical: `a + b`, `a DIV b` / `a // b` — not source-faithful spacing. |
 | **Comments** | Full-line `//` or `#` comments between statements are captured as **leading trivia** on the following statement (or trailing program trivia). Same-line trailing comments attach as **trailing trivia**. |
@@ -150,7 +151,8 @@ Trivia is stored on IR nodes, not re-derived from target language, so Cambridge 
 | `"text"` (STRING) | `IrStringLiteral` | `"text"` |
 | `IF` / `ELSE IF` / `ELSE` / `ENDIF` | `IrIfStatement` | `if` / `elif` / `else` (+ `pass` for empty body) |
 | `WHILE` / `[DO]` / `ENDWHILE` | `IrWhileStatement` | `while` (+ `pass` for empty body) |
+| `REPEAT` / `UNTIL` | `IrRepeatStatement` | `while True` + trailing `if cond: break` |
 
 **INPUT typing:** Without `DECLARE` (out of current subset), Cambridge `INPUT` has no declared type. PseudoPilot maps to Python `input()` (always `str`). Coercion belongs with a later typechecker + DECLARE milestone — not invented here.
 
-**Explicitly out of scope for this subset:** CASE, `FOR` / `REPEAT`, DECLARE, routines, file I/O, `&` concatenation, builtins, DATE literals.
+**Explicitly out of scope for this subset:** CASE, `FOR`, DECLARE, routines, file I/O, `&` concatenation, builtins, DATE literals.
