@@ -1,0 +1,49 @@
+name: Bug report
+description: Report incorrect translation, parse failure, or IDE defect
+title: '[bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. PseudoPilot targets Cambridge 9618 fidelity — include minimal reproducible source when possible.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - language-core (lexer/parser)
+        - translator (Cambridge ↔ Python)
+        - web IDE
+        - docs
+        - CI / tooling
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Pseudocode and/or Python that triggers the issue
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Package / commit
+      description: e.g. @pseudopilot/translator 0.8.0-function or git SHA
+    validations:
+      required: false

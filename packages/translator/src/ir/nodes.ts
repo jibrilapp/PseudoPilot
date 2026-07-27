@@ -26,7 +26,9 @@ export type IrStatement =
   | IrRepeatStatement
   | IrForStatement
   | IrProcedureDeclaration
+  | IrFunctionDeclaration
   | IrCallStatement
+  | IrReturnStatement
   | IrBreakStatement;
 
 type WithTrivia = {
@@ -129,11 +131,20 @@ export type IrParameter = {
   readonly typeName: IrTypeName;
 };
 
-/** PROCEDURE … ENDPROCEDURE — maps to Python def. */
+/** PROCEDURE … ENDPROCEDURE — maps to Python def (no return annotation). */
 export type IrProcedureDeclaration = WithTrivia & {
   readonly kind: 'IrProcedureDeclaration';
   readonly name: string;
   readonly parameters: IrParameter[];
+  readonly body: IrStatement[];
+};
+
+/** FUNCTION … RETURNS … ENDFUNCTION — maps to Python def … -> type. */
+export type IrFunctionDeclaration = WithTrivia & {
+  readonly kind: 'IrFunctionDeclaration';
+  readonly name: string;
+  readonly parameters: IrParameter[];
+  readonly returnType: IrTypeName;
   readonly body: IrStatement[];
 };
 
@@ -142,6 +153,12 @@ export type IrCallStatement = WithTrivia & {
   readonly kind: 'IrCallStatement';
   readonly callee: string;
   readonly args: IrExpression[];
+};
+
+/** RETURN expr — maps to Python return expr (functions only). */
+export type IrReturnStatement = WithTrivia & {
+  readonly kind: 'IrReturnStatement';
+  readonly value: IrExpression;
 };
 
 /** Internal-only for Python pattern recognition; not a Cambridge surface feature. */
@@ -157,6 +174,7 @@ export type IrExpression =
   | IrBooleanLiteral
   | IrIdentifier
   | IrIndexExpression
+  | IrCallExpression
   | IrUnaryExpression
   | IrBinaryExpression
   | IrGroupingExpression;
@@ -197,6 +215,13 @@ export type IrIndexExpression = {
   readonly kind: 'IrIndexExpression';
   readonly array: IrIdentifier;
   readonly indices: IrExpression[];
+};
+
+/** F(args) — function call expression (not CALL statement). */
+export type IrCallExpression = {
+  readonly kind: 'IrCallExpression';
+  readonly callee: string;
+  readonly args: IrExpression[];
 };
 
 /** Canonical IR operators (Python-leaning surface; printers map to Cambridge). */

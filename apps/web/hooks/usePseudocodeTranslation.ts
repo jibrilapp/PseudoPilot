@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { runPseudocodeToPython } from '@/lib/translation/runTranslate';
 import {
   TRANSLATE_DEBOUNCE_MS,
+  TRANSLATE_LARGE_DEBOUNCE_MS,
+  TRANSLATE_LARGE_SOURCE_CHARS,
   type IdeDiagnostic,
   type TranslationStatus,
 } from '@/lib/translation/types';
@@ -31,6 +33,10 @@ export function usePseudocodeTranslation(
   const lastGoodPython = useRef('');
 
   useEffect(() => {
+    const delay =
+      pseudocode.length > TRANSLATE_LARGE_SOURCE_CHARS
+        ? TRANSLATE_LARGE_DEBOUNCE_MS
+        : TRANSLATE_DEBOUNCE_MS;
     const timer = window.setTimeout(() => {
       const result = runPseudocodeToPython(pseudocode);
       setDiagnostics(result.diagnostics);
@@ -45,7 +51,7 @@ export function usePseudocodeTranslation(
       // Keep previous successful translation visible.
       setPython(lastGoodPython.current);
       setStatus('error');
-    }, TRANSLATE_DEBOUNCE_MS);
+    }, delay);
 
     return () => window.clearTimeout(timer);
   }, [pseudocode]);

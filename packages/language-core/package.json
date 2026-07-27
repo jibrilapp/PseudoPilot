@@ -1,9 +1,23 @@
 {
   "name": "@pseudopilot/language-core",
-  "version": "0.0.0",
+  "version": "0.8.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
-  "description": "Deterministic lexer, parser, AST, and IR for Cambridge pseudocode and a Python subset. Pure library: no I/O, no DB, no network.",
+  "description": "Deterministic lexer, parser, and AST for Cambridge 9618 pseudocode. Pure library: no I/O, no DB, no network.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jibrilapp/PseudoPilot.git",
+    "directory": "packages/language-core"
+  },
+  "bugs": {
+    "url": "https://github.com/jibrilapp/PseudoPilot/issues"
+  },
+  "homepage": "https://github.com/jibrilapp/PseudoPilot/tree/main/packages/language-core",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

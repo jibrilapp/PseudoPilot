@@ -70,18 +70,18 @@ export const DUMMY_TABS: EditorTab[] = [
   },
 ];
 
-export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes PROCEDURE + CALL)
-PROCEDURE DisplaySum(A : INTEGER, B : INTEGER)
-    OUTPUT A + B
-ENDPROCEDURE
+export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes FUNCTION + RETURN)
+FUNCTION Add(A : INTEGER, B : INTEGER) RETURNS INTEGER
+    RETURN A + B
+ENDFUNCTION
 
-CALL DisplaySum(3, 4)
+OUTPUT Add(2, 3)
 `;
 
-export const DUMMY_PYTHON = `def DisplaySum(A: int, B: int):
-    print(A + B)
+export const DUMMY_PYTHON = `def Add(A: int, B: int) -> int:
+    return A + B
 
-DisplaySum(3, 4)
+print(Add(2, 3))
 `;
 
 export const DUMMY_CONSOLE: ConsoleLine[] = [

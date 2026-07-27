@@ -36,13 +36,9 @@ export function CodeSurface({
         <div className="flex h-full min-h-0 font-mono text-[13px] leading-[1.7]">
           <div
             aria-hidden
-            className="sticky left-0 select-none border-r border-pp-line bg-pp-editor px-3.5 py-2 text-right text-[12px] text-pp-faint"
+            className="sticky left-0 select-none whitespace-pre border-r border-pp-line bg-pp-editor px-3.5 py-2 text-right text-[12px] leading-[1.7] text-pp-faint tabular-nums"
           >
-            {Array.from({ length: lineCount }, (_, i) => (
-              <div key={i} className="tabular-nums">
-                {i + 1}
-              </div>
-            ))}
+            {Array.from({ length: lineCount }, (_, i) => i + 1).join('\n')}
           </div>
           <textarea
             aria-label={ariaLabel ?? 'Pseudocode editor'}
@@ -65,13 +61,9 @@ export function CodeSurface({
       <div className="flex min-w-max font-mono text-[13px] leading-[1.7]">
         <div
           aria-hidden
-          className="sticky left-0 select-none border-r border-pp-line bg-transparent px-3.5 py-2 text-right text-[12px] text-pp-faint"
+          className="sticky left-0 select-none whitespace-pre border-r border-pp-line bg-transparent px-3.5 py-2 text-right text-[12px] leading-[1.7] text-pp-faint tabular-nums"
         >
-          {lines.map((_, i) => (
-            <div key={i} className="tabular-nums">
-              {i + 1}
-            </div>
-          ))}
+          {lines.map((_, i) => i + 1).join('\n')}
         </div>
         <pre className="m-0 flex-1 whitespace-pre px-4 py-2 text-pp-ink">
           {lines.map((line, i) => (
@@ -92,19 +84,32 @@ function HighlightedLine({
   line: string;
   language: 'pseudocode' | 'python';
 }) {
+  // Cap work per line to avoid main-thread jank / pathological regex cost.
+  const MAX_HIGHLIGHT_CHARS = 4_000;
+  if (line.length > MAX_HIGHLIGHT_CHARS) {
+    return <span>{line}</span>;
+  }
   if (!line.trim()) return <span>&nbsp;</span>;
 
   const keywords =
     language === 'pseudocode'
       ? [
           'DECLARE',
+          'CONSTANT',
           'PROCEDURE',
           'ENDPROCEDURE',
           'FUNCTION',
           'ENDFUNCTION',
+          'RETURNS',
+          'RETURN',
           'FOR',
           'TO',
           'NEXT',
+          'STEP',
+          'CASE',
+          'OF',
+          'OTHERWISE',
+          'ENDCASE',
           'CALL',
           'OUTPUT',
           'INPUT',
@@ -114,11 +119,22 @@ function HighlightedLine({
           'ENDIF',
           'WHILE',
           'ENDWHILE',
+          'REPEAT',
+          'UNTIL',
+          'DO',
           'INTEGER',
           'STRING',
           'REAL',
           'BOOLEAN',
           'CHAR',
+          'ARRAY',
+          'TRUE',
+          'FALSE',
+          'AND',
+          'OR',
+          'NOT',
+          'DIV',
+          'MOD',
         ]
       : [
           'def',

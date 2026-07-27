@@ -6,9 +6,15 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/language-core' as const;
-export const PACKAGE_VERSION = '0.0.0' as const;
+export const PACKAGE_VERSION = '0.8.0' as const;
 
-export { parse, type ParseResult } from './parse.js';
+export {
+  parse,
+  DEFAULT_MAX_SOURCE_CHARS,
+  ABSOLUTE_MAX_SOURCE_CHARS,
+  type ParseResult,
+  type ParseOptions,
+} from './parse.js';
 export { lex, type LexResult } from './lexer/lexer.js';
 export type {
   Program,

@@ -25,6 +25,7 @@ export enum PyTokenKind {
   Match = 'Match',
   Case = 'Case',
   Def = 'Def',
+  Return = 'Return',
   Pass = 'Pass',
   Break = 'Break',
   Equal = 'Equal',
@@ -74,6 +75,7 @@ const KEYWORDS: ReadonlyMap<string, PyTokenKind> = new Map([
   ['match', PyTokenKind.Match],
   ['case', PyTokenKind.Case],
   ['def', PyTokenKind.Def],
+  ['return', PyTokenKind.Return],
   ['pass', PyTokenKind.Pass],
   ['break', PyTokenKind.Break],
 ]);

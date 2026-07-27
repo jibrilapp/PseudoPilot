@@ -9,6 +9,12 @@ export type TranslateDiagnostic = {
 
 export type AssignmentArrow = 'unicode' | 'ascii';
 
+/** Default per-call source budget for live IDE / public API (characters). */
+export const DEFAULT_MAX_SOURCE_CHARS = 256_000;
+
+/** Hard ceiling — callers cannot raise `maxSourceChars` above this. */
+export const ABSOLUTE_MAX_SOURCE_CHARS = 2_000_000;
+
 export type TranslateOptions = {
   /** Cambridge assignment glyph when printing pseudocode. Default: unicode ← */
   readonly assignmentArrow?: AssignmentArrow;
@@ -17,6 +23,11 @@ export type TranslateOptions = {
    * Default: true
    */
   readonly preserveTrivia?: boolean;
+  /**
+   * Reject sources longer than this many UTF-16 code units.
+   * Default: {@link DEFAULT_MAX_SOURCE_CHARS}. Capped by {@link ABSOLUTE_MAX_SOURCE_CHARS}.
+   */
+  readonly maxSourceChars?: number;
 };
 
 export type TranslateResult = {
@@ -30,13 +41,32 @@ export type TranslateResult = {
 export const DEFAULT_OPTIONS: Required<TranslateOptions> = {
   assignmentArrow: 'unicode',
   preserveTrivia: true,
+  maxSourceChars: DEFAULT_MAX_SOURCE_CHARS,
 };
 
 export function mergeOptions(
   options?: TranslateOptions,
 ): Required<TranslateOptions> {
+  const requested =
+    options?.maxSourceChars ?? DEFAULT_OPTIONS.maxSourceChars;
+  const maxSourceChars = Math.min(
+    Math.max(0, requested),
+    ABSOLUTE_MAX_SOURCE_CHARS,
+  );
   return {
     assignmentArrow: options?.assignmentArrow ?? DEFAULT_OPTIONS.assignmentArrow,
     preserveTrivia: options?.preserveTrivia ?? DEFAULT_OPTIONS.preserveTrivia,
+    maxSourceChars,
+  };
+}
+
+export function sourceTooLargeDiagnostic(
+  sourceLength: number,
+  maxSourceChars: number,
+): TranslateDiagnostic {
+  return {
+    severity: 'error',
+    code: 'T_SOURCE_TOO_LARGE',
+    message: `Source is ${sourceLength} characters; limit is ${maxSourceChars}. Split the program or raise maxSourceChars (max ${ABSOLUTE_MAX_SOURCE_CHARS}).`,
   };
 }

@@ -15,3 +15,7 @@ export type IdeDiagnostic = {
 export type TranslationStatus = 'idle' | 'ok' | 'error';
 
 export const TRANSLATE_DEBOUNCE_MS = 250;
+
+/** Longer debounce once past this size — protects slow laptops during live translate. */
+export const TRANSLATE_LARGE_SOURCE_CHARS = 32_000;
+export const TRANSLATE_LARGE_DEBOUNCE_MS = 500;

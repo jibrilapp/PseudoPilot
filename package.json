@@ -1,8 +1,9 @@
 {
   "name": "pseudopilot",
   "private": true,
-  "version": "0.0.0",
-  "description": "AI-powered IDE, interpreter, debugger, visualizer, and bidirectional translator for Cambridge International Computer Science pseudocode and Python.",
+  "version": "0.8.0",
+  "license": "MIT",
+  "description": "Cambridge 9618 pseudocode ↔ Python translator, language core, and student IDE (experimental 0.x).",
   "packageManager": "pnpm@9.15.0",
   "engines": {
     "node": ">=22.0.0",

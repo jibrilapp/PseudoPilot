@@ -124,23 +124,27 @@ class PyParser {
     };
   }
 
-  private parseStatement(allowBreak = false, allowDef = false): ParsedStatement | null {
+  private parseStatement(
+    allowBreak = false,
+    allowDef = false,
+    allowReturn = false,
+  ): ParsedStatement | null {
     if (this.check(PyTokenKind.If)) {
-      return this.parseIf(allowBreak);
+      return this.parseIf(allowBreak, allowReturn);
     }
     if (this.check(PyTokenKind.While)) {
-      return this.parseWhile();
+      return this.parseWhile(allowReturn);
     }
     if (this.check(PyTokenKind.For)) {
-      return this.parseFor();
+      return this.parseFor(allowReturn);
     }
     if (this.check(PyTokenKind.Match)) {
-      return this.parseMatch();
+      return this.parseMatch(allowReturn);
     }
     if (this.check(PyTokenKind.Def)) {
       if (!allowDef) {
         this.error(
-          "Nested 'def' is not supported (Cambridge PROCEDURE cannot be nested).",
+          "Nested 'def' is not supported (Cambridge PROCEDURE/FUNCTION cannot be nested).",
           this.peek(),
         );
         return null;
@@ -154,6 +158,16 @@ class PyParser {
       this.advance();
       return null;
     }
+    if (this.check(PyTokenKind.Return)) {
+      if (!allowReturn) {
+        this.error(
+          "'return' is only valid inside a function (def with '->' return type).",
+          this.peek(),
+        );
+        return null;
+      }
+      return this.parseReturn();
+    }
     if (allowBreak && this.check(PyTokenKind.Break)) {
       const breakTok = this.advance();
       return { stmt: makeBreak(), span: tokenSpan(breakTok) };
@@ -161,7 +175,7 @@ class PyParser {
 
     if (this.isUnsupportedBlockKeyword()) {
       this.error(
-        `Translator does not support '${this.peek().lexeme}' (IF/WHILE/REPEAT/FOR/CASE/PROCEDURE pattern only among control-flow).`,
+        `Translator does not support '${this.peek().lexeme}' (control-flow / PROCEDURE / FUNCTION subset only).`,
         this.peek(),
       );
       return null;
@@ -329,18 +343,60 @@ class PyParser {
       return null;
     }
 
-    // `def Foo() -> int:` is FUNCTION territory — reject clearly.
+    // `def Foo() -> int:` → FUNCTION; bare `def Foo():` → PROCEDURE.
+    let returnType: IrTypeName | null = null;
     if (this.check(PyTokenKind.Minus)) {
-      this.error(
-        "Return annotations ('->') are not supported; use PROCEDURE (no RETURNS), not FUNCTION.",
-        this.peek(),
-      );
-      return null;
+      this.advance();
+      if (!this.match(PyTokenKind.Gt)) {
+        this.error("Expected '>' after '-' to form return annotation '->'.", this.peek());
+        return null;
+      }
+      if (!this.check(PyTokenKind.Identifier)) {
+        this.error('Expected return type after "->".', this.peek());
+        return null;
+      }
+      const mapped = pythonTypeToIr(this.advance().lexeme);
+      if (!mapped) {
+        this.error(
+          'Unsupported return type annotation (use int, float, str, bool).',
+          this.previous(),
+        );
+        return null;
+      }
+      returnType = mapped;
     }
 
     this.expect(PyTokenKind.Colon);
     this.skipNewlines();
-    const body = this.parseSuite(false);
+    const body = this.parseSuite(false, returnType !== null);
+
+    if (returnType !== null) {
+      if (!containsReturnIr(body)) {
+        this.diagnostics.push({
+          severity: 'warning',
+          code: 'T_FUNC_NO_RETURN',
+          message: `Function '${name}' has no return statement.`,
+          span: {
+            start: { offset: defTok.offset, line: defTok.line, column: defTok.column },
+            end: {
+              offset: defTok.offset + defTok.lexeme.length,
+              line: defTok.line,
+              column: defTok.column + Math.max(defTok.lexeme.length, 1) - 1,
+            },
+          },
+        });
+      }
+      return {
+        span: tokenSpan(defTok, this.previous()),
+        stmt: withEmptyTrivia({
+          kind: 'IrFunctionDeclaration' as const,
+          name,
+          parameters,
+          returnType,
+          body,
+        }),
+      };
+    }
 
     return {
       span: tokenSpan(defTok, this.previous()),
@@ -349,6 +405,19 @@ class PyParser {
         name,
         parameters,
         body,
+      }),
+    };
+  }
+
+  private parseReturn(): ParsedStatement | null {
+    const retTok = this.expect(PyTokenKind.Return)!;
+    const value = this.parseExpression();
+    if (!value) return null;
+    return {
+      span: tokenSpan(retTok, this.previous()),
+      stmt: withEmptyTrivia({
+        kind: 'IrReturnStatement' as const,
+        value,
       }),
     };
   }
@@ -414,7 +483,7 @@ class PyParser {
    *   case _v if <low> <= _v and _v <= <high>:
    *   case _:
    */
-  private parseMatch(): ParsedStatement | null {
+  private parseMatch(allowReturn = false): ParsedStatement | null {
     const matchTok = this.expect(PyTokenKind.Match)!;
     const discriminant = this.parseExpression();
     if (!discriminant) return null;
@@ -448,7 +517,7 @@ class PyParser {
         this.advance(); // _
         this.expect(PyTokenKind.Colon);
         this.skipNewlines();
-        const body = this.parseSuite(false);
+        const body = this.parseSuite(false, allowReturn);
         if (sawOtherwise) {
           this.error('Duplicate wildcard case (_) in match.', matchTok);
         }
@@ -468,7 +537,7 @@ class PyParser {
         if (!guard) return null;
         this.expect(PyTokenKind.Colon);
         this.skipNewlines();
-        const body = this.parseSuite(false);
+        const body = this.parseSuite(false, allowReturn);
         const range = this.extractRangeGuard(guard, capture);
         if (!range) {
           this.error(
@@ -493,7 +562,7 @@ class PyParser {
       if (!value) return null;
       this.expect(PyTokenKind.Colon);
       this.skipNewlines();
-      const body = this.parseSuite(false);
+      const body = this.parseSuite(false, allowReturn);
       if (sawOtherwise) {
         this.error('Unreachable case after wildcard (_).', matchTok);
       }
@@ -542,13 +611,13 @@ class PyParser {
     return null;
   }
 
-  private parseWhile(): { stmt: IrStatement; span: StmtSpan } | null {
+  private parseWhile(allowReturn = false): { stmt: IrStatement; span: StmtSpan } | null {
     const whileTok = this.expect(PyTokenKind.While)!;
     const condition = this.parseExpression();
     if (!condition) return null;
     this.expect(PyTokenKind.Colon);
     this.skipNewlines();
-    const rawBody = this.parseSuite(true);
+    const rawBody = this.parseSuite(true, allowReturn);
     const repeat = this.tryParseRepeat(condition, rawBody, whileTok);
     if (repeat) return repeat;
     const body = this.stripUnsupportedBreaks(rawBody);
@@ -566,7 +635,7 @@ class PyParser {
    * Parse `for <var> in range(<start>, <stop>[, <step>]):` into IrForStatement.
    * Recovers Cambridge inclusive semantics from the ±1 adjustment on stop.
    */
-  private parseFor(): ParsedStatement | null {
+  private parseFor(allowReturn = false): ParsedStatement | null {
     const forTok = this.expect(PyTokenKind.For)!;
 
     if (!this.check(PyTokenKind.Identifier)) {
@@ -612,7 +681,7 @@ class PyParser {
 
     this.expect(PyTokenKind.Colon);
     this.skipNewlines();
-    const body = this.parseSuite(false);
+    const body = this.parseSuite(false, allowReturn);
 
     if (args.length < 2 || args.length > 3) {
       this.error(
@@ -678,13 +747,13 @@ class PyParser {
     return null;
   }
 
-  private parseIf(allowBreak = false): ParsedStatement | null {
+  private parseIf(allowBreak = false, allowReturn = false): ParsedStatement | null {
     const ifTok = this.expect(PyTokenKind.If)!;
     const condition = this.parseExpression();
     if (!condition) return null;
     this.expect(PyTokenKind.Colon);
     this.skipNewlines();
-    const consequent = this.parseSuite(allowBreak);
+    const consequent = this.parseSuite(allowBreak, allowReturn);
 
     const elseIfClauses: IrElseIfClause[] = [];
     while (this.check(PyTokenKind.Elif)) {
@@ -693,12 +762,11 @@ class PyParser {
       if (!c) return null;
       this.expect(PyTokenKind.Colon);
       this.skipNewlines();
+      const clauseBody = this.parseSuite(allowBreak, allowReturn);
       elseIfClauses.push({
         kind: 'IrElseIfClause',
         condition: c,
-        consequent: allowBreak
-          ? this.parseSuite(true)
-          : this.stripUnsupportedBreaks(this.parseSuite(false)),
+        consequent: allowBreak ? clauseBody : this.stripUnsupportedBreaks(clauseBody),
       });
     }
 
@@ -707,9 +775,8 @@ class PyParser {
       this.advance();
       this.expect(PyTokenKind.Colon);
       this.skipNewlines();
-      alternate = allowBreak
-        ? this.parseSuite(true)
-        : this.stripUnsupportedBreaks(this.parseSuite(false));
+      const elseBody = this.parseSuite(allowBreak, allowReturn);
+      alternate = allowBreak ? elseBody : this.stripUnsupportedBreaks(elseBody);
     }
 
     return {
@@ -725,7 +792,7 @@ class PyParser {
   }
 
   /** Parse an indented block; `pass` alone yields an empty statement list. */
-  private parseSuite(allowBreak = false): IrStatement[] {
+  private parseSuite(allowBreak = false, allowReturn = false): IrStatement[] {
     if (!this.match(PyTokenKind.Indent)) {
       // Single-line suite not supported in this subset
       this.error('Expected indented block after ":".', this.peek());
@@ -746,7 +813,7 @@ class PyParser {
       }
 
       onlyPass = false;
-      const stmt = this.parseStatement(allowBreak);
+      const stmt = this.parseStatement(allowBreak, false, allowReturn);
       if (stmt) body.push(stmt.stmt);
       else {
         while (
@@ -1003,11 +1070,34 @@ class PyParser {
     if (this.match(PyTokenKind.Identifier)) {
       const name = this.previous().lexeme;
       if (this.check(PyTokenKind.LParen)) {
-        this.error(
-          `Translator does not support call '${name}(...).'`,
-          this.previous(),
-        );
-        return null;
+        if (isPythonSyntaxKeyword(name)) {
+          this.error(
+            `Call target '${name}' is a Python keyword and cannot map to a function call.`,
+            this.previous(),
+          );
+          return null;
+        }
+        this.advance(); // (
+        const args: IrExpression[] = [];
+        if (!this.check(PyTokenKind.RParen)) {
+          const first = this.parseExpression();
+          if (!first) return null;
+          args.push(first);
+          while (this.match(PyTokenKind.Comma)) {
+            if (this.check(PyTokenKind.RParen)) {
+              this.error('Trailing comma in call arguments is not supported.', this.peek());
+              return null;
+            }
+            const arg = this.parseExpression();
+            if (!arg) return null;
+            args.push(arg);
+          }
+        }
+        if (!this.match(PyTokenKind.RParen)) {
+          this.error("Expected ')' after call arguments.", this.peek());
+          return null;
+        }
+        return { kind: 'IrCallExpression', callee: name, args };
       }
       if (this.match(PyTokenKind.LBracket)) {
         const indices: IrExpression[] = [];
@@ -1037,7 +1127,7 @@ class PyParser {
 
   private isUnsupportedBlockKeyword(): boolean {
     const lex = this.peek().lexeme;
-    return ['class', 'return', 'with'].includes(lex);
+    return ['class', 'with'].includes(lex);
   }
 
   private skipNewlines(): void {
@@ -1099,6 +1189,31 @@ function pythonTypeToIr(name: string): IrTypeName | null {
     default:
       return null;
   }
+}
+
+function containsReturnIr(statements: readonly IrStatement[]): boolean {
+  for (const stmt of statements) {
+    if (stmt.kind === 'IrReturnStatement') return true;
+    if (stmt.kind === 'IrIfStatement') {
+      if (containsReturnIr(stmt.consequent)) return true;
+      for (const c of stmt.elseIfClauses) {
+        if (containsReturnIr(c.consequent)) return true;
+      }
+      if (stmt.alternate && containsReturnIr(stmt.alternate)) return true;
+    } else if (
+      stmt.kind === 'IrWhileStatement' ||
+      stmt.kind === 'IrRepeatStatement' ||
+      stmt.kind === 'IrForStatement'
+    ) {
+      if (containsReturnIr(stmt.body)) return true;
+    } else if (stmt.kind === 'IrCaseStatement') {
+      for (const arm of stmt.arms) {
+        if (containsReturnIr(arm.body)) return true;
+      }
+      if (stmt.otherwise && containsReturnIr(stmt.otherwise)) return true;
+    }
+  }
+  return false;
 }
 
 export function parsePythonToIr(

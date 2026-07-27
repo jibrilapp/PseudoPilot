@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a language, translator, or IDE improvement
+title: '[feat]: '
+labels: ['enhancement']
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Cambridge language coverage
+        - Translator / reverse translation
+        - IDE UX
+        - Interpreter / runtime (future)
+        - Docs / open source process
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What gap or friction does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Suggested behavior, including Cambridge Teacher Guide references if relevant
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope checks
+      options:
+        - label: I checked docs/language/ for whether this is already specified or deferred
+        - label: I am willing to help implement or review this feature

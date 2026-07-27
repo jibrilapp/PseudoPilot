@@ -103,14 +103,28 @@ function lowerExpression(
       if (!inner) return null;
       return { kind: 'IrGroupingExpression', expression: inner };
     }
-    case 'CallExpression':
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_UNSUPPORTED_CALL',
-        message: `Translator does not support function calls (found '${expr.callee.name}').`,
-        span: expr.span,
-      });
-      return null;
+    case 'CallExpression': {
+      if (isPythonSyntaxKeyword(expr.callee.name)) {
+        diagnostics.push({
+          severity: 'error',
+          code: 'T_CALL_PY_KEYWORD',
+          message: `Function name '${expr.callee.name}' is a Python keyword and cannot be translated.`,
+          span: expr.callee.span,
+        });
+        return null;
+      }
+      const args: IrExpression[] = [];
+      for (const arg of expr.args) {
+        const lowered = lowerExpression(arg, diagnostics);
+        if (!lowered) return null;
+        args.push(lowered);
+      }
+      return {
+        kind: 'IrCallExpression',
+        callee: expr.callee.name,
+        args,
+      };
+    }
     case 'EofExpression':
       diagnostics.push({
         severity: 'error',
@@ -126,17 +140,105 @@ function lowerExpression(
   }
 }
 
-/** Lower a statement list; skip unsupported nodes (diagnostics already emitted). */
+/** Lower a statement list; skip unsupported nodes (diagnostics already emitted).
+ * Warns on statements after RETURN at the same block level.
+ */
 function lowerBlock(
   statements: Statement[],
   diagnostics: TranslateDiagnostic[],
 ): IrStatement[] {
   const out: IrStatement[] = [];
+  let seenReturn = false;
   for (const stmt of statements) {
+    if (seenReturn) {
+      diagnostics.push({
+        severity: 'warning',
+        code: 'T_UNREACHABLE_AFTER_RETURN',
+        message: 'Unreachable statement after RETURN.',
+        span: stmt.span,
+      });
+    }
     const lowered = lowerStatement(stmt, diagnostics);
-    if (lowered) out.push(lowered.ir);
+    if (lowered) {
+      out.push(lowered.ir);
+      if (lowered.ir.kind === 'IrReturnStatement') seenReturn = true;
+    }
   }
   return out;
+}
+
+function validateRoutineBinding(
+  kind: 'PROCEDURE' | 'FUNCTION',
+  name: { readonly name: string; readonly span: Statement['span'] },
+  parameters: readonly { readonly name: { readonly name: string; readonly span: Statement['span'] } }[],
+  diagnostics: TranslateDiagnostic[],
+): boolean {
+  if (isPythonSyntaxKeyword(name.name)) {
+    diagnostics.push({
+      severity: 'error',
+      code: 'T_PROC_PY_KEYWORD',
+      message: `${kind} name '${name.name}' is a Python keyword and cannot be translated to 'def ${name.name}(...):'.`,
+      span: name.span,
+    });
+    return false;
+  }
+  if (isPythonTranslatorBuiltin(name.name)) {
+    diagnostics.push({
+      severity: 'warning',
+      code: 'T_PROC_SHADOWS_BUILTIN',
+      message: `${kind} name '${name.name}' shadows a Python builtin used by the translator (print/input/range).`,
+      span: name.span,
+    });
+  }
+  const seen = new Set<string>();
+  for (const p of parameters) {
+    const pname = p.name.name;
+    if (isPythonSyntaxKeyword(pname)) {
+      diagnostics.push({
+        severity: 'error',
+        code: 'T_PROC_PY_KEYWORD',
+        message: `Parameter name '${pname}' is a Python keyword and cannot be translated.`,
+        span: p.name.span,
+      });
+      return false;
+    }
+    if (seen.has(pname)) {
+      diagnostics.push({
+        severity: 'error',
+        code: 'T_PROC_DUP_PARAM',
+        message: `Duplicate parameter name '${pname}' in ${kind} '${name.name}'.`,
+        span: p.name.span,
+      });
+      return false;
+    }
+    seen.add(pname);
+  }
+  return true;
+}
+
+function containsReturn(statements: readonly IrStatement[]): boolean {
+  for (const stmt of statements) {
+    if (stmt.kind === 'IrReturnStatement') return true;
+    if (stmt.kind === 'IrIfStatement') {
+      if (containsReturn(stmt.consequent)) return true;
+      for (const c of stmt.elseIfClauses) {
+        if (containsReturn(c.consequent)) return true;
+      }
+      if (stmt.alternate && containsReturn(stmt.alternate)) return true;
+    } else if (
+      stmt.kind === 'IrWhileStatement' ||
+      stmt.kind === 'IrRepeatStatement' ||
+      stmt.kind === 'IrForStatement'
+    ) {
+      if (containsReturn(stmt.body)) return true;
+    } else if (stmt.kind === 'IrCaseStatement') {
+      for (const arm of stmt.arms) {
+        if (containsReturn(arm.body)) return true;
+      }
+      if (stmt.otherwise && containsReturn(stmt.otherwise)) return true;
+    }
+  }
+  return false;
 }
 
 function lowerStatement(
@@ -299,49 +401,16 @@ function lowerStatement(
       });
       return null;
     case 'ProcedureDeclaration': {
-      const name = stmt.name.name;
-      if (isPythonSyntaxKeyword(name)) {
-        diagnostics.push({
-          severity: 'error',
-          code: 'T_PROC_PY_KEYWORD',
-          message: `Procedure name '${name}' is a Python keyword and cannot be translated to 'def ${name}(...):'.`,
-          span: stmt.name.span,
-        });
+      if (
+        !validateRoutineBinding(
+          'PROCEDURE',
+          stmt.name,
+          stmt.parameters,
+          diagnostics,
+        )
+      ) {
         return null;
       }
-      if (isPythonTranslatorBuiltin(name)) {
-        diagnostics.push({
-          severity: 'warning',
-          code: 'T_PROC_SHADOWS_BUILTIN',
-          message: `Procedure name '${name}' shadows a Python builtin used by the translator (print/input/range).`,
-          span: stmt.name.span,
-        });
-      }
-
-      const seen = new Set<string>();
-      for (const p of stmt.parameters) {
-        const pname = p.name.name;
-        if (isPythonSyntaxKeyword(pname)) {
-          diagnostics.push({
-            severity: 'error',
-            code: 'T_PROC_PY_KEYWORD',
-            message: `Parameter name '${pname}' is a Python keyword and cannot be translated.`,
-            span: p.name.span,
-          });
-          return null;
-        }
-        if (seen.has(pname)) {
-          diagnostics.push({
-            severity: 'error',
-            code: 'T_PROC_DUP_PARAM',
-            message: `Duplicate parameter name '${pname}' in PROCEDURE '${name}'.`,
-            span: p.name.span,
-          });
-          return null;
-        }
-        seen.add(pname);
-      }
-
       const parameters = stmt.parameters.map((p) => ({
         kind: 'IrParameter' as const,
         name: p.name.name,
@@ -351,20 +420,48 @@ function lowerStatement(
         span: stmt.span,
         ir: withEmptyTrivia({
           kind: 'IrProcedureDeclaration' as const,
-          name,
+          name: stmt.name.name,
           parameters,
           body: lowerBlock(stmt.body, diagnostics),
         }),
       };
     }
-    case 'FunctionDeclaration':
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_UNSUPPORTED_FUNCTION',
-        message: 'Translator does not support FUNCTION (PROCEDURE only in this milestone).',
+    case 'FunctionDeclaration': {
+      if (
+        !validateRoutineBinding(
+          'FUNCTION',
+          stmt.name,
+          stmt.parameters,
+          diagnostics,
+        )
+      ) {
+        return null;
+      }
+      const parameters = stmt.parameters.map((p) => ({
+        kind: 'IrParameter' as const,
+        name: p.name.name,
+        typeName: p.typeName.name,
+      }));
+      const body = lowerBlock(stmt.body, diagnostics);
+      if (!containsReturn(body)) {
+        diagnostics.push({
+          severity: 'warning',
+          code: 'T_FUNC_NO_RETURN',
+          message: `FUNCTION '${stmt.name.name}' has no RETURN statement.`,
+          span: stmt.span,
+        });
+      }
+      return {
         span: stmt.span,
-      });
-      return null;
+        ir: withEmptyTrivia({
+          kind: 'IrFunctionDeclaration' as const,
+          name: stmt.name.name,
+          parameters,
+          returnType: stmt.returnType.name,
+          body,
+        }),
+      };
+    }
     case 'CallStatement': {
       const callee = stmt.callee.name;
       if (isPythonSyntaxKeyword(callee)) {
@@ -391,14 +488,17 @@ function lowerStatement(
         }),
       };
     }
-    case 'ReturnStatement':
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_UNSUPPORTED_RETURN',
-        message: 'Translator does not support RETURN.',
+    case 'ReturnStatement': {
+      const value = lowerExpression(stmt.value, diagnostics);
+      if (!value) return null;
+      return {
         span: stmt.span,
-      });
-      return null;
+        ir: withEmptyTrivia({
+          kind: 'IrReturnStatement' as const,
+          value,
+        }),
+      };
+    }
     case 'OpenFileStatement':
     case 'ReadFileStatement':
     case 'WriteFileStatement':
@@ -469,21 +569,25 @@ function warnForwardProcedureCalls(
 ): void {
   const defined = new Set<string>();
   for (const { stmt, span } of paired) {
-    if (stmt.kind === 'IrProcedureDeclaration') {
+    if (
+      stmt.kind === 'IrProcedureDeclaration' ||
+      stmt.kind === 'IrFunctionDeclaration'
+    ) {
       defined.add(stmt.name);
       continue;
     }
     if (stmt.kind === 'IrCallStatement' && !defined.has(stmt.callee)) {
-      // May still be defined later — only warn if a later PROCEDURE with that name exists.
       const declaredLater = paired.some(
         (p) =>
-          p.stmt.kind === 'IrProcedureDeclaration' && p.stmt.name === stmt.callee,
+          (p.stmt.kind === 'IrProcedureDeclaration' ||
+            p.stmt.kind === 'IrFunctionDeclaration') &&
+          p.stmt.name === stmt.callee,
       );
       if (declaredLater) {
         diagnostics.push({
           severity: 'warning',
           code: 'T_CALL_BEFORE_PROC',
-          message: `CALL '${stmt.callee}' appears before its PROCEDURE definition; generated Python will raise NameError if the call runs first.`,
+          message: `CALL '${stmt.callee}' appears before its PROCEDURE/FUNCTION definition; generated Python will raise NameError if the call runs first.`,
           span,
         });
       }

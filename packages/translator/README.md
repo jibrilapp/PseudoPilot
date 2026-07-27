@@ -2,52 +2,35 @@
 
 Bidirectional **Cambridge 9618 pseudocode ↔ Python** translation via a canonical IR.
 
+**Version:** `0.8.0` · **Subset id:** `v8-assign-io-expr-control-procedure-function`
+
 ## Supported subset (current)
 
 | Supported | Not supported |
 | --- | --- |
-| Assignment (`←` / `=`) including `A[i]` / `A[i, j]` | CASE |
-| `INPUT` / `OUTPUT` (incl. indexed targets) | `FOR` |
-| **`IF` / `THEN` / `ELSE` / `ELSE IF` / `ENDIF`** | DECLARE, routines |
-| **`WHILE` / `[DO]` / `ENDWHILE`** | File I/O, builtins, `&` |
-| **`REPEAT` / `UNTIL`** | |
+| Assignment (`←` / `<-` / Python `=`) including `A[i]` / `A[i, j]` | DECLARE, CONSTANT |
+| `INPUT` / `OUTPUT` (incl. indexed targets) | BYREF / BYVAL |
+| `IF` / `THEN` / `ELSE` / `ELSE IF` / `ENDIF` | File I/O |
+| `WHILE` / `[DO]` / `ENDWHILE` | `&` concatenation |
+| `REPEAT` / `UNTIL` | Builtins (`LENGTH`, `MID`, …) |
+| `FOR` / `TO` / `[STEP]` / `NEXT` | DATE / OOP / Extended |
+| `CASE OF` / `OTHERWISE` / `ENDCASE` | |
+| `PROCEDURE` / `ENDPROCEDURE` / `CALL` | |
+| `FUNCTION` / `RETURNS` / `ENDFUNCTION` / `RETURN` + expression calls | |
 | Literals: integer, real, string, char, boolean | |
-| Variables + arithmetic / relational / logical exprs | |
+| Arithmetic / relational / logical expressions | |
 
-### IF mapping
+### Notable mappings
 
-```
-IF x > 5 THEN          if x > 5:
-    OUTPUT x               print(x)
-ELSE                   else:
-    OUTPUT 0               print(0)
-ENDIF
-```
+- **FOR** inclusive bounds → Python `range(start, end±1 [, step])`
+- **CASE OF \<expr\>** (Cambridge order) → Python `match` / `case`
+- **PROCEDURE** → `def name(...):` (no return annotation)
+- **FUNCTION** → `def name(...) -> type:` with `return`
+- **REPEAT** → `while True:` + trailing `if condition: break`
 
-Empty branches → Python `pass`. `ELSE IF` ↔ `elif`. Nested IF preserved with indentation (4 spaces).
+### Limits
 
-### WHILE mapping
-
-```
-WHILE Count < 10 DO        while Count < 10:
-    Count ← Count + 1          Count = Count + 1
-ENDWHILE
-```
-
-`DO` is optional on input (Teacher Guide omits it); Cambridge print always emits `DO`. Nested WHILE and WHILE↔IF nesting are supported. Empty body → Python `pass`.
-
-### REPEAT mapping
-
-```
-REPEAT                      while True:
-    OUTPUT Count               print(Count)
-    Count ← Count + 1          Count = Count + 1
-UNTIL Count > 10           if Count > 10:
-                                break
-```
-
-REPEAT requires a final condition. Reverse translation recognizes the specific Python pattern `while True:` with a trailing `if <condition>:
-    break`. Nested REPEAT↔WHILE↔IF combinations are supported.
+Public entrypoints reject oversized sources by default (`maxSourceChars`, default 256 KiB characters) to avoid browser freezes and DoS. Override via `TranslateOptions.maxSourceChars` (hard ceiling still applies).
 
 ## Usage
 
@@ -58,10 +41,11 @@ import {
 } from '@pseudopilot/translator';
 
 const py = translatePseudocodeToPython(`
-REPEAT
-    OUTPUT Count
-    Count ← Count + 1
-UNTIL Count > 10
+FUNCTION Double(n : INTEGER) RETURNS INTEGER
+    RETURN n * 2
+ENDFUNCTION
+
+OUTPUT Double(21)
 `);
 ```
 

@@ -1,9 +1,23 @@
 {
   "name": "@pseudopilot/translator",
-  "version": "0.0.0",
+  "version": "0.8.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "AST-to-AST bidirectional translation between pseudocode and Python via canonical IR.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jibrilapp/PseudoPilot.git",
+    "directory": "packages/translator"
+  },
+  "bugs": {
+    "url": "https://github.com/jibrilapp/PseudoPilot/issues"
+  },
+  "homepage": "https://github.com/jibrilapp/PseudoPilot/tree/main/packages/translator",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

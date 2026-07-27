@@ -1,5 +1,7 @@
 # Milestone 3 — Pseudocode parser (subset)
 
+> **Historical scratchpad.** Current coverage lives in [`docs/language/PARSER_COVERAGE.md`](../language/PARSER_COVERAGE.md) and package READMEs. Do not treat this file as the supported dialect.
+
 ## Parsing strategy
 
 **Hybrid:** recursive descent for statements + **Pratt** parsing for expressions.

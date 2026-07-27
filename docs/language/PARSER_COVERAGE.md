@@ -12,7 +12,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Keyword table (core set) | 🟡 | Common keywords lexed; many Extended / loop / CASE missing or unused |
+| Keyword table (core set) | 🟡 | Core control-flow / routines present; Extended / OOP / many builtins missing |
 | Case-insensitive keywords | ✅ | |
 | Reject keywords as identifiers | 🟡 | Lexed as keywords; edge cases TBD |
 
@@ -234,4 +234,4 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Constants / BYREF / CHAR lit / DATE | ❌ |
 | Extended TYPE / OOP / random files | ❌ |
 
-**Estimate:** Core Paper 2 surface covers selection, iteration, and **PROCEDURE/CALL** translation; still blocked on FUNCTION translation, DECLARE, BYREF, and several builtins.
+**Estimate:** Core Paper 2 surface covers selection, iteration, PROCEDURE/CALL, and **FUNCTION/RETURN** translation; still blocked on DECLARE, BYREF, and several builtins.

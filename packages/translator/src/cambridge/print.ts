@@ -47,6 +47,8 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return expr.name;
     case 'IrIndexExpression':
       return printTarget(expr);
+    case 'IrCallExpression':
+      return `${expr.callee}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
     case 'IrGroupingExpression':
       return `(${printExpr(expr.expression, 0)})`;
     case 'IrUnaryExpression':
@@ -182,12 +184,26 @@ function printStatement(
       lines.push(`${p}ENDPROCEDURE`);
       break;
     }
+    case 'IrFunctionDeclaration': {
+      const params = stmt.parameters
+        .map((param) => `${param.name} : ${param.typeName}`)
+        .join(', ');
+      lines.push(
+        `${p}FUNCTION ${stmt.name}(${params}) RETURNS ${stmt.returnType}`,
+      );
+      lines.push(...printBlock(stmt.body, arrow, level + 1));
+      lines.push(`${p}ENDFUNCTION`);
+      break;
+    }
     case 'IrCallStatement': {
       lines.push(
         `${p}CALL ${stmt.callee}(${stmt.args.map((a) => printExpr(a, 0)).join(', ')})`,
       );
       break;
     }
+    case 'IrReturnStatement':
+      lines.push(`${p}RETURN ${printExpr(stmt.value, 0)}`);
+      break;
     case 'IrBreakStatement':
       break;
     default: {
@@ -204,6 +220,7 @@ function printStatement(
     stmt.kind !== 'IrRepeatStatement' &&
     stmt.kind !== 'IrForStatement' &&
     stmt.kind !== 'IrProcedureDeclaration' &&
+    stmt.kind !== 'IrFunctionDeclaration' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('//')
   ) {

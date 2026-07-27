@@ -1,120 +1,105 @@
 # PseudoPilot
 
-AI-powered IDE, interpreter, debugger, visualizer, and bidirectional translator between
-**Cambridge International Computer Science pseudocode** and **Python**.
+Bidirectional **Cambridge International Computer Science (9618) pseudocode ↔ Python** tooling: deterministic language core, canonical-IR translator, and a student IDE with live translation.
 
-> **Milestone 1 status:** project foundation only. No parser, IDE, auth, or AI features yet.
+> **Status:** experimental **0.x** — usable for teaching/exploration of the supported subset. Not a complete Cambridge implementation, not a sandboxed runner, and not API-stable until 1.0.
+>
+> **Affiliation:** PseudoPilot is an **unofficial** community project. It is **not** affiliated with, endorsed by, or connected to Cambridge Assessment International Education or the University of Cambridge.
 
----
-
-## Senior scale verdict (100,000+ users)
-
-**Yes — if we keep the scale model below.** Folder trees do not scale; execution topology does.
-
-| Traffic class | Target | Scale strategy |
-|---------------|--------|----------------|
-| Registered / monthly active users | 100k+ | Ordinary for Postgres + CDN + horizontal API |
-| Concurrent editors in the IDE | Tens of thousands | **Client-local language-core** (parse/run in browser) — default path |
-| Concurrent **server** sandboxed executes | Hundreds–low thousands | Separate `runtime-sandbox` fleet + queue + hard budgets |
-| Concurrent AI coach jobs | Hundreds | Async `worker` + provider rate limits + org budgets |
-| Auth / projects / saves | 100k users | Stateless API replicas + Redis + PgBouncer |
-
-**What would fail us at 100k:** putting all interpretation on the API process, opening a DB connection per request without pooling, sticky in-memory sessions, or letting AI calls block HTTP workers.
-
-Details: [`docs/architecture/scalability.md`](docs/architecture/scalability.md).
+**License:** [MIT](./LICENSE) · **Security:** [SECURITY.md](./SECURITY.md) · **Contributing:** [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ---
 
-## How everything connects
+## What works today
 
-```
-┌──────────── apps/web (IDE) ────────────┐
-│  Monaco + @pseudopilot/language-core   │  ← default: runs ON THE CLIENT
-│  translator / interpreter (local)      │
-└─────────────────┬──────────────────────┘
-                  │ HTTPS / WSS (save, auth, AI, sandbox runs)
-┌─────────────────▼──────────────────────┐
-│              apps/api                   │  ← horizontally scalable (stateless)
-│  workspace · identity · orchestration  │
-└───────┬─────────────┬─────────┬────────┘
-        │             │         │
-   PostgreSQL     Redis      apps/worker (AI / exports)
-   via PgBouncer              │
-                              ▼
-                    services/runtime-sandbox  ← scales independently
-```
+| Surface | Status |
+| --- | --- |
+| `@pseudopilot/language-core` | Lexer + parser + AST for a large Core subset (control flow, procedures, functions, DECLARE/arrays/files parsed) |
+| `@pseudopilot/translator` | Bidirectional translation via IR for assignment, I/O, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE, FUNCTION |
+| `apps/web` | Student IDE: **translate-only** — edit pseudocode → live Python (Python pane read-only). **No code execution.** |
+| Interpreter / debugger / AI coach / remote sandbox | Scaffold / placeholders only — **not** production-ready |
 
-**Boundary rule:** `language-core`, `translator`, and `interpreter` never import from `apps/*` or `ai-coach`.
+**Translator supported subset (V8):** assignment (`←`/`<-`), INPUT/OUTPUT, expressions, CHAR, indexes, IF/ELSE/ELSE IF, WHILE, REPEAT, FOR/STEP, CASE OF, PROCEDURE/CALL, FUNCTION/RETURNS/RETURN.
+
+**Not translated yet:** DECLARE, BYREF, file I/O, `&` concatenation, builtins, OOP/Extended constructs.
+
+Language docs: [`docs/language/`](./docs/language/).
 
 ---
 
-## Tech stack (locked for foundation)
-
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Language (core) | TypeScript (Node 22) | One core for browser + server; strong types for exam fidelity |
-| Monorepo | pnpm workspaces + Turborepo | Shared packages without publish friction |
-| API (planned) | NestJS or Fastify modular monolith | Single deploy until scale demands splits; sandbox already split |
-| Web (planned) | Next.js App Router + Monaco | Student IDE + docs |
-| DB | PostgreSQL 16 | Relational integrity for schools/orgs |
-| Pooling | PgBouncer (transaction mode) | Survive many API replicas |
-| Cache / queue | Redis 7 | Sessions, rate limits, BullMQ |
-| Tests | Vitest (unit), Playwright later (e2e), k6 (load) | Corpus + load gates for scale |
-| Observability | OpenTelemetry conventions in `@pseudopilot/observability` | Name metrics before the code exists |
-
----
-
-## Repository map
-
-```
-pseudopilot/
-├── apps/           # Deployable surfaces (web, api, teacher, worker)
-├── packages/       # Shared libraries (language-core first among equals)
-├── services/       # Extractable services (runtime-sandbox)
-├── docs/           # Architecture + ADRs
-├── infra/docker/   # Local Postgres + PgBouncer + Redis
-├── tests/          # e2e, corpus, load
-└── scripts/        # Developer automation
-```
-
----
-
-## Prerequisites
-
-- **Node.js 22+** (see `.nvmrc`; nvm recommended)
-- **pnpm 9+** (`corepack enable && corepack prepare pnpm@9.15.0 --activate`)
-- **Docker** (optional locally, required for DB/Redis)
+## Quick start
 
 ```bash
-# Load nvm if needed
-export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh"
-
+# Node 22+ and pnpm 9+
+corepack enable && corepack prepare pnpm@9.15.0 --activate
 pnpm install
-pnpm check          # typecheck + lint + test
-docker compose -f infra/docker/docker-compose.yml up -d   # optional
+pnpm check
+
+# Student IDE
+pnpm --filter @pseudopilot/language-core build
+pnpm --filter @pseudopilot/translator build
+pnpm --filter @pseudopilot/web dev
 ```
 
-Copy `.env.example` → `.env` when you start API work.
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
+
+### Library usage
+
+```ts
+import { translatePseudocodeToPython } from '@pseudopilot/translator';
+
+const result = translatePseudocodeToPython(`
+FUNCTION Double(n : INTEGER) RETURNS INTEGER
+    RETURN n * 2
+ENDFUNCTION
+`);
+```
+
+Packages are currently `private: true` in the monorepo (consume via workspace). Public npm publish is deferred until a stable 0.x packaging pass.
+
+---
+
+## Architecture (current)
+
+```
+apps/web  ──imports──►  @pseudopilot/translator  ──►  @pseudopilot/language-core
+                              │
+                         canonical IR
+                              │
+                    Python subset parse/print
+```
+
+**Boundary rule:** `language-core` and `translator` must not import from `apps/*` or AI packages.
+
+Scale notes for a future multi-tenant product: [`docs/architecture/scalability.md`](./docs/architecture/scalability.md).
 
 ---
 
 ## Scripts
 
 | Command | Purpose |
-|---------|---------|
-| `pnpm check` | Typecheck, lint, and unit tests across the monorepo |
-| `pnpm build` | Build all packages/apps that define `build` |
+| --- | --- |
+| `pnpm check` | Typecheck, lint, and unit tests |
+| `pnpm build` | Build packages/apps that define `build` |
 | `pnpm test` | Unit tests |
 | `pnpm format` | Prettier write |
 
----
-
-## Git
-
-Repository initialized on `main`. Commit when you are ready — foundation changes should land as a single clear Milestone 1 commit.
+CI runs `pnpm check` on every PR to `main` (see `.github/workflows/ci.yml`).
 
 ---
 
-## What’s next
+## Versioning
 
-Milestone 2 (proposed): **`language-core` lexer + tokens** for a tiny Cambridge subset — still no IDE UI.
+- Root and core packages track **0.8.x** while the product remains experimental
+- Until **1.0.0**, minor versions may include breaking API changes
+- See [CHANGELOG.md](./CHANGELOG.md)
+
+---
+
+## What’s next (high level)
+
+1. DECLARE + typing for INPUT / parameters
+2. File I/O and builtins in the translator
+3. Interpreter + sandboxed execution
+4. Publishable package releases with changelog automation
+5. Broader Cambridge Extended / OOP coverage

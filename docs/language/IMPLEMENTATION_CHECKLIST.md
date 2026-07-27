@@ -20,10 +20,10 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| `//` comments | ✅ | — | ✅ | ❌ | ❌ |
-| Keywords case-insensitive | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Identifiers + underscore rules | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Indentation ignored structurally | ✅ | — | — | ❌ | ❌ |
+| `//` comments | ✅ | — | ❌ | ✅ | ✅ |
+| Keywords case-insensitive | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Identifiers + underscore rules | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Indentation ignored structurally | ✅ | — | — | ✅ | ✅ |
 
 ---
 
@@ -31,13 +31,13 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| INTEGER literal | ✅ | ❌ | ❌ | 🟡 | 🟡 |
-| REAL literal | 🟡 | ❌ | ❌ | 🟡 | 🟡 |
-| STRING literal | ✅ | ❌ | ❌ | 🟡 | 🟡 |
-| CHAR literal `'x'` | ✅ | ❌ | ❌ | 🟡 | 🟡 |
-| BOOLEAN `TRUE`/`FALSE` | ✅ | ❌ | ❌ | 🟡 | 🟡 |
+| INTEGER literal | ✅ | ❌ | ❌ | ✅ | ✅ |
+| REAL literal | ✅ | ❌ | ❌ | ✅ | ✅ |
+| STRING literal | ✅ | ❌ | ❌ | ✅ | ✅ |
+| CHAR literal `'x'` | ✅ | ❌ | ❌ | ✅ | ✅ |
+| BOOLEAN `TRUE`/`FALSE` | ✅ | ❌ | ❌ | ✅ | ✅ |
 | DATE type + literal | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Type names in DECLARE / params | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Type names in DECLARE / params | ✅ | ❌ | ❌ | 🟡 | 🟡 |
 
 ---
 
@@ -45,14 +45,14 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| Assignment `←` / `<-` | ✅ | ❌ | ❌ | 🟡 | 🟡 |
-| Arithmetic `+ - * / DIV MOD` | ✅ | ❌ | ❌ | 🟡 | 🟡 |
-| Relational | ✅ | ❌ | ❌ | 🟡 | 🟡 |
-| Logical `AND OR NOT` | ✅ | ❌ | ❌ | 🟡 | 🟡 |
+| Assignment `←` / `<-` | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Arithmetic `+ - * / DIV MOD` | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Relational | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Logical `AND OR NOT` | ✅ | ❌ | ❌ | ✅ | ✅ |
 | `&` concatenation | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Precedence / parentheses | ✅ | — | ❌ | ❌ | ❌ |
-| Index expressions | ✅ | ❌ | ❌ | 🟡 | 🟡 |
-| Function call expressions | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Precedence / parentheses | ✅ | — | ❌ | ✅ | ✅ |
+| Index expressions | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Function call expressions | ✅ | ❌ | ❌ | ✅ | ✅ |
 | Member `.` / pointer `^` | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ---
@@ -72,8 +72,8 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| `INPUT` | ✅ | ❌ | ❌ | 🟡 | 🟡 |
-| `OUTPUT` multi-value | ✅ | ❌ | ❌ | 🟡 | 🟡 |
+| `INPUT` | ✅ | ❌ | ❌ | ✅ | ✅ |
+| `OUTPUT` multi-value | ✅ | ❌ | ❌ | ✅ | ✅ |
 
 ---
 
@@ -85,8 +85,8 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | `ELSE` | ✅ | ❌ | ❌ | ✅ | ✅ |
 | Nested IF | ✅ | ❌ | ❌ | ✅ | ✅ |
 | `ELSE IF` extension | ✅ | ❌ | ❌ | ✅ | ✅ |
-| `CASE OF` / `OTHERWISE` / `ENDCASE` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| CASE `TO` ranges | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `CASE OF` / `OTHERWISE` / `ENDCASE` | ✅ | ❌ | ❌ | ✅ | ✅ |
+| CASE `TO` ranges | ✅ | ❌ | ❌ | ✅ | ✅ |
 
 ---
 
@@ -106,12 +106,12 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
 | PROCEDURE definition | ✅ | ❌ | ❌ | ✅ | ✅ |
-| FUNCTION + RETURNS | ✅ | ❌ | ❌ | ❌ | ❌ |
+| FUNCTION + RETURNS | ✅ | ❌ | ❌ | ✅ | ✅ |
 | Typed parameters | ✅ | ❌ | ❌ | ✅ | ✅ |
 | `BYVAL` / `BYREF` | ❌ | ❌ | ❌ | ❌ | ❌ |
 | `CALL` | ✅ | ❌ | ❌ | ✅ | ✅ |
-| `RETURN` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Recursion (runtime stack) | 🟡 | ❌ | ❌ | ❌ | ❌ | parse OK |
+| `RETURN` | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Recursion (runtime stack) | 🟡 | ❌ | ❌ | 🟡 | 🟡 | parse + translate OK; no interpreter |
 | Nested routines rejected | ✅ | — | — | — | — |
 
 ---
@@ -121,7 +121,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
 | 1D / 2D (+ N-D) declare | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Element read/write | ✅ | ❌ | ❌ | 🟡 | 🟡 |
+| Element read/write | ✅ | ❌ | ❌ | ✅ | ✅ |
 | Bounds checking | — | ❌ | ❌ | — | — |
 | Whole-array assign | 🟡 | ❌ | ❌ | ❌ | ❌ |
 
@@ -169,7 +169,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | Parser coverage checklist | ✅ |
 | IDE Monaco binding to parser | ❌ |
 | Interpreter / debugger | ❌ |
-| Pseudocode ↔ Python translator | 🟡 | Assign/I/O/expr/IF/WHILE/REPEAT/FOR/CASE/**PROCEDURE+CALL**; no FUNCTION/DECLARE |
+| Pseudocode ↔ Python translator | 🟡 | Control flow + **PROCEDURE/CALL** + **FUNCTION/RETURN**; no DECLARE/BYREF |
 | AI coach grounded on this dialect | ❌ |
 
 ---
@@ -179,12 +179,12 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 1. ✅ Iteration: `WHILE` ✅, `REPEAT` ✅, `FOR` ✅ (+ `STEP`)
 2. ❌ String `&` + builtins `LENGTH` / `RIGHT` / `MID` / `LCASE` / `UCASE`
 3. ❌ Numeric builtins `INT` / `RAND`
-4. ❌ `CONSTANT`, CHAR literals, strict REAL literals
+4. ❌ `CONSTANT`, DATE literals; CHAR/REAL already in V8
 5. ✅ `CASE OF`
 6. ❌ `BYVAL` / `BYREF`
 7. 🟡 Semantic checker (types, scopes, NEXT binder match)
 8. ❌ Interpreter (Core)
-9. ❌ Translator (Core ↔ Python)
+9. 🟡 Translator (V8 subset ↔ Python; Core incomplete)
 10. ❌ Extended TYPE / files / OOP
 
 **Gate for “translation engine” milestone:** items **1–3** should be at least **Parse ✅**; ideally **Run ✅** for Core Paper 2 constructs used in taught examples.

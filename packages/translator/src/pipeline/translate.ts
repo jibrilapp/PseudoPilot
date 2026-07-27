@@ -5,6 +5,7 @@ import { parsePythonToIr } from '../python/parse.js';
 import { printPython } from '../python/print.js';
 import {
   mergeOptions,
+  sourceTooLargeDiagnostic,
   type TranslateOptions,
   type TranslateResult,
 } from '../types.js';
@@ -17,18 +18,33 @@ function finalize(
   return { ok, code, diagnostics };
 }
 
+function rejectIfTooLarge(
+  source: string,
+  maxSourceChars: number,
+): TranslateResult | null {
+  if (source.length <= maxSourceChars) return null;
+  return finalize('', [sourceTooLargeDiagnostic(source.length, maxSourceChars)]);
+}
+
 /**
  * Cambridge pseudocode → Python.
  *
  * On parse errors, still lowers any recovered statements so callers get
  * partial `code` plus diagnostics (`ok: false`).
+ *
+ * @experimental Stable enough for IDE use in 0.x; API may change before 1.0.
  */
 export function translatePseudocodeToPython(
   source: string,
   options?: TranslateOptions,
 ): TranslateResult {
   const opts = mergeOptions(options);
-  const parsed = parseCambridge(source);
+  const oversized = rejectIfTooLarge(source, opts.maxSourceChars);
+  if (oversized) return oversized;
+
+  const parsed = parseCambridge(source, {
+    maxSourceChars: opts.maxSourceChars,
+  });
   const diagnostics: TranslateResult['diagnostics'] = parsed.diagnostics.map(
     (d) => ({
       severity: d.severity,
@@ -47,12 +63,17 @@ export function translatePseudocodeToPython(
 
 /**
  * Python subset → Cambridge pseudocode.
+ *
+ * @experimental Stable enough for tooling in 0.x; API may change before 1.0.
  */
 export function translatePythonToPseudocode(
   source: string,
   options?: TranslateOptions,
 ): TranslateResult {
   const opts = mergeOptions(options);
+  const oversized = rejectIfTooLarge(source, opts.maxSourceChars);
+  if (oversized) return oversized;
+
   const { ir, diagnostics } = parsePythonToIr(source, opts.preserveTrivia);
   const code = printCambridge(ir, opts.assignmentArrow);
   return finalize(code, diagnostics);

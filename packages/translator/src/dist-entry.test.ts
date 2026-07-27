@@ -195,4 +195,30 @@ CALL Ping()
     expect(norm(back.code)).toContain('PROCEDURE Ping');
     expect(norm(back.code)).toContain('CALL Ping()');
   });
+
+  it('translates FUNCTION — IDE smoke', () => {
+    const result = translatePseudocodeToPython(`FUNCTION Add(A : INTEGER, B : INTEGER) RETURNS INTEGER
+    RETURN A + B
+ENDFUNCTION
+OUTPUT Add(2, 3)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'def Add(A: int, B: int) -> int:\n    return A + B\nprint(Add(2, 3))\n',
+    );
+  });
+
+  it('round-trips FUNCTION through dist printers', () => {
+    const py = translatePseudocodeToPython(`FUNCTION Double(N : INTEGER) RETURNS INTEGER
+    RETURN N * 2
+ENDFUNCTION
+X ← Double(5)
+`);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('FUNCTION Double');
+    expect(norm(back.code)).toContain('RETURNS INTEGER');
+    expect(norm(back.code)).toContain('RETURN N * 2');
+  });
 });

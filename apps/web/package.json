@@ -7,12 +7,11 @@
     "dev": "next dev --port 3000 --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start --port 3000 --hostname 127.0.0.1",
-    "lint": "next lint",
+    "lint": "node ../../node_modules/eslint/bin/eslint.js . --max-warnings=0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf .next .turbo"
   },
   "dependencies": {
-    "@pseudopilot/language-core": "workspace:*",
     "@pseudopilot/translator": "workspace:*",
     "clsx": "^2.1.1",
     "next": "^15.1.3",

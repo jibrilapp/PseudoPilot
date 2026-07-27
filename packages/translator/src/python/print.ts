@@ -79,6 +79,8 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return expr.name;
     case 'IrIndexExpression':
       return printTarget(expr);
+    case 'IrCallExpression':
+      return `${expr.callee}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
     case 'IrGroupingExpression':
       return `(${printExpr(expr.expression, 0)})`;
     case 'IrUnaryExpression':
@@ -228,12 +230,25 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       lines.push(...printBlock(stmt.body, level + 1));
       break;
     }
+    case 'IrFunctionDeclaration': {
+      const params = stmt.parameters
+        .map((param) => `${param.name}: ${irTypeToPython(param.typeName)}`)
+        .join(', ');
+      lines.push(
+        `${p}def ${stmt.name}(${params}) -> ${irTypeToPython(stmt.returnType)}:`,
+      );
+      lines.push(...printBlock(stmt.body, level + 1));
+      break;
+    }
     case 'IrCallStatement': {
       lines.push(
         `${p}${stmt.callee}(${stmt.args.map((a) => printExpr(a, 0)).join(', ')})`,
       );
       break;
     }
+    case 'IrReturnStatement':
+      lines.push(`${p}return ${printExpr(stmt.value, 0)}`);
+      break;
     case 'IrBreakStatement':
       lines.push(`${p}break`);
       break;
@@ -251,6 +266,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     stmt.kind !== 'IrRepeatStatement' &&
     stmt.kind !== 'IrForStatement' &&
     stmt.kind !== 'IrProcedureDeclaration' &&
+    stmt.kind !== 'IrFunctionDeclaration' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('#')
   ) {

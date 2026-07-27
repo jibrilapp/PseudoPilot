@@ -3,6 +3,7 @@ import {
   translatePseudocodeToPython,
   translatePythonToPseudocode,
 } from './index.js';
+import { ABSOLUTE_MAX_SOURCE_CHARS } from './types.js';
 
 function norm(s: string): string {
   return s.replace(/\r\n/g, '\n').trimEnd() + '\n';
@@ -1336,17 +1337,7 @@ CALL P(X + 1)
     expect(norm(result.code)).toContain('P(X + 1)');
   });
 
-  it('rejects FUNCTION', () => {
-    const result = translatePseudocodeToPython(`
-FUNCTION Double(N : INTEGER) RETURNS INTEGER
-    RETURN N * 2
-ENDFUNCTION
-`);
-    expect(result.ok).toBe(false);
-    expect(result.diagnostics.some((d) => d.code === 'T_UNSUPPORTED_FUNCTION')).toBe(true);
-  });
-
-  it('rejects RETURN', () => {
+  it('rejects RETURN outside FUNCTION', () => {
     const result = translatePseudocodeToPython(`
 PROCEDURE Bad()
     RETURN 1
@@ -1452,13 +1443,14 @@ def Outer():
     expect(result.diagnostics.some((d) => d.message.includes('Nested'))).toBe(true);
   });
 
-  it('rejects def with return annotation', () => {
+  it('maps def with return annotation to FUNCTION', () => {
     const result = translatePythonToPseudocode(`
 def Foo() -> int:
-    print(1)
+    return 1
 `);
-    expect(result.ok).toBe(false);
-    expect(result.diagnostics.some((d) => d.message.includes('->'))).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('FUNCTION Foo() RETURNS INTEGER');
+    expect(norm(result.code)).toContain('RETURN 1');
   });
 
   it('rejects duplicate Python parameters', () => {
@@ -1491,6 +1483,202 @@ def Foo(A: int, A: int):
   });
 });
 
+describe('FUNCTION translation', () => {
+  it('translates FUNCTION with RETURN to def -> return', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Add(A : INTEGER, B : INTEGER) RETURNS INTEGER
+    RETURN A + B
+ENDFUNCTION
+
+OUTPUT Add(2, 3)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'def Add(A: int, B: int) -> int:\n    return A + B\n\nprint(Add(2, 3))\n',
+    );
+  });
+
+  it('translates zero-parameter FUNCTION', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Pi() RETURNS REAL
+    RETURN 3.14
+ENDFUNCTION
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('def Pi() -> float:');
+    expect(norm(result.code)).toContain('return 3.14');
+  });
+
+  it('translates recursive FUNCTION', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Factorial(N : INTEGER) RETURNS INTEGER
+    IF N <= 1 THEN
+        RETURN 1
+    ELSE
+        RETURN N * Factorial(N - 1)
+    ENDIF
+ENDFUNCTION
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('return N * Factorial(N - 1)');
+  });
+
+  it('translates nested function calls in expressions', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Inc(X : INTEGER) RETURNS INTEGER
+    RETURN X + 1
+ENDFUNCTION
+OUTPUT Inc(Inc(Inc(1)))
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('print(Inc(Inc(Inc(1))))');
+  });
+
+  it('translates function call as argument', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Double(N : INTEGER) RETURNS INTEGER
+    RETURN N * 2
+ENDFUNCTION
+FUNCTION Add(A : INTEGER, B : INTEGER) RETURNS INTEGER
+    RETURN A + B
+ENDFUNCTION
+OUTPUT Add(Double(2), Double(3))
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('print(Add(Double(2), Double(3)))');
+  });
+
+  it('translates PROCEDURE calling FUNCTION via OUTPUT', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Val() RETURNS INTEGER
+    RETURN 7
+ENDFUNCTION
+PROCEDURE Show()
+    OUTPUT Val()
+ENDPROCEDURE
+CALL Show()
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('def Val() -> int:');
+    expect(norm(result.code)).toContain('print(Val())');
+  });
+
+  it('translates assignment from function call', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Add(A : INTEGER, B : INTEGER) RETURNS INTEGER
+    RETURN A + B
+ENDFUNCTION
+X ← Add(1, 2)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('X = Add(1, 2)');
+  });
+
+  it('warns when FUNCTION has no RETURN', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Bad() RETURNS INTEGER
+    OUTPUT 1
+ENDFUNCTION
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.some((d) => d.code === 'T_FUNC_NO_RETURN')).toBe(true);
+  });
+
+  it('warns on unreachable code after RETURN', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Bad() RETURNS INTEGER
+    RETURN 1
+    OUTPUT 2
+ENDFUNCTION
+`);
+    expect(result.ok).toBe(true);
+    expect(
+      result.diagnostics.some((d) => d.code === 'T_UNREACHABLE_AFTER_RETURN'),
+    ).toBe(true);
+  });
+
+  it('rejects missing ENDFUNCTION', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Bad() RETURNS INTEGER
+    RETURN 1
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects missing RETURNS', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Bad(A : INTEGER)
+    RETURN A
+ENDFUNCTION
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects duplicate FUNCTION parameters', () => {
+    const result = translatePseudocodeToPython(`
+FUNCTION Bad(A : INTEGER, A : INTEGER) RETURNS INTEGER
+    RETURN A
+ENDFUNCTION
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'T_PROC_DUP_PARAM')).toBe(true);
+  });
+});
+
+describe('FUNCTION reverse translation (Python → Cambridge)', () => {
+  it('translates def -> return to FUNCTION RETURN', () => {
+    const result = translatePythonToPseudocode(`
+def Add(A: int, B: int) -> int:
+    return A + B
+
+print(Add(2, 3))
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'FUNCTION Add(A : INTEGER, B : INTEGER) RETURNS INTEGER\n    RETURN A + B\nENDFUNCTION\nOUTPUT Add(2, 3)\n',
+    );
+  });
+
+  it('translates nested calls', () => {
+    const result = translatePythonToPseudocode(`
+def Inc(X: int) -> int:
+    return X + 1
+
+print(Inc(Inc(1)))
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('OUTPUT Inc(Inc(1))');
+  });
+
+  it('round-trips FUNCTION', () => {
+    const source = `FUNCTION Add(A : INTEGER, B : INTEGER) RETURNS INTEGER\n    RETURN A + B\nENDFUNCTION\nOUTPUT Add(2, 3)\n`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(norm(source));
+  });
+
+  it('round-trips recursive FUNCTION', () => {
+    const source = `FUNCTION Factorial(N : INTEGER) RETURNS INTEGER\n    IF N <= 1 THEN\n        RETURN 1\n    ELSE\n        RETURN N * Factorial(N - 1)\n    ENDIF\nENDFUNCTION\n`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(norm(source));
+  });
+
+  it('keeps bare def without -> as PROCEDURE', () => {
+    const result = translatePythonToPseudocode(`
+def Show():
+    print(1)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('PROCEDURE Show()');
+    expect(norm(result.code)).not.toContain('FUNCTION');
+  });
+});
+
 describe('operators module / precedence printing', () => {
   it('does not over-parenthesize left-assoc chains', () => {
     const result = translatePseudocodeToPython(`X ← 1 + 2 + 3\n`);
@@ -1502,5 +1690,34 @@ describe('operators module / precedence printing', () => {
     const result = translatePythonToPseudocode(`x = 2 * (3 + 4)\n`);
     expect(result.ok).toBe(true);
     expect(norm(result.code)).toBe('x ← 2 * (3 + 4)\n');
+  });
+});
+
+describe('source size limits', () => {
+  it('rejects oversized Cambridge source with T_SOURCE_TOO_LARGE', () => {
+    const source = 'X ← 1\n'.repeat(100);
+    const result = translatePseudocodeToPython(source, { maxSourceChars: 10 });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('');
+    expect(result.diagnostics.some((d) => d.code === 'T_SOURCE_TOO_LARGE')).toBe(
+      true,
+    );
+  });
+
+  it('rejects oversized Python source with T_SOURCE_TOO_LARGE', () => {
+    const source = 'x = 1\n'.repeat(100);
+    const result = translatePythonToPseudocode(source, { maxSourceChars: 10 });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'T_SOURCE_TOO_LARGE')).toBe(
+      true,
+    );
+  });
+
+  it('caps maxSourceChars at the absolute ceiling', () => {
+    const source = 'X ← 1\n';
+    const result = translatePseudocodeToPython(source, {
+      maxSourceChars: ABSOLUTE_MAX_SOURCE_CHARS + 1_000_000,
+    });
+    expect(result.ok).toBe(true);
   });
 });
