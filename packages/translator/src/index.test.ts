@@ -687,7 +687,7 @@ while x > 0:
     expect(result.diagnostics.some((d) => d.code === 'T_PY_PARSE')).toBe(true);
   });
 
-  it('rejects for loops', () => {
+  it('rejects single-arg range() for loops', () => {
     const result = translatePythonToPseudocode(`
 for i in range(3):
     print(i)
@@ -810,6 +810,221 @@ UNTIL Count > 10
     const back = translatePythonToPseudocode(py.code);
     expect(back.ok).toBe(true);
     expect(norm(back.code)).toBe(norm(source));
+  });
+});
+
+describe('FOR loop translation', () => {
+  it('translates ascending FOR to Python range()', () => {
+    const result = translatePseudocodeToPython(`
+FOR Count ← 1 TO 10
+    OUTPUT Count
+NEXT Count
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('for Count in range(1, 10 + 1):\n    print(Count)\n');
+  });
+
+  it('translates descending FOR with STEP to Python range()', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 10 TO 1 STEP -2
+    OUTPUT I
+NEXT I
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('for I in range(10, 1 - 1, -2):\n    print(I)\n');
+  });
+
+  it('translates FOR with positive STEP', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 0 TO 20 STEP 5
+    OUTPUT I
+NEXT I
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('for I in range(0, 20 + 1, 5):\n    print(I)\n');
+  });
+
+  it('translates nested FOR loops', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 1 TO 3
+    FOR J ← 1 TO 3
+        OUTPUT I, J
+    NEXT J
+NEXT I
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('for I in range(1, 3 + 1):');
+    expect(norm(result.code)).toContain('for J in range(1, 3 + 1):');
+    expect(norm(result.code)).toContain('print(I, J)');
+  });
+
+  it('translates IF inside FOR', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 1 TO 10
+    IF I > 5 THEN
+        OUTPUT I
+    ENDIF
+NEXT I
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('for I in range(1, 10 + 1):');
+    expect(norm(result.code)).toContain('if I > 5:');
+  });
+
+  it('translates FOR inside IF', () => {
+    const result = translatePseudocodeToPython(`
+IF Run = TRUE THEN
+    FOR I ← 1 TO 5
+        OUTPUT I
+    NEXT I
+ENDIF
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('if Run == True:');
+    expect(norm(result.code)).toContain('for I in range(1, 5 + 1):');
+  });
+
+  it('translates WHILE inside FOR', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 1 TO 5
+    WHILE X > 0
+        X ← X - 1
+    ENDWHILE
+NEXT I
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('for I in range(1, 5 + 1):');
+    expect(norm(result.code)).toContain('while X > 0:');
+  });
+
+  it('translates FOR inside WHILE', () => {
+    const result = translatePseudocodeToPython(`
+WHILE More = TRUE
+    FOR I ← 1 TO 3
+        OUTPUT I
+    NEXT I
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('while More == True:');
+    expect(norm(result.code)).toContain('for I in range(1, 3 + 1):');
+  });
+
+  it('translates REPEAT inside FOR', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 1 TO 5
+    REPEAT
+        OUTPUT I
+    UNTIL Done = TRUE
+NEXT I
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('for I in range(1, 5 + 1):');
+    expect(norm(result.code)).toContain('while True:');
+  });
+
+  it('translates FOR with empty body', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 1 TO 1
+NEXT I
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('pass');
+  });
+
+  it('reports diagnostics for missing NEXT', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 1 TO 10
+    OUTPUT I
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('reports diagnostics for malformed STEP', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 1 TO 10 STEP
+    OUTPUT I
+NEXT I
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('reports diagnostics for missing TO', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 1 10
+    OUTPUT I
+NEXT I
+`);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('FOR reverse translation (Python → Cambridge)', () => {
+  it('translates ascending range() to FOR', () => {
+    const result = translatePythonToPseudocode(`
+for Count in range(1, 10 + 1):
+    print(Count)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('FOR Count ← 1 TO 10\n    OUTPUT Count\nNEXT Count\n');
+  });
+
+  it('translates descending range() with step to FOR STEP', () => {
+    const result = translatePythonToPseudocode(`
+for I in range(10, 1 - 1, -2):
+    print(I)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe('FOR I ← 10 TO 1 STEP -2\n    OUTPUT I\nNEXT I\n');
+  });
+
+  it('translates nested range() loops', () => {
+    const result = translatePythonToPseudocode(`
+for I in range(1, 3 + 1):
+    for J in range(1, 3 + 1):
+        print(I, J)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('FOR I ← 1 TO 3');
+    expect(norm(result.code)).toContain('FOR J ← 1 TO 3');
+    expect(norm(result.code)).toContain('NEXT J');
+    expect(norm(result.code)).toContain('NEXT I');
+  });
+
+  it('round-trips ascending FOR', () => {
+    const source = `FOR Count ← 1 TO 10\n    OUTPUT Count\nNEXT Count\n`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(norm(source));
+  });
+
+  it('round-trips descending FOR with STEP', () => {
+    const source = `FOR I ← 10 TO 1 STEP -1\n    OUTPUT I\nNEXT I\n`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(norm(source));
+  });
+
+  it('rejects range() without ±1 adjustment', () => {
+    const result = translatePythonToPseudocode(`
+for i in range(1, 10):
+    print(i)
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('translates FOR inside IF from Python', () => {
+    const result = translatePythonToPseudocode(`
+if Run == True:
+    for I in range(1, 5 + 1):
+        print(I)
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('FOR I ← 1 TO 5');
   });
 });
 

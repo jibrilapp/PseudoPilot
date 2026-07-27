@@ -87,10 +87,10 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 
 | Keyword | Role | Parser |
 | --- | --- | --- |
-| `FOR` | Count-controlled loop **or** file open mode connector | 🟡 | Lexed; loop form ❌; file `FOR` ✅ |
-| `TO` | FOR upper bound | 🟡 | Lexed; loop ❌ |
-| `STEP` | FOR increment | ❌ | Not yet a keyword in lexer |
-| `NEXT` | End FOR | 🟡 | Lexed; loop ❌ |
+| `FOR` | Count-controlled loop **or** file open mode connector | ✅ | Loop ✅; file `FOR` ✅ |
+| `TO` | FOR upper bound | ✅ | |
+| `STEP` | FOR increment | ✅ | |
+| `NEXT` | End FOR | ✅ | |
 | `WHILE` | Pre-condition loop | ✅ |
 | `DO` | Optional after WHILE condition | ✅ |
 | `ENDWHILE` | End WHILE | ✅ |
@@ -521,8 +521,8 @@ NEXT <Ident>
 | --- | --- | --- |
 | Control variable | `INTEGER` | ❌ |
 | Inclusive range | Runs if `start <= end` with positive step; empty if `start > end` (default step +1) | ❌ |
-| `STEP` | May be negative | ❌ |
-| `NEXT` identifier | Required in PseudoPilot (Cambridge: good practice) | ❌ |
+| `STEP` | May be negative | ✅ |
+| `NEXT` identifier | Required in PseudoPilot (Cambridge: good practice) | ✅ |
 
 ### 9.2 REPEAT … UNTIL (post-condition)
 

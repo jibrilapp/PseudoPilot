@@ -28,6 +28,7 @@ export type Statement =
   | IfStatement
   | WhileStatement
   | RepeatStatement
+  | ForStatement
   | DeclareStatement
   | ProcedureDeclaration
   | FunctionDeclaration
@@ -167,6 +168,17 @@ export type RepeatStatement = {
   readonly kind: 'RepeatStatement';
   readonly body: Statement[];
   readonly condition: Expression;
+  readonly span: SourceSpan;
+};
+
+/** FOR <ident> ← <start> TO <end> [STEP <step>] … NEXT <ident> */
+export type ForStatement = {
+  readonly kind: 'ForStatement';
+  readonly variable: string;
+  readonly start: Expression;
+  readonly end: Expression;
+  readonly step: Expression | null;
+  readonly body: Statement[];
   readonly span: SourceSpan;
 };
 

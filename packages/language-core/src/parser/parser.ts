@@ -19,6 +19,7 @@ import type {
   Program,
   CallStatement,
   ReadFileStatement,
+  ForStatement,
   RepeatStatement,
   ReturnStatement,
   Statement,
@@ -83,6 +84,7 @@ export class Parser {
     if (token.kind === TokenKind.If) return this.parseIf();
     if (token.kind === TokenKind.While) return this.parseWhile();
     if (token.kind === TokenKind.Repeat) return this.parseRepeat();
+    if (token.kind === TokenKind.For) return this.parseFor();
     if (token.kind === TokenKind.Declare) return this.parseDeclare();
     if (token.kind === TokenKind.Call) return this.parseCallStatement();
     if (token.kind === TokenKind.Return) return this.parseReturn();
@@ -620,6 +622,98 @@ export class Parser {
     };
   }
 
+  /** FOR <ident> ← <start> TO <end> [STEP <step>] NL <block> NEXT <ident> */
+  private parseFor(): ForStatement | null {
+    const startToken = this.cursor.advance(); // FOR
+
+    if (!this.cursor.check(TokenKind.Identifier)) {
+      pushError(
+        this.diagnostics,
+        "Expected loop variable after 'FOR'.",
+        this.cursor.peek(),
+        'E_FOR_VAR',
+      );
+      return null;
+    }
+    const variable = this.cursor.advance().lexeme;
+
+    if (!this.cursor.match(TokenKind.Assign)) {
+      pushError(
+        this.diagnostics,
+        "Expected '←' after loop variable in FOR.",
+        this.cursor.peek(),
+        'E_FOR_ASSIGN',
+      );
+      return null;
+    }
+
+    const start = this.expressions().parseExpression();
+    if (!start) return null;
+
+    if (!this.cursor.match(TokenKind.To)) {
+      pushError(
+        this.diagnostics,
+        "Expected 'TO' after start value in FOR.",
+        this.cursor.peek(),
+        'E_FOR_TO',
+      );
+      return null;
+    }
+
+    const end = this.expressions().parseExpression();
+    if (!end) return null;
+
+    let step: Expression | null = null;
+    if (this.cursor.match(TokenKind.Step)) {
+      step = this.expressions().parseExpression();
+      if (!step) return null;
+    }
+
+    this.skipNewlines();
+
+    const body = this.parseBlock(() => this.cursor.check(TokenKind.Next));
+
+    if (!this.cursor.match(TokenKind.Next)) {
+      pushError(
+        this.diagnostics,
+        "Expected 'NEXT' to close FOR loop.",
+        this.cursor.peek(),
+        'E_FOR_NEXT',
+      );
+      return null;
+    }
+
+    if (!this.cursor.check(TokenKind.Identifier)) {
+      pushError(
+        this.diagnostics,
+        "Expected loop variable after 'NEXT'.",
+        this.cursor.peek(),
+        'E_FOR_NEXT_VAR',
+      );
+      return null;
+    }
+
+    const nextVar = this.cursor.advance();
+    if (nextVar.lexeme !== variable) {
+      pushError(
+        this.diagnostics,
+        `NEXT variable '${nextVar.lexeme}' does not match FOR variable '${variable}'.`,
+        nextVar,
+        'E_FOR_NEXT_MISMATCH',
+      );
+    }
+
+    return {
+      kind: 'ForStatement',
+      variable,
+      start,
+      end,
+      step,
+      body,
+      span: span(startToken.span.start, nextVar.span.end),
+    };
+  }
+
   private parseElseIfClause(): ElseIfClause | null {
     const elseToken = this.cursor.advance();
     this.cursor.advance(); // IF
@@ -776,8 +870,9 @@ export class Parser {
         TokenKind.Else,
         TokenKind.Endif,
         TokenKind.Endwhile,
-        TokenKind.Until,
-        TokenKind.Endprocedure,
+      TokenKind.Until,
+      TokenKind.Next,
+      TokenKind.Endprocedure,
         TokenKind.Endfunction,
       )
     ) {
@@ -814,6 +909,7 @@ function isUnexpectedStructuralKeyword(kind: TokenKind): boolean {
     kind === TokenKind.Do ||
     kind === TokenKind.Endwhile ||
     kind === TokenKind.Until ||
+    kind === TokenKind.Next ||
     kind === TokenKind.Endprocedure ||
     kind === TokenKind.Endfunction ||
     kind === TokenKind.Returns
@@ -821,10 +917,5 @@ function isUnexpectedStructuralKeyword(kind: TokenKind): boolean {
 }
 
 function isReservedFutureKeyword(kind: TokenKind): boolean {
-  return (
-    kind === TokenKind.For ||
-    kind === TokenKind.To ||
-    kind === TokenKind.Next ||
-    kind === TokenKind.Repeat
-  );
+  return kind === TokenKind.To;
 }

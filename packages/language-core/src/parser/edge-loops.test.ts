@@ -89,8 +89,8 @@ ENDPROCEDURE
     });
   });
 
-  describe('desired successful parses (known failing — FOR / REPEAT)', () => {
-    it.fails('8. minimal FOR … NEXT', () => {
+  describe('FOR — now implemented', () => {
+    it('8. minimal FOR … NEXT', () => {
       expect(parseOk(`
 FOR I ← 1 TO 10
     OUTPUT I
@@ -98,14 +98,14 @@ NEXT I
 `).body[0]?.kind).toBe('ForStatement');
     });
 
-    it.fails('9. FOR with empty body', () => {
+    it('9. FOR with empty body', () => {
       parseOk(`
 FOR I ← 1 TO 1
 NEXT I
 `);
     });
 
-    it.fails('10. FOR bounds are expressions', () => {
+    it('10. FOR bounds are expressions', () => {
       parseOk(`
 FOR I ← Start + 1 TO End * 2
     OUTPUT I
@@ -113,7 +113,7 @@ NEXT I
 `);
     });
 
-    it.fails('11. nested FOR loops', () => {
+    it('11. nested FOR loops', () => {
       parseOk(`
 FOR I ← 1 TO 3
     FOR J ← 1 TO 3
@@ -123,7 +123,7 @@ NEXT I
 `);
     });
 
-    it.fails('12. FOR with STEP (Cambridge extension)', () => {
+    it('12. FOR with STEP (Cambridge extension)', () => {
       parseOk(`
 FOR I ← 10 TO 1 STEP -1
     OUTPUT I
@@ -131,7 +131,7 @@ NEXT I
 `);
     });
 
-    it.fails('13. FOR inside FUNCTION with RETURN after loop', () => {
+    it('13. FOR inside FUNCTION with RETURN after loop', () => {
       parseOk(`
 FUNCTION SumTo(N : INTEGER) RETURNS INTEGER
     DECLARE Total : INTEGER
@@ -203,7 +203,7 @@ ENDWHILE
 `);
     });
 
-    it.fails('20. deep nest WHILE > FOR > REPEAT', () => {
+    it('20. deep nest WHILE > FOR > REPEAT', () => {
       parseOk(`
 WHILE KeepGoing = TRUE
     FOR I ← 1 TO 3
@@ -235,20 +235,19 @@ ENDWHILE
       expect(result.ast.body[0]?.kind).toBe('WhileStatement');
     });
 
-    it('25. rejects FOR keyword today via E_UNSUPPORTED', () => {
+    it('25. accepts FOR (no longer E_UNSUPPORTED)', () => {
       const result = parse(`FOR I ← 1 TO 3\nOUTPUT I\nNEXT I`);
-      expect(result.ok).toBe(false);
-      expect(result.diagnostics.some((d) => d.code === 'E_UNSUPPORTED')).toBe(true);
+      expect(result.ok).toBe(true);
+      expect(result.ast.body[0]?.kind).toBe('ForStatement');
     });
 
-    it('26. FOR NEXT name mismatch should fail (charter when FOR lands)', () => {
-      // Today fails for E_UNSUPPORTED; when FOR lands this should stay a hard fail.
+    it('26. FOR NEXT name mismatch emits diagnostic', () => {
       const result = parse(`
 FOR I ← 1 TO 5
     OUTPUT I
 NEXT J
 `);
-      expect(result.ok).toBe(false);
+      expect(result.diagnostics.some((d) => d.code === 'E_FOR_NEXT_MISMATCH')).toBe(true);
     });
   });
 });

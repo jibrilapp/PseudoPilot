@@ -124,6 +124,9 @@ class PyParser {
     if (this.check(PyTokenKind.While)) {
       return this.parseWhile();
     }
+    if (this.check(PyTokenKind.For)) {
+      return this.parseFor();
+    }
     if (this.check(PyTokenKind.Print)) {
       return this.parsePrint();
     }
@@ -138,7 +141,7 @@ class PyParser {
 
     if (this.isUnsupportedBlockKeyword()) {
       this.error(
-        `Translator does not support '${this.peek().lexeme}' (IF/WHILE/REPEAT pattern only among control-flow).`,
+        `Translator does not support '${this.peek().lexeme}' (IF/WHILE/REPEAT/FOR pattern only among control-flow).`,
         this.peek(),
       );
       return null;
@@ -215,6 +218,122 @@ class PyParser {
         body,
       }),
     };
+  }
+
+  /**
+   * Parse `for <var> in range(<start>, <stop>[, <step>]):` into IrForStatement.
+   * Recovers Cambridge inclusive semantics from the ±1 adjustment on stop.
+   */
+  private parseFor(): ParsedStatement | null {
+    const forTok = this.expect(PyTokenKind.For)!;
+
+    if (!this.check(PyTokenKind.Identifier)) {
+      this.error("Expected loop variable after 'for'.", this.peek());
+      return null;
+    }
+    const variable = this.advance().lexeme;
+
+    if (!this.match(PyTokenKind.In)) {
+      this.error("Expected 'in' after loop variable.", this.peek());
+      return null;
+    }
+
+    if (!this.match(PyTokenKind.Range)) {
+      this.error(
+        "Translator only supports 'for <var> in range(...)' loops.",
+        this.peek(),
+      );
+      return null;
+    }
+
+    if (!this.match(PyTokenKind.LParen)) {
+      this.error("Expected '(' after 'range'.", this.peek());
+      return null;
+    }
+
+    const args: IrExpression[] = [];
+    if (!this.check(PyTokenKind.RParen)) {
+      const first = this.parseExpression();
+      if (!first) return null;
+      args.push(first);
+      while (this.match(PyTokenKind.Comma)) {
+        const arg = this.parseExpression();
+        if (!arg) return null;
+        args.push(arg);
+      }
+    }
+
+    if (!this.match(PyTokenKind.RParen)) {
+      this.error("Expected ')' after range arguments.", this.peek());
+      return null;
+    }
+
+    this.expect(PyTokenKind.Colon);
+    this.skipNewlines();
+    const body = this.parseSuite(false);
+
+    if (args.length < 2 || args.length > 3) {
+      this.error(
+        'Translator expects range(start, stop) or range(start, stop, step).',
+        forTok,
+      );
+      return null;
+    }
+
+    const rawStart = args[0]!;
+    const rawStop = args[1]!;
+    const rawStep = args.length === 3 ? args[2]! : null;
+
+    const end = this.reverseRangeAdjust(rawStop, rawStep);
+    if (!end) {
+      this.error(
+        'Cannot reverse-translate range stop value into Cambridge inclusive bound.',
+        forTok,
+      );
+      return null;
+    }
+
+    return {
+      span: tokenSpan(forTok, this.previous()),
+      stmt: withEmptyTrivia({
+        kind: 'IrForStatement' as const,
+        variable,
+        start: rawStart,
+        end,
+        step: rawStep,
+        body,
+      }),
+    };
+  }
+
+  /**
+   * Reverse the ±1 adjustment that the Python printer added.
+   * `stop` in range() is `end + 1` (ascending) or `end - 1` (descending).
+   * Returns the Cambridge inclusive `end`.
+   */
+  private reverseRangeAdjust(
+    stop: IrExpression,
+    step: IrExpression | null,
+  ): IrExpression | null {
+    const isDesc =
+      step !== null &&
+      ((step.kind === 'IrUnaryExpression' &&
+        step.operator === '-' &&
+        (step.argument.kind === 'IrIntegerLiteral' || step.argument.kind === 'IrRealLiteral')) ||
+        ((step.kind === 'IrIntegerLiteral' || step.kind === 'IrRealLiteral') && step.value < 0));
+
+    const expectedOp: '+' | '-' = isDesc ? '-' : '+';
+
+    if (
+      stop.kind === 'IrBinaryExpression' &&
+      stop.operator === expectedOp &&
+      stop.right.kind === 'IrIntegerLiteral' &&
+      stop.right.value === 1
+    ) {
+      return stop.left;
+    }
+
+    return null;
   }
 
   private parseIf(allowBreak = false): ParsedStatement | null {
@@ -576,7 +695,7 @@ class PyParser {
 
   private isUnsupportedBlockKeyword(): boolean {
     const lex = this.peek().lexeme;
-    return ['for', 'def', 'class', 'return', 'match', 'with'].includes(lex);
+    return ['def', 'class', 'return', 'match', 'with'].includes(lex);
   }
 
   private skipNewlines(): void {

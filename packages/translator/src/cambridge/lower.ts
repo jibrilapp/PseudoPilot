@@ -229,6 +229,27 @@ function lowerStatement(
         }),
       };
     }
+    case 'ForStatement': {
+      const start = lowerExpression(stmt.start, diagnostics);
+      const end = lowerExpression(stmt.end, diagnostics);
+      if (!start || !end) return null;
+      let step: IrExpression | null = null;
+      if (stmt.step) {
+        step = lowerExpression(stmt.step, diagnostics);
+        if (!step) return null;
+      }
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrForStatement' as const,
+          variable: stmt.variable,
+          start,
+          end,
+          step,
+          body: lowerBlock(stmt.body, diagnostics),
+        }),
+      };
+    }
     case 'DeclareStatement':
       diagnostics.push({
         severity: 'error',

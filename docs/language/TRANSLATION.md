@@ -46,7 +46,7 @@ PseudoPilot does **not** translate by string rewrite. The engine is a classic mu
 
 - Deterministic: same input → same IR → same output (stable formatting).
 - Pure library: no I/O, network, or AI.
-- Fail loudly on unsupported constructs (CASE, FOR, routines, …) with structured diagnostics — never invent control flow.
+- Fail loudly on unsupported constructs (CASE, routines, …) with structured diagnostics — never invent control flow.
 - New languages plug in as **frontend + printer** only; IR and rule registries stay shared.
 
 ---
@@ -155,4 +155,4 @@ Trivia is stored on IR nodes, not re-derived from target language, so Cambridge 
 
 **INPUT typing:** Without `DECLARE` (out of current subset), Cambridge `INPUT` has no declared type. PseudoPilot maps to Python `input()` (always `str`). Coercion belongs with a later typechecker + DECLARE milestone — not invented here.
 
-**Explicitly out of scope for this subset:** CASE, `FOR`, DECLARE, routines, file I/O, `&` concatenation, builtins, DATE literals.
+**Explicitly out of scope for this subset:** CASE, DECLARE, routines, file I/O, `&` concatenation, builtins, DATE literals.

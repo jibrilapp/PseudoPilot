@@ -20,6 +20,7 @@ export type {
   IfStatement,
   WhileStatement,
   RepeatStatement,
+  ForStatement,
   ElseIfClause,
   DeclareStatement,
   ProcedureDeclaration,

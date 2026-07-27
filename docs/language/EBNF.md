@@ -119,7 +119,7 @@ statement       = declare_stmt                            (* ✅ *)
                 | output_stmt                             (* ✅ *)
                 | if_stmt                                 (* ✅ *)
                 | case_stmt                               (* ❌ *)
-                | for_stmt                                (* ❌ *)
+                | for_stmt                                (* ✅ *)
                 | while_stmt                              (* ✅ *)
                 | repeat_stmt                             (* ✅ *)
                 | call_stmt                               (* ✅ *)
@@ -182,7 +182,7 @@ for_stmt        = "FOR" identifier assign_op expression
                   "TO" expression
                   [ "STEP" expression ] NL
                   block
-                  "NEXT" identifier ;                     (* ❌ *)
+                  "NEXT" identifier ;                     (* ✅ *)
 
 while_stmt      = "WHILE" expression ["DO"] NL
                   block
@@ -326,7 +326,7 @@ class_member    = [ "PUBLIC" | "PRIVATE" ]
 | CASE / ENDCASE | ❌ |
 | WHILE / ENDWHILE | ✅ |
 | REPEAT / UNTIL | ✅ |
-| FOR | ❌ |
+| FOR | ✅ |
 | PROCEDURE / FUNCTION / CALL / RETURN | ✅ |
 | BYVAL / BYREF | ❌ |
 | Text files + EOF | ✅ |

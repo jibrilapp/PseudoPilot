@@ -149,6 +149,13 @@ function printStatement(
       lines.push(`${p}UNTIL ${printExpr(stmt.condition, 0)}`);
       break;
     }
+    case 'IrForStatement': {
+      const stepPart = stmt.step ? ` STEP ${printExpr(stmt.step, 0)}` : '';
+      lines.push(`${p}FOR ${stmt.variable} ${arrow} ${printExpr(stmt.start, 0)} TO ${printExpr(stmt.end, 0)}${stepPart}`);
+      lines.push(...printBlock(stmt.body, arrow, level + 1));
+      lines.push(`${p}NEXT ${stmt.variable}`);
+      break;
+    }
     case 'IrBreakStatement':
       break;
     default: {
@@ -162,6 +169,7 @@ function printStatement(
     stmt.kind !== 'IrIfStatement' &&
     stmt.kind !== 'IrWhileStatement' &&
     stmt.kind !== 'IrRepeatStatement' &&
+    stmt.kind !== 'IrForStatement' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('//')
   ) {

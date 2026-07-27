@@ -70,27 +70,21 @@ export const DUMMY_TABS: EditorTab[] = [
   },
 ];
 
-export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes REPEAT + IF)
-Count ← 0
-REPEAT
-    IF Count = 1 THEN
+export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes FOR + IF)
+FOR Count ← 1 TO 5
+    IF Count = 3 THEN
         OUTPUT "mid", Count
     ELSE
         OUTPUT Count
     ENDIF
-    Count ← Count + 1
-UNTIL Count > 2
+NEXT Count
 `;
 
-export const DUMMY_PYTHON = `Count = 0
-while True:
-    if Count == 1:
+export const DUMMY_PYTHON = `for Count in range(1, 5 + 1):
+    if Count == 3:
         print("mid", Count)
     else:
         print(Count)
-    Count = Count + 1
-    if Count > 2:
-        break
 `;
 
 export const DUMMY_CONSOLE: ConsoleLine[] = [

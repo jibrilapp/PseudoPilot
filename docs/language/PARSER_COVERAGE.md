@@ -29,10 +29,10 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `INPUT` `OUTPUT` | ✅ |
 | `IF` `THEN` `ELSE` `ENDIF` | ✅ |
 | `CASE` `OTHERWISE` `ENDCASE` | ❌ |
-| `FOR` (loop) | ❌ |
+| `FOR` (loop) | ✅ |
 | `FOR` (file mode connector) | ✅ |
-| `TO` `NEXT` | 🟡 | Lexed; unused by statements |
-| `STEP` | ❌ | Not in lexer |
+| `TO` `NEXT` | ✅ | Used by FOR loop |
+| `STEP` | ✅ | Used by FOR loop |
 | `DO` | ✅ | Optional after WHILE condition |
 | `WHILE` `ENDWHILE` | ✅ | Optional `DO` accepted |
 | `REPEAT` `UNTIL` | ✅ | Post-condition loop parsed |
@@ -159,8 +159,8 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 
 | Feature | Status |
 | --- | --- |
-| `FOR` / `TO` / `NEXT` | ❌ |
-| `STEP` | ❌ |
+| `FOR` / `TO` / `NEXT` | ✅ |
+| `STEP` | ✅ |
 | `WHILE` / `DO` / `ENDWHILE` | ✅ |
 | `REPEAT` / `UNTIL` | ✅ |
 

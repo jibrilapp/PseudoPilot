@@ -23,6 +23,7 @@ export type IrStatement =
   | IrIfStatement
   | IrWhileStatement
   | IrRepeatStatement
+  | IrForStatement
   | IrBreakStatement;
 
 type WithTrivia = {
@@ -81,6 +82,16 @@ export type IrRepeatStatement = WithTrivia & {
   readonly kind: 'IrRepeatStatement';
   readonly body: IrStatement[];
   readonly condition: IrExpression;
+};
+
+/** FOR <var> ← <start> TO <end> [STEP <step>] — maps to Python for…range. */
+export type IrForStatement = WithTrivia & {
+  readonly kind: 'IrForStatement';
+  readonly variable: string;
+  readonly start: IrExpression;
+  readonly end: IrExpression;
+  readonly step: IrExpression | null;
+  readonly body: IrStatement[];
 };
 
 /** Internal-only for Python pattern recognition; not a Cambridge surface feature. */

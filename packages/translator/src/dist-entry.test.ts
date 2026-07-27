@@ -116,4 +116,28 @@ UNTIL Count > 10
     expect(norm(back.code)).toContain('REPEAT');
     expect(norm(back.code)).toContain('UNTIL Count > 10');
   });
+
+  it('translates FOR loop — IDE smoke', () => {
+    const result = translatePseudocodeToPython(`FOR Count ← 1 TO 10
+    OUTPUT Count
+NEXT Count
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'for Count in range(1, 10 + 1):\n    print(Count)\n',
+    );
+  });
+
+  it('round-trips FOR through dist printers', () => {
+    const py = translatePseudocodeToPython(`FOR I ← 10 TO 1 STEP -1
+    OUTPUT I
+NEXT I
+`);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('FOR I');
+    expect(norm(back.code)).toContain('STEP -1');
+    expect(norm(back.code)).toContain('NEXT I');
+  });
 });

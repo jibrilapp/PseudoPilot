@@ -23,6 +23,21 @@ import { printTrivia } from '../trivia/attach.js';
 
 const INDENT = '    ';
 
+function isNegativeLiteral(expr: IrExpression | null): boolean {
+  if (!expr) return false;
+  if (expr.kind === 'IrIntegerLiteral' || expr.kind === 'IrRealLiteral') {
+    return expr.value < 0;
+  }
+  if (
+    expr.kind === 'IrUnaryExpression' &&
+    expr.operator === '-' &&
+    (expr.argument.kind === 'IrIntegerLiteral' || expr.argument.kind === 'IrRealLiteral')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function printTarget(target: IrAssignTarget): string {
   if (target.kind === 'IrIdentifier') return target.name;
   return target.indices.reduce(
@@ -151,6 +166,19 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       lines.push(`${pad(level + 2)}break`);
       break;
     }
+    case 'IrForStatement': {
+      const startStr = printExpr(stmt.start, 0);
+      const isDescending = isNegativeLiteral(stmt.step);
+      const adjust = isDescending ? ' - 1' : ' + 1';
+      const endStr = `${printExpr(stmt.end, 0)}${adjust}`;
+      if (stmt.step) {
+        lines.push(`${p}for ${stmt.variable} in range(${startStr}, ${endStr}, ${printExpr(stmt.step, 0)}):`);
+      } else {
+        lines.push(`${p}for ${stmt.variable} in range(${startStr}, ${endStr}):`);
+      }
+      lines.push(...printBlock(stmt.body, level + 1));
+      break;
+    }
     case 'IrBreakStatement':
       lines.push(`${p}break`);
       break;
@@ -165,6 +193,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     stmt.kind !== 'IrIfStatement' &&
     stmt.kind !== 'IrWhileStatement' &&
     stmt.kind !== 'IrRepeatStatement' &&
+    stmt.kind !== 'IrForStatement' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('#')
   ) {
