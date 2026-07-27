@@ -50,7 +50,7 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | `BOOLEAN` | Type name | ✅ | |
 | `DATE` | Type name | ❌ | |
 | `ARRAY` | Array type constructor | ✅ | |
-| `OF` | Part of `ARRAY[…] OF Type` | ✅ | Also used in CASE? No — CASE uses `CASE OF` |
+| `OF` | Part of `ARRAY[…] OF Type` and `CASE OF` | ✅ | |
 | `TYPE` | User-defined type | ❌ | Extended |
 | `ENDTYPE` | End of composite type | ❌ | Extended |
 | `SET` | Set type | ❌ | Extended |
@@ -78,10 +78,10 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | `THEN` | Then-branch | ✅ |
 | `ELSE` | Else-branch / start of `ELSE IF` | ✅ |
 | `ENDIF` | End IF | ✅ |
-| `CASE` | Multi-way selection | ❌ |
-| `OF` | `CASE OF` | 🟡 | Token exists for arrays only |
-| `OTHERWISE` | Default CASE arm | ❌ |
-| `ENDCASE` | End CASE | ❌ |
+| `CASE` | Multi-way selection | ✅ |
+| `OF` | `CASE OF` / `ARRAY … OF` | ✅ |
+| `OTHERWISE` | Default CASE arm | ✅ |
+| `ENDCASE` | End CASE | ✅ |
 
 ### 1.5 Iteration
 
@@ -500,10 +500,10 @@ ENDCASE
 
 | Rule | Detail | Parser |
 | --- | --- | --- |
-| Arms tested in order | First match wins; then exit CASE | ❌ |
-| Ranges | `low TO high` | ❌ |
-| `OTHERWISE` | Must be last if present | ❌ |
-| Body per arm | Typically one statement; PseudoPilot will allow a block until next label | ❌ |
+| Arms tested in order | First match wins; then exit CASE | ✅ |
+| Ranges | `low TO high` | ✅ |
+| `OTHERWISE` | Must be last if present | ✅ |
+| Body per arm | Typically one statement; PseudoPilot will allow a block until next label | ✅ |
 
 ---
 

@@ -150,6 +150,30 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       }
       break;
     }
+    case 'IrCaseStatement': {
+      lines.push(`${p}match ${printExpr(stmt.discriminant, 0)}:`);
+      if (stmt.arms.length === 0 && stmt.otherwise === null) {
+        lines.push(`${pad(level + 1)}case _:`);
+        lines.push(`${pad(level + 2)}pass`);
+      } else {
+        for (const arm of stmt.arms) {
+          if (arm.label.kind === 'IrCaseValue') {
+            lines.push(`${pad(level + 1)}case ${printExpr(arm.label.value, 0)}:`);
+          } else {
+            // Guarded capture preserves inclusive Cambridge TO ranges.
+            lines.push(
+              `${pad(level + 1)}case _v if ${printExpr(arm.label.low, 0)} <= _v and _v <= ${printExpr(arm.label.high, 0)}:`,
+            );
+          }
+          lines.push(...printBlock(arm.body, level + 2));
+        }
+        if (stmt.otherwise !== null) {
+          lines.push(`${pad(level + 1)}case _:`);
+          lines.push(...printBlock(stmt.otherwise, level + 2));
+        }
+      }
+      break;
+    }
     case 'IrWhileStatement': {
       lines.push(`${p}while ${printExpr(stmt.condition, 0)}:`);
       lines.push(...printBlock(stmt.body, level + 1));
@@ -191,6 +215,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
   const trailing = printTrivia(stmt.trailingTrivia, 'hash');
   if (
     stmt.kind !== 'IrIfStatement' &&
+    stmt.kind !== 'IrCaseStatement' &&
     stmt.kind !== 'IrWhileStatement' &&
     stmt.kind !== 'IrRepeatStatement' &&
     stmt.kind !== 'IrForStatement' &&

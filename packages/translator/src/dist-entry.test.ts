@@ -140,4 +140,34 @@ NEXT I
     expect(norm(back.code)).toContain('STEP -1');
     expect(norm(back.code)).toContain('NEXT I');
   });
+
+  it('translates CASE OF — IDE smoke', () => {
+    const result = translatePseudocodeToPython(`CASE OF Choice
+    1 :
+        OUTPUT "one"
+    OTHERWISE
+        OUTPUT "other"
+ENDCASE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'match Choice:\n    case 1:\n        print("one")\n    case _:\n        print("other")\n',
+    );
+  });
+
+  it('round-trips CASE through dist printers', () => {
+    const py = translatePseudocodeToPython(`CASE OF N
+    1 TO 5 :
+        OUTPUT "low"
+    OTHERWISE
+        OUTPUT "high"
+ENDCASE
+`);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('CASE OF N');
+    expect(norm(back.code)).toContain('1 TO 5');
+    expect(norm(back.code)).toContain('OTHERWISE');
+  });
 });

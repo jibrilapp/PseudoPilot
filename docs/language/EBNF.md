@@ -118,7 +118,7 @@ statement       = declare_stmt                            (* ✅ *)
                 | input_stmt                              (* ✅ *)
                 | output_stmt                             (* ✅ *)
                 | if_stmt                                 (* ✅ *)
-                | case_stmt                               (* ❌ *)
+                | case_stmt                               (* ✅ *)
                 | for_stmt                                (* ✅ *)
                 | while_stmt                              (* ✅ *)
                 | repeat_stmt                             (* ✅ *)
@@ -165,14 +165,14 @@ else_if_clause  = "ELSE" "IF" expression "THEN" NL
 case_stmt       = "CASE" "OF" expression NL
                   { case_arm }
                   [ otherwise_arm ]
-                  "ENDCASE" ;                             (* ❌ *)
+                  "ENDCASE" ;                             (* ✅ *)
 
-case_arm        = case_label ":" statement NL ;
+case_arm        = case_label ":" block ;
 
 case_label      = expression
                 | expression "TO" expression ;
 
-otherwise_arm   = "OTHERWISE" ":" statement NL ;
+otherwise_arm   = "OTHERWISE" [":"] block ;
 ```
 
 ### 4.3 Iteration
@@ -323,7 +323,7 @@ class_member    = [ "PUBLIC" | "PRIVATE" ]
 | CONSTANT | ❌ |
 | Assignment / INPUT / OUTPUT | ✅ |
 | IF / ELSE / ELSE IF / ENDIF | ✅ |
-| CASE / ENDCASE | ❌ |
+| CASE / ENDCASE | ✅ |
 | WHILE / ENDWHILE | ✅ |
 | REPEAT / UNTIL | ✅ |
 | FOR | ✅ |

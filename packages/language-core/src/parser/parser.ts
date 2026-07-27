@@ -18,6 +18,9 @@ import type {
   ProcedureDeclaration,
   Program,
   CallStatement,
+  CaseArm,
+  CaseLabel,
+  CaseStatement,
   ReadFileStatement,
   ForStatement,
   RepeatStatement,
@@ -82,6 +85,7 @@ export class Parser {
     if (token.kind === TokenKind.Input) return this.parseInput();
     if (token.kind === TokenKind.Output) return this.parseOutput();
     if (token.kind === TokenKind.If) return this.parseIf();
+    if (token.kind === TokenKind.Case) return this.parseCase();
     if (token.kind === TokenKind.While) return this.parseWhile();
     if (token.kind === TokenKind.Repeat) return this.parseRepeat();
     if (token.kind === TokenKind.For) return this.parseFor();
@@ -714,6 +718,250 @@ export class Parser {
     };
   }
 
+  /**
+   * CASE OF <expression> NL
+   *   { <label> : <block> }
+   *   [ OTHERWISE [:] <block> ]
+   * ENDCASE
+   *
+   * Labels: <expression> | <expression> TO <expression>
+   * Arm bodies are blocks until the next label, OTHERWISE, or ENDCASE.
+   */
+  private parseCase(): CaseStatement | null {
+    const startToken = this.cursor.advance(); // CASE
+
+    if (!this.cursor.match(TokenKind.Of)) {
+      pushError(
+        this.diagnostics,
+        "Expected 'OF' after 'CASE'.",
+        this.cursor.peek(),
+        'E_CASE_OF',
+      );
+      return null;
+    }
+
+    const discriminant = this.expressions().parseExpression();
+    if (!discriminant) {
+      pushError(
+        this.diagnostics,
+        "Expected expression after 'CASE OF'.",
+        this.cursor.peek(),
+        'E_CASE_DISC',
+      );
+      return null;
+    }
+
+    this.skipNewlines();
+
+    const arms: CaseArm[] = [];
+    const seenKeys = new Map<string, Token>();
+
+    while (
+      !this.cursor.isAtEnd() &&
+      !this.cursor.check(TokenKind.Otherwise) &&
+      !this.cursor.check(TokenKind.Endcase)
+    ) {
+      const armStart = this.cursor.peek();
+      const label = this.parseCaseLabel();
+      if (!label) {
+        pushError(
+          this.diagnostics,
+          "Expected CASE label, 'OTHERWISE', or 'ENDCASE'.",
+          this.cursor.peek(),
+          'E_CASE_LABEL',
+        );
+        this.synchronizeToNewline();
+        this.skipNewlines();
+        continue;
+      }
+
+      if (!this.cursor.match(TokenKind.Colon)) {
+        pushError(
+          this.diagnostics,
+          "Expected ':' after CASE label.",
+          this.cursor.peek(),
+          'E_CASE_COLON',
+        );
+        return null;
+      }
+
+      const key = caseLabelKey(label);
+      if (seenKeys.has(key)) {
+        pushError(
+          this.diagnostics,
+          `Duplicate CASE label '${key}'.`,
+          armStart,
+          'E_CASE_DUP',
+        );
+      } else {
+        seenKeys.set(key, armStart);
+      }
+
+      this.skipNewlines();
+      const body = this.parseCaseArmBody();
+      arms.push({
+        kind: 'CaseArm',
+        label,
+        body,
+        span: span(label.span.start, this.cursor.previous().span.end),
+      });
+      this.skipNewlines();
+    }
+
+    let otherwise: Statement[] | null = null;
+    if (this.cursor.match(TokenKind.Otherwise)) {
+      // Colon after OTHERWISE is optional (classroom variants omit it).
+      this.cursor.match(TokenKind.Colon);
+      this.skipNewlines();
+      otherwise = this.parseBlock(() => this.cursor.check(TokenKind.Endcase));
+
+      // Arms after OTHERWISE are unreachable.
+      if (
+        !this.cursor.check(TokenKind.Endcase) &&
+        !this.cursor.isAtEnd() &&
+        this.looksLikeCaseLabel()
+      ) {
+        pushError(
+          this.diagnostics,
+          'Unreachable CASE arm after OTHERWISE.',
+          this.cursor.peek(),
+          'E_CASE_UNREACHABLE',
+        );
+      }
+    }
+
+    if (!this.cursor.match(TokenKind.Endcase)) {
+      pushError(
+        this.diagnostics,
+        "Expected 'ENDCASE' to close CASE statement.",
+        this.cursor.peek(),
+        'E_CASE_END',
+      );
+      return null;
+    }
+
+    return {
+      kind: 'CaseStatement',
+      discriminant,
+      arms,
+      otherwise,
+      span: span(startToken.span.start, this.cursor.previous().span.end),
+    };
+  }
+
+  private parseCaseLabel(): CaseLabel | null {
+    const low = this.expressions().parseExpression();
+    if (!low) return null;
+
+    if (this.cursor.match(TokenKind.To)) {
+      const high = this.expressions().parseExpression();
+      if (!high) {
+        pushError(
+          this.diagnostics,
+          "Expected expression after 'TO' in CASE range label.",
+          this.cursor.peek(),
+          'E_CASE_RANGE',
+        );
+        return null;
+      }
+      return {
+        kind: 'Range',
+        low,
+        high,
+        span: span(low.span.start, high.span.end),
+      };
+    }
+
+    return {
+      kind: 'Value',
+      value: low,
+      span: low.span,
+    };
+  }
+
+  /** Parse statements until next CASE label, OTHERWISE, or ENDCASE. */
+  private parseCaseArmBody(): Statement[] {
+    const body: Statement[] = [];
+    this.skipNewlines();
+
+    while (
+      !this.cursor.isAtEnd() &&
+      !this.cursor.check(TokenKind.Otherwise) &&
+      !this.cursor.check(TokenKind.Endcase)
+    ) {
+      if (this.looksLikeCaseLabel()) break;
+
+      const before = this.cursor.index;
+      const stmt = this.parseStatement();
+      if (stmt) {
+        body.push(stmt);
+        this.expectStatementEnd();
+      } else if (this.cursor.index === before) {
+        this.cursor.advance();
+      } else {
+        this.synchronizeToNewline();
+      }
+      this.skipNewlines();
+    }
+
+    return body;
+  }
+
+  /** Speculative: can we parse `<expr> [TO <expr>] :` from the current position? */
+  private looksLikeCaseLabel(): boolean {
+    if (
+      this.cursor.check(
+        TokenKind.Otherwise,
+        TokenKind.Endcase,
+        TokenKind.Eof,
+      )
+    ) {
+      return false;
+    }
+
+    // Statement keywords cannot start a label expression in this dialect.
+    if (
+      this.cursor.check(
+        TokenKind.Input,
+        TokenKind.Output,
+        TokenKind.If,
+        TokenKind.Case,
+        TokenKind.While,
+        TokenKind.Repeat,
+        TokenKind.For,
+        TokenKind.Declare,
+        TokenKind.Call,
+        TokenKind.Return,
+        TokenKind.Procedure,
+        TokenKind.Function,
+        TokenKind.Openfile,
+        TokenKind.Readfile,
+        TokenKind.Writefile,
+        TokenKind.Closefile,
+      )
+    ) {
+      return false;
+    }
+
+    const savedIndex = this.cursor.index;
+    const savedDiagLen = this.diagnostics.length;
+
+    const low = this.expressions().parseExpression();
+    let ok = false;
+    if (low) {
+      if (this.cursor.match(TokenKind.To)) {
+        const high = this.expressions().parseExpression();
+        ok = high !== null && this.cursor.check(TokenKind.Colon);
+      } else {
+        ok = this.cursor.check(TokenKind.Colon);
+      }
+    }
+
+    this.cursor.index = savedIndex;
+    this.diagnostics.length = savedDiagLen;
+    return ok;
+  }
+
   private parseElseIfClause(): ElseIfClause | null {
     const elseToken = this.cursor.advance();
     this.cursor.advance(); // IF
@@ -872,6 +1120,8 @@ export class Parser {
         TokenKind.Endwhile,
       TokenKind.Until,
       TokenKind.Next,
+      TokenKind.Endcase,
+      TokenKind.Otherwise,
       TokenKind.Endprocedure,
         TokenKind.Endfunction,
       )
@@ -910,6 +1160,8 @@ function isUnexpectedStructuralKeyword(kind: TokenKind): boolean {
     kind === TokenKind.Endwhile ||
     kind === TokenKind.Until ||
     kind === TokenKind.Next ||
+    kind === TokenKind.Otherwise ||
+    kind === TokenKind.Endcase ||
     kind === TokenKind.Endprocedure ||
     kind === TokenKind.Endfunction ||
     kind === TokenKind.Returns
@@ -918,4 +1170,45 @@ function isUnexpectedStructuralKeyword(kind: TokenKind): boolean {
 
 function isReservedFutureKeyword(kind: TokenKind): boolean {
   return kind === TokenKind.To;
+}
+
+/** Stable key for duplicate CASE label detection (literals + simple ids). */
+function caseLabelKey(label: CaseLabel): string {
+  if (label.kind === 'Range') {
+    return `${exprKey(label.low)} TO ${exprKey(label.high)}`;
+  }
+  return exprKey(label.value);
+}
+
+function exprKey(expr: Expression): string {
+  switch (expr.kind) {
+    case 'IntegerLiteral':
+      return String(expr.value);
+    case 'RealLiteral':
+      return String(expr.value);
+    case 'StringLiteral':
+      return `"${expr.value}"`;
+    case 'CharLiteral':
+      return `'${expr.value}'`;
+    case 'BooleanLiteral':
+      return expr.value ? 'TRUE' : 'FALSE';
+    case 'Identifier':
+      return expr.name;
+    case 'UnaryExpression':
+      return `${expr.operator}${exprKey(expr.argument)}`;
+    case 'BinaryExpression':
+      return `(${exprKey(expr.left)} ${expr.operator} ${exprKey(expr.right)})`;
+    case 'GroupingExpression':
+      return `(${exprKey(expr.expression)})`;
+    case 'IndexExpression':
+      return `${expr.array.name}[${expr.indices.map(exprKey).join(', ')}]`;
+    case 'CallExpression':
+      return `${expr.callee.name}(${expr.args.map(exprKey).join(', ')})`;
+    case 'EofExpression':
+      return `EOF(${exprKey(expr.fileName)})`;
+    default: {
+      const _exhaustive: never = expr;
+      return String(_exhaustive);
+    }
+  }
 }

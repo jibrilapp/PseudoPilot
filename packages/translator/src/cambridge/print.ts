@@ -137,6 +137,23 @@ function printStatement(
       lines.push(`${p}ENDIF`);
       break;
     }
+    case 'IrCaseStatement': {
+      lines.push(`${p}CASE OF ${printExpr(stmt.discriminant, 0)}`);
+      for (const arm of stmt.arms) {
+        const label =
+          arm.label.kind === 'IrCaseValue'
+            ? printExpr(arm.label.value, 0)
+            : `${printExpr(arm.label.low, 0)} TO ${printExpr(arm.label.high, 0)}`;
+        lines.push(`${p}    ${label} :`);
+        lines.push(...printBlock(arm.body, arrow, level + 2));
+      }
+      if (stmt.otherwise !== null) {
+        lines.push(`${p}    OTHERWISE`);
+        lines.push(...printBlock(stmt.otherwise, arrow, level + 2));
+      }
+      lines.push(`${p}ENDCASE`);
+      break;
+    }
     case 'IrWhileStatement': {
       lines.push(`${p}WHILE ${printExpr(stmt.condition, 0)} DO`);
       lines.push(...printBlock(stmt.body, arrow, level + 1));
@@ -167,6 +184,7 @@ function printStatement(
   const trailing = printTrivia(stmt.trailingTrivia, 'slash');
   if (
     stmt.kind !== 'IrIfStatement' &&
+    stmt.kind !== 'IrCaseStatement' &&
     stmt.kind !== 'IrWhileStatement' &&
     stmt.kind !== 'IrRepeatStatement' &&
     stmt.kind !== 'IrForStatement' &&

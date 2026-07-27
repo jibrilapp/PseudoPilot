@@ -10,6 +10,8 @@ export type AstNode =
   | Statement
   | Expression
   | ElseIfClause
+  | CaseArm
+  | CaseLabel
   | Parameter
   | TypeName
   | ArrayType
@@ -26,6 +28,7 @@ export type Statement =
   | InputStatement
   | OutputStatement
   | IfStatement
+  | CaseStatement
   | WhileStatement
   | RepeatStatement
   | ForStatement
@@ -147,6 +150,32 @@ export type ElseIfClause = {
   readonly kind: 'ElseIfClause';
   readonly condition: Expression;
   readonly consequent: Statement[];
+  readonly span: SourceSpan;
+};
+
+/** Single value label, or inclusive `low TO high` range. */
+export type CaseLabel =
+  | { readonly kind: 'Value'; readonly value: Expression; readonly span: SourceSpan }
+  | {
+      readonly kind: 'Range';
+      readonly low: Expression;
+      readonly high: Expression;
+      readonly span: SourceSpan;
+    };
+
+export type CaseArm = {
+  readonly kind: 'CaseArm';
+  readonly label: CaseLabel;
+  readonly body: Statement[];
+  readonly span: SourceSpan;
+};
+
+/** CASE OF <expression> … [OTHERWISE …] ENDCASE */
+export type CaseStatement = {
+  readonly kind: 'CaseStatement';
+  readonly discriminant: Expression;
+  readonly arms: CaseArm[];
+  readonly otherwise: Statement[] | null;
   readonly span: SourceSpan;
 };
 

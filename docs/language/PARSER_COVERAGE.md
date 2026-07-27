@@ -28,7 +28,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `TRUE` `FALSE` | ✅ |
 | `INPUT` `OUTPUT` | ✅ |
 | `IF` `THEN` `ELSE` `ENDIF` | ✅ |
-| `CASE` `OTHERWISE` `ENDCASE` | ❌ |
+| `CASE` `OTHERWISE` `ENDCASE` | ✅ |
 | `FOR` (loop) | ✅ |
 | `FOR` (file mode connector) | ✅ |
 | `TO` `NEXT` | ✅ | Used by FOR loop |
@@ -150,8 +150,8 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Nested `IF` | ✅ |
 | `ELSE IF` (same-line rule) | ✅ |
 | Newlines/comments before `THEN` | ✅ |
-| `CASE OF` / `OTHERWISE` / `ENDCASE` | ❌ |
-| CASE ranges `a TO b` | ❌ |
+| `CASE OF` / `OTHERWISE` / `ENDCASE` | ✅ |
+| CASE ranges `a TO b` | ✅ |
 
 ---
 
@@ -203,7 +203,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Diagnostics with codes/spans | ✅ |
 | Comments `//` | ✅ |
 | Trailing-comma / glue-token hardening | ✅ |
-| Full grammar per EBNF.md | 🟡 | Core subset matches except FOR/CASE/Extended |
+| Full grammar per EBNF.md | 🟡 | Core subset matches except Extended / routines depth |
 
 ---
 
@@ -229,9 +229,9 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Routines | ✅ |
 | Arrays + text files | ✅ |
 | Loops | 🟡 |
-| CASE | ❌ |
+| CASE | ✅ |
 | String/numeric builtins (except EOF) | ❌ |
 | Constants / BYREF / CHAR lit / DATE | ❌ |
 | Extended TYPE / OOP / random files | ❌ |
 
-**Estimate:** Core Paper 2 surface is **partially complete** — strong on selection and most everyday loop forms; still blocked on `FOR`, CASE, and several builtins before a full Paper 2 translator can be truthful.
+**Estimate:** Core Paper 2 surface is **mostly complete** for selection and iteration (IF / CASE / FOR / WHILE / REPEAT); still blocked on routines translation, DECLARE, and several builtins before a full Paper 2 translator can be truthful.

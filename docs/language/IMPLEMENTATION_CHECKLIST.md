@@ -85,8 +85,8 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | `ELSE` | ✅ | ❌ | ❌ | ✅ | ✅ |
 | Nested IF | ✅ | ❌ | ❌ | ✅ | ✅ |
 | `ELSE IF` extension | ✅ | ❌ | ❌ | ✅ | ✅ |
-| `CASE OF` / `OTHERWISE` / `ENDCASE` | ❌ | ❌ | ❌ | ❌ | ❌ |
-| CASE `TO` ranges | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `CASE OF` / `OTHERWISE` / `ENDCASE` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| CASE `TO` ranges | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -169,7 +169,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 | Parser coverage checklist | ✅ |
 | IDE Monaco binding to parser | ❌ |
 | Interpreter / debugger | ❌ |
-| Pseudocode ↔ Python translator | 🟡 | Assign/I/O/expr/CHAR/index/IF/WHILE/REPEAT/**FOR**; no CASE/routines |
+| Pseudocode ↔ Python translator | 🟡 | Assign/I/O/expr/CHAR/index/IF/WHILE/REPEAT/FOR/**CASE**; no routines |
 | AI coach grounded on this dialect | ❌ |
 
 ---
@@ -180,7 +180,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md)
 2. ❌ String `&` + builtins `LENGTH` / `RIGHT` / `MID` / `LCASE` / `UCASE`
 3. ❌ Numeric builtins `INT` / `RAND`
 4. ❌ `CONSTANT`, CHAR literals, strict REAL literals
-5. ❌ `CASE OF`
+5. ✅ `CASE OF`
 6. ❌ `BYVAL` / `BYREF`
 7. 🟡 Semantic checker (types, scopes, NEXT binder match)
 8. ❌ Interpreter (Core)

@@ -3,6 +3,7 @@ import {
   withEmptyTrivia,
   type IrAssignTarget,
   type IrBinaryOp,
+  type IrCaseArm,
   type IrElseIfClause,
   type IrExpression,
   type IrProgram,
@@ -127,6 +128,9 @@ class PyParser {
     if (this.check(PyTokenKind.For)) {
       return this.parseFor();
     }
+    if (this.check(PyTokenKind.Match)) {
+      return this.parseMatch();
+    }
     if (this.check(PyTokenKind.Print)) {
       return this.parsePrint();
     }
@@ -141,7 +145,7 @@ class PyParser {
 
     if (this.isUnsupportedBlockKeyword()) {
       this.error(
-        `Translator does not support '${this.peek().lexeme}' (IF/WHILE/REPEAT/FOR pattern only among control-flow).`,
+        `Translator does not support '${this.peek().lexeme}' (IF/WHILE/REPEAT/FOR/CASE pattern only among control-flow).`,
         this.peek(),
       );
       return null;
@@ -197,6 +201,141 @@ class PyParser {
     }
 
     this.error('Expected assignment, print, if, or while statement.', this.peek());
+    return null;
+  }
+
+  /**
+   * Parse Python `match`/`case` (3.10+) into IrCaseStatement.
+   * Supported patterns:
+   *   case <expr>:
+   *   case _v if <low> <= _v and _v <= <high>:
+   *   case _:
+   */
+  private parseMatch(): ParsedStatement | null {
+    const matchTok = this.expect(PyTokenKind.Match)!;
+    const discriminant = this.parseExpression();
+    if (!discriminant) return null;
+    this.expect(PyTokenKind.Colon);
+    this.skipNewlines();
+
+    if (!this.match(PyTokenKind.Indent)) {
+      this.error("Expected indented case block after 'match'.", this.peek());
+      return null;
+    }
+
+    const arms: IrCaseArm[] = [];
+    let otherwise: IrStatement[] | null = null;
+    let sawOtherwise = false;
+
+    while (!this.check(PyTokenKind.Dedent) && !this.check(PyTokenKind.Eof)) {
+      this.skipNewlines();
+      if (this.check(PyTokenKind.Dedent) || this.check(PyTokenKind.Eof)) break;
+
+      if (!this.match(PyTokenKind.Case)) {
+        this.error("Expected 'case' in match block.", this.peek());
+        return null;
+      }
+
+      // case _:
+      if (
+        this.check(PyTokenKind.Identifier) &&
+        this.peek().lexeme === '_' &&
+        this.tokens[this.i + 1]?.kind === PyTokenKind.Colon
+      ) {
+        this.advance(); // _
+        this.expect(PyTokenKind.Colon);
+        this.skipNewlines();
+        const body = this.parseSuite(false);
+        if (sawOtherwise) {
+          this.error('Duplicate wildcard case (_) in match.', matchTok);
+        }
+        sawOtherwise = true;
+        otherwise = body;
+        continue;
+      }
+
+      // case _v if low <= _v and _v <= high:
+      if (
+        this.check(PyTokenKind.Identifier) &&
+        this.tokens[this.i + 1]?.kind === PyTokenKind.If
+      ) {
+        const capture = this.advance().lexeme;
+        this.advance(); // if
+        const guard = this.parseExpression();
+        if (!guard) return null;
+        this.expect(PyTokenKind.Colon);
+        this.skipNewlines();
+        const body = this.parseSuite(false);
+        const range = this.extractRangeGuard(guard, capture);
+        if (!range) {
+          this.error(
+            "Unsupported case guard; expected '<low> <= <var> and <var> <= <high>'.",
+            matchTok,
+          );
+          return null;
+        }
+        if (sawOtherwise) {
+          this.error('Unreachable case after wildcard (_).', matchTok);
+        }
+        arms.push({
+          kind: 'IrCaseArm',
+          label: { kind: 'IrCaseRange', low: range.low, high: range.high },
+          body,
+        });
+        continue;
+      }
+
+      // case <expr>:
+      const value = this.parseExpression();
+      if (!value) return null;
+      this.expect(PyTokenKind.Colon);
+      this.skipNewlines();
+      const body = this.parseSuite(false);
+      if (sawOtherwise) {
+        this.error('Unreachable case after wildcard (_).', matchTok);
+      }
+      arms.push({
+        kind: 'IrCaseArm',
+        label: { kind: 'IrCaseValue', value },
+        body,
+      });
+    }
+
+    this.expect(PyTokenKind.Dedent);
+
+    return {
+      span: tokenSpan(matchTok, this.previous()),
+      stmt: withEmptyTrivia({
+        kind: 'IrCaseStatement' as const,
+        discriminant,
+        arms,
+        otherwise,
+      }),
+    };
+  }
+
+  /** Recognize `low <= var and var <= high`. */
+  private extractRangeGuard(
+    guard: IrExpression,
+    capture: string,
+  ): { low: IrExpression; high: IrExpression } | null {
+    if (guard.kind !== 'IrBinaryExpression' || guard.operator !== 'and') {
+      return null;
+    }
+    const left = guard.left;
+    const right = guard.right;
+    if (
+      left.kind === 'IrBinaryExpression' &&
+      left.operator === '<=' &&
+      right.kind === 'IrBinaryExpression' &&
+      right.operator === '<=' &&
+      left.right.kind === 'IrIdentifier' &&
+      left.right.name === capture &&
+      right.left.kind === 'IrIdentifier' &&
+      right.left.name === capture
+    ) {
+      return { low: left.left, high: right.right };
+    }
     return null;
   }
 
@@ -695,7 +834,7 @@ class PyParser {
 
   private isUnsupportedBlockKeyword(): boolean {
     const lex = this.peek().lexeme;
-    return ['def', 'class', 'return', 'match', 'with'].includes(lex);
+    return ['def', 'class', 'return', 'with'].includes(lex);
   }
 
   private skipNewlines(): void {

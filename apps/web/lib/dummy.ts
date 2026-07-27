@@ -70,21 +70,27 @@ export const DUMMY_TABS: EditorTab[] = [
   },
 ];
 
-export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes FOR + IF)
-FOR Count ← 1 TO 5
-    IF Count = 3 THEN
-        OUTPUT "mid", Count
-    ELSE
-        OUTPUT Count
-    ENDIF
-NEXT Count
+export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes CASE + FOR)
+FOR Choice ← 1 TO 3
+    CASE OF Choice
+        1 :
+            OUTPUT "one"
+        2 :
+            OUTPUT "two"
+        OTHERWISE
+            OUTPUT Choice
+    ENDCASE
+NEXT Choice
 `;
 
-export const DUMMY_PYTHON = `for Count in range(1, 5 + 1):
-    if Count == 3:
-        print("mid", Count)
-    else:
-        print(Count)
+export const DUMMY_PYTHON = `for Choice in range(1, 3 + 1):
+    match Choice:
+        case 1:
+            print("one")
+        case 2:
+            print("two")
+        case _:
+            print(Choice)
 `;
 
 export const DUMMY_CONSOLE: ConsoleLine[] = [

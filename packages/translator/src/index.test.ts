@@ -1028,6 +1028,224 @@ if Run == True:
   });
 });
 
+describe('CASE OF translation', () => {
+  it('translates simple CASE to match/case', () => {
+    const result = translatePseudocodeToPython(`
+CASE OF Choice
+    1 :
+        OUTPUT "one"
+    2 :
+        OUTPUT "two"
+ENDCASE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'match Choice:\n    case 1:\n        print("one")\n    case 2:\n        print("two")\n',
+    );
+  });
+
+  it('translates CASE with OTHERWISE', () => {
+    const result = translatePseudocodeToPython(`
+CASE OF Choice
+    1 :
+        OUTPUT "one"
+    OTHERWISE
+        OUTPUT "other"
+ENDCASE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('case _:');
+    expect(norm(result.code)).toContain('print("other")');
+  });
+
+  it('translates CASE range labels', () => {
+    const result = translatePseudocodeToPython(`
+CASE OF N
+    1 TO 5 :
+        OUTPUT "low"
+ENDCASE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('case _v if 1 <= _v and _v <= 5:');
+  });
+
+  it('translates nested CASE', () => {
+    const result = translatePseudocodeToPython(`
+CASE OF Outer
+    1 :
+        CASE OF Inner
+            2 :
+                OUTPUT "nested"
+        ENDCASE
+ENDCASE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('match Outer:');
+    expect(norm(result.code)).toContain('match Inner:');
+  });
+
+  it('translates CASE inside IF', () => {
+    const result = translatePseudocodeToPython(`
+IF Ready = TRUE THEN
+    CASE OF X
+        1 :
+            OUTPUT 1
+    ENDCASE
+ENDIF
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('if Ready == True:');
+    expect(norm(result.code)).toContain('match X:');
+  });
+
+  it('translates IF inside CASE', () => {
+    const result = translatePseudocodeToPython(`
+CASE OF X
+    1 :
+        IF Y > 0 THEN
+            OUTPUT Y
+        ENDIF
+ENDCASE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('case 1:');
+    expect(norm(result.code)).toContain('if Y > 0:');
+  });
+
+  it('translates CASE inside FOR', () => {
+    const result = translatePseudocodeToPython(`
+FOR I ← 1 TO 3
+    CASE OF I
+        1 :
+            OUTPUT "one"
+        OTHERWISE
+            OUTPUT I
+    ENDCASE
+NEXT I
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('for I in range(1, 3 + 1):');
+    expect(norm(result.code)).toContain('match I:');
+  });
+
+  it('translates CASE inside WHILE', () => {
+    const result = translatePseudocodeToPython(`
+WHILE Going = TRUE
+    CASE OF X
+        0 :
+            Going ← FALSE
+    ENDCASE
+ENDWHILE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('while Going == True:');
+    expect(norm(result.code)).toContain('match X:');
+  });
+
+  it('translates CASE inside REPEAT', () => {
+    const result = translatePseudocodeToPython(`
+REPEAT
+    CASE OF X
+        1 :
+            OUTPUT 1
+    ENDCASE
+UNTIL Done = TRUE
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('while True:');
+    expect(norm(result.code)).toContain('match X:');
+  });
+
+  it('reports diagnostics for missing ENDCASE', () => {
+    const result = translatePseudocodeToPython(`
+CASE OF Choice
+    1 :
+        OUTPUT 1
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('reports diagnostics for missing OF', () => {
+    const result = translatePseudocodeToPython(`
+CASE Choice
+    1 :
+        OUTPUT 1
+ENDCASE
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('reports diagnostics for duplicate labels', () => {
+    const result = translatePseudocodeToPython(`
+CASE OF Choice
+    1 :
+        OUTPUT "a"
+    1 :
+        OUTPUT "b"
+ENDCASE
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'E_CASE_DUP')).toBe(true);
+  });
+});
+
+describe('CASE reverse translation (Python → Cambridge)', () => {
+  it('translates match/case to CASE OF', () => {
+    const result = translatePythonToPseudocode(`
+match Choice:
+    case 1:
+        print("one")
+    case 2:
+        print("two")
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      'CASE OF Choice\n    1 :\n        OUTPUT "one"\n    2 :\n        OUTPUT "two"\nENDCASE\n',
+    );
+  });
+
+  it('translates case _ to OTHERWISE', () => {
+    const result = translatePythonToPseudocode(`
+match Choice:
+    case 1:
+        print("one")
+    case _:
+        print("other")
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('OTHERWISE');
+    expect(norm(result.code)).toContain('OUTPUT "other"');
+  });
+
+  it('translates guarded range case to TO label', () => {
+    const result = translatePythonToPseudocode(`
+match N:
+    case _v if 1 <= _v and _v <= 5:
+        print("low")
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('1 TO 5');
+  });
+
+  it('round-trips simple CASE', () => {
+    const source = `CASE OF Choice\n    1 :\n        OUTPUT "one"\n    OTHERWISE\n        OUTPUT "other"\nENDCASE\n`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(norm(source));
+  });
+
+  it('round-trips CASE with range', () => {
+    const source = `CASE OF N\n    1 TO 5 :\n        OUTPUT "low"\n    OTHERWISE\n        OUTPUT "high"\nENDCASE\n`;
+    const py = translatePseudocodeToPython(source);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(norm(source));
+  });
+});
+
 describe('operators module / precedence printing', () => {
   it('does not over-parenthesize left-assoc chains', () => {
     const result = translatePseudocodeToPython(`X ← 1 + 2 + 3\n`);

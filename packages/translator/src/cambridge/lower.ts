@@ -8,6 +8,8 @@ import {
   emptyTrivia,
   withEmptyTrivia,
   type IrAssignTarget,
+  type IrCaseArm,
+  type IrCaseLabel,
   type IrElseIfClause,
   type IrExpression,
   type IrProgram,
@@ -202,6 +204,40 @@ function lowerStatement(
           consequent,
           elseIfClauses,
           alternate,
+        }),
+      };
+    }
+    case 'CaseStatement': {
+      const discriminant = lowerExpression(stmt.discriminant, diagnostics);
+      if (!discriminant) return null;
+      const arms: IrCaseArm[] = [];
+      for (const arm of stmt.arms) {
+        let label: IrCaseLabel;
+        if (arm.label.kind === 'Value') {
+          const value = lowerExpression(arm.label.value, diagnostics);
+          if (!value) return null;
+          label = { kind: 'IrCaseValue', value };
+        } else {
+          const low = lowerExpression(arm.label.low, diagnostics);
+          const high = lowerExpression(arm.label.high, diagnostics);
+          if (!low || !high) return null;
+          label = { kind: 'IrCaseRange', low, high };
+        }
+        arms.push({
+          kind: 'IrCaseArm',
+          label,
+          body: lowerBlock(arm.body, diagnostics),
+        });
+      }
+      const otherwise =
+        stmt.otherwise === null ? null : lowerBlock(stmt.otherwise, diagnostics);
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrCaseStatement' as const,
+          discriminant,
+          arms,
+          otherwise,
         }),
       };
     }

@@ -21,6 +21,7 @@ export type IrStatement =
   | IrInput
   | IrOutput
   | IrIfStatement
+  | IrCaseStatement
   | IrWhileStatement
   | IrRepeatStatement
   | IrForStatement
@@ -68,6 +69,29 @@ export type IrElseIfClause = {
   readonly kind: 'IrElseIfClause';
   readonly condition: IrExpression;
   readonly consequent: IrStatement[];
+};
+
+/** Value arm or inclusive `low TO high` range arm. */
+export type IrCaseLabel =
+  | { readonly kind: 'IrCaseValue'; readonly value: IrExpression }
+  | {
+      readonly kind: 'IrCaseRange';
+      readonly low: IrExpression;
+      readonly high: IrExpression;
+    };
+
+export type IrCaseArm = {
+  readonly kind: 'IrCaseArm';
+  readonly label: IrCaseLabel;
+  readonly body: IrStatement[];
+};
+
+/** CASE OF … ENDCASE — maps to Python match/case. */
+export type IrCaseStatement = WithTrivia & {
+  readonly kind: 'IrCaseStatement';
+  readonly discriminant: IrExpression;
+  readonly arms: IrCaseArm[];
+  readonly otherwise: IrStatement[] | null;
 };
 
 /** WHILE … ENDWHILE — maps to Python while. */
