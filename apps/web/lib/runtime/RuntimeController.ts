@@ -3,6 +3,14 @@ import {
   runPseudocode,
   type StackFrame,
 } from '@pseudopilot/interpreter';
+import {
+  BreakpointStore,
+  DebuggerSession,
+  type Breakpoint,
+  type CallStackFrameView,
+  type PauseLocation,
+  type StepMode,
+} from '@/lib/debugger';
 import { IdeRuntimeHost } from './IdeRuntimeHost';
 import {
   canTransition,
@@ -38,11 +46,20 @@ function emptySnapshot(): RuntimeSnapshot {
     frameName: null,
     steps: 0,
     awaitingInput: false,
+    paused: false,
+    pauseLocation: null,
+    callStack: [],
+    breakpoints: [],
   };
 }
 
+export type RunOptions = {
+  /** Initial step mode (e.g. `stepInto` to stop on the first statement). */
+  readonly initialStepMode?: StepMode;
+};
+
 /**
- * Owns interpreter sessions for the web IDE.
+ * Owns interpreter + debugger sessions for the web IDE.
  * React components subscribe to snapshots; they never call the interpreter directly.
  */
 export class RuntimeController {
@@ -58,8 +75,20 @@ export class RuntimeController {
   private lastSource = '';
   private varTick = 0;
   private readonly listeners = new Set<() => void>();
-  /** Stable reference for useSyncExternalStore (Object.is). */
   private snapshot: RuntimeSnapshot = emptySnapshot();
+
+  private readonly breakpoints = new BreakpointStore();
+  private debugSession: DebuggerSession | null = null;
+  private pauseLocation: PauseLocation | null = null;
+  private callStack: CallStackFrameView[] = [];
+  /** In-flight `run()` promise — Restart awaits this so interpreters never overlap. */
+  private runPromise: Promise<void> | null = null;
+
+  constructor() {
+    this.breakpoints.subscribe(() => {
+      this.emit();
+    });
+  }
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -73,7 +102,11 @@ export class RuntimeController {
   }
 
   isBusy(): boolean {
-    return this.state === 'running' || this.state === 'waitingForInput';
+    return (
+      this.state === 'running' ||
+      this.state === 'waitingForInput' ||
+      this.state === 'paused'
+    );
   }
 
   clearConsole(): void {
@@ -84,13 +117,83 @@ export class RuntimeController {
     this.emit();
   }
 
+  toggleBreakpoint(line: number): void {
+    this.breakpoints.toggle(line);
+  }
+
+  setBreakpointEnabled(line: number, enabled: boolean): void {
+    this.breakpoints.setEnabled(line, enabled);
+  }
+
+  removeBreakpoint(line: number): void {
+    this.breakpoints.remove(line);
+  }
+
+  clearBreakpoints(): void {
+    this.breakpoints.clear();
+  }
+
+  getBreakpoints(): readonly Breakpoint[] {
+    return this.breakpoints.list();
+  }
+
   stop(): void {
     if (!this.isBusy()) return;
-    // Bump generation first so in-flight runPseudocode cannot overwrite UI state.
+    this.debugSession?.cancel();
     this.invalidateSession();
+    this.pauseLocation = null;
+    this.callStack = [];
     this.setState('cancelled');
     this.pushConsole('info', 'Execution stopped.');
     this.emit();
+  }
+
+  pause(): void {
+    if (this.state !== 'running') return;
+    this.debugSession?.requestPause();
+  }
+
+  continue(): void {
+    if (this.state !== 'paused' || !this.debugSession) return;
+    this.setState('running');
+    this.emit();
+    this.debugSession.continue();
+  }
+
+  stepInto(): void {
+    if (this.state === 'paused' && this.debugSession) {
+      this.setState('running');
+      this.emit();
+      this.debugSession.stepInto();
+      return;
+    }
+  }
+
+  stepOver(): void {
+    if (this.state !== 'paused' || !this.debugSession) return;
+    this.setState('running');
+    this.emit();
+    this.debugSession.stepOver();
+  }
+
+  stepOut(): void {
+    if (this.state !== 'paused' || !this.debugSession) return;
+    this.setState('running');
+    this.emit();
+    this.debugSession.stepOut();
+  }
+
+  /**
+   * Start (or resume-by-rerun) stepping from the first statement when idle.
+   * When already paused, delegates to {@link stepInto}.
+   */
+  async stepIntoFromIdle(source: string): Promise<void> {
+    if (this.state === 'paused') {
+      this.stepInto();
+      return;
+    }
+    if (this.isBusy()) return;
+    await this.run(source, { initialStepMode: 'stepInto' });
   }
 
   submitInput(line: string): void {
@@ -104,23 +207,46 @@ export class RuntimeController {
   async restart(source?: string): Promise<void> {
     const src = source ?? this.lastSource;
     if (this.isBusy()) {
+      this.debugSession?.cancel();
       this.invalidateSession();
       this.setState('cancelled');
+    }
+    // Drain the previous interpreter so we never run two sessions at once.
+    const previous = this.runPromise;
+    if (previous) {
+      await previous.catch(() => undefined);
     }
     this.consoleLines = [];
     this.diagnostics = [];
     this.variables = [];
     this.frameName = null;
     this.steps = 0;
+    this.pauseLocation = null;
+    this.callStack = [];
     this.emit();
     await this.run(src);
   }
 
-  async run(source: string): Promise<void> {
+  async run(source: string, options: RunOptions = {}): Promise<void> {
     if (this.isBusy()) {
       return;
     }
 
+    const task = this.executeRun(source, options);
+    this.runPromise = task;
+    try {
+      await task;
+    } finally {
+      if (this.runPromise === task) {
+        this.runPromise = null;
+      }
+    }
+  }
+
+  private async executeRun(
+    source: string,
+    options: RunOptions = {},
+  ): Promise<void> {
     this.lastSource = source;
     this.generation += 1;
     const gen = this.generation;
@@ -130,10 +256,42 @@ export class RuntimeController {
     this.frameName = null;
     this.steps = 0;
     this.varTick = 0;
+    this.pauseLocation = null;
+    this.callStack = [];
     this.pushConsole('info', 'Running…');
 
     const abort = new AbortController();
     this.abort = abort;
+
+    const session = new DebuggerSession(this.breakpoints, {
+      onPause: ({ location, callStack, frame }) => {
+        if (gen !== this.generation) return;
+        this.pauseLocation = location;
+        this.callStack = [...callStack];
+        this.steps = location.step;
+        this.refreshVariablesFromFrame(frame);
+        this.setState('paused');
+        this.pushConsole(
+          'info',
+          `Paused at line ${location.line} (${location.frameName}).`,
+        );
+        this.emit();
+      },
+      onResume: () => {
+        if (gen !== this.generation) return;
+        this.pauseLocation = null;
+        // State may already be `running` from continue/step; keep call stack until next pause.
+        if (this.state === 'paused') {
+          this.setState('running');
+        }
+        this.emit();
+      },
+    });
+    if (options.initialStepMode) {
+      session.setInitialMode(options.initialStepMode);
+    }
+    this.debugSession = session;
+    const debugHooks = session.createHooks();
 
     const host = new IdeRuntimeHost(
       (line) => {
@@ -162,17 +320,30 @@ export class RuntimeController {
         host,
         signal: abort.signal,
         debugger: {
-          onBeforeStatement: ({ frame, step }) => {
-            if (gen !== this.generation) return;
-            this.steps = step;
-            this.varTick += 1;
-            // Throttle variable panel updates to limit React churn.
-            if (this.varTick % 8 !== 0 && frame.kind === 'global') return;
-            if (this.varTick % 8 !== 0 && frame.kind !== 'global') {
-              if (this.varTick % 4 !== 0) return;
+          onEnterFrame: debugHooks.onEnterFrame,
+          onExitFrame: debugHooks.onExitFrame,
+          onBeforeStatement: async (info) => {
+            if (gen !== this.generation) return 'continue';
+            this.steps = info.step;
+
+            const action = await debugHooks.onBeforeStatement?.(info);
+
+            if (gen !== this.generation) return 'continue';
+
+            // Throttled live vars while running (full refresh on pause).
+            if (this.state === 'running') {
+              this.varTick += 1;
+              const refresh =
+                info.frame.kind === 'global'
+                  ? this.varTick % 8 === 0
+                  : this.varTick % 4 === 0;
+              if (refresh) {
+                this.refreshVariablesFromFrame(info.frame);
+                this.emit();
+              }
             }
-            this.refreshVariablesFromFrame(frame);
-            this.emit();
+
+            return action;
           },
         },
       });
@@ -181,13 +352,14 @@ export class RuntimeController {
 
       this.steps = result.steps;
       this.applyFinalSnapshots(result.globals, result.callStack);
+      this.pauseLocation = null;
+      this.callStack = [];
 
       if (!result.ok) {
+        // Structured diagnostics are rendered by ConsolePanel; avoid duplicating
+        // the same messages as plain console error lines.
         const views = result.diagnostics.map(mapDiagnostic);
         this.diagnostics = views;
-        for (const d of views) {
-          this.pushConsole('error', formatDiag(d));
-        }
         const code = result.diagnostics[0]?.code ?? '';
         if (code.startsWith('C_') || code.startsWith('E_')) {
           this.setState('semanticError');
@@ -217,26 +389,22 @@ export class RuntimeController {
             message,
           },
         ];
-        this.pushConsole('error', `[R_INTERNAL] ${message}`);
         this.setState('runtimeError');
       }
     } finally {
       if (gen === this.generation) {
+        this.debugSession = null;
         this.teardownSession();
         this.emit();
       }
     }
   }
 
-  /**
-   * Invalidate the active session so late async callbacks / results are ignored.
-   * Always bumps {@link generation} before aborting so Stop/Restart cannot race
-   * with in-flight `runPseudocode` applying diagnostics or console lines.
-   */
   private invalidateSession(): void {
     this.generation += 1;
     this.host?.cancelInput();
     this.abort?.abort();
+    this.debugSession = null;
     this.teardownSession();
   }
 
@@ -336,13 +504,15 @@ export class RuntimeController {
       this.state = next;
       return;
     }
-    // Allow forced terminal transitions from any active state.
     if (
       next === 'cancelled' ||
       next === 'runtimeError' ||
       next === 'completed' ||
       next === 'semanticError' ||
-      next === 'idle'
+      next === 'idle' ||
+      next === 'paused' ||
+      next === 'running' ||
+      next === 'waitingForInput'
     ) {
       this.state = next;
     }
@@ -368,6 +538,10 @@ export class RuntimeController {
       frameName: this.frameName,
       steps: this.steps,
       awaitingInput: this.state === 'waitingForInput',
+      paused: this.state === 'paused',
+      pauseLocation: this.pauseLocation,
+      callStack: this.callStack,
+      breakpoints: this.breakpoints.list(),
     };
   }
 
@@ -404,12 +578,6 @@ function mapDiagnostic(d: {
       ? { ...base, line: d.span.start.line, column: d.span.start.column }
       : base;
   return d.help !== undefined ? { ...withSpan, help: d.help } : withSpan;
-}
-
-function formatDiag(d: RuntimeDiagnosticView): string {
-  const loc = d.line != null ? `Line ${d.line}: ` : '';
-  const help = d.help ? ` — ${d.help}` : '';
-  return `[${d.code}] ${loc}${d.message}${help}`;
 }
 
 function isAbortLike(e: unknown): boolean {

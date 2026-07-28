@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { cn } from '@/lib/cn';
+import type { Breakpoint } from '@/lib/debugger';
 
 type CodeSurfaceProps = {
   code: string;
@@ -10,11 +11,18 @@ type CodeSurfaceProps = {
   editable?: boolean;
   onChange?: (value: string) => void;
   'aria-label'?: string;
+  /** 1-based line currently paused on (pseudocode). */
+  activeLine?: number | null;
+  breakpoints?: readonly Breakpoint[];
+  onToggleBreakpoint?: (line: number) => void;
 };
 
 /**
  * Code surface: read-only highlighted view, or editable monospace textarea.
  * Highlighting is visual-only for read-only mode; editable mode prioritizes typing.
+ *
+ * Editable mode uses one scroll container for gutter + text so breakpoints and
+ * the active-line highlight stay aligned when the program is taller than the pane.
  */
 export function CodeSurface({
   code,
@@ -22,6 +30,9 @@ export function CodeSurface({
   editable = false,
   onChange,
   'aria-label': ariaLabel,
+  activeLine = null,
+  breakpoints = [],
+  onToggleBreakpoint,
 }: CodeSurfaceProps) {
   const lines = useMemo(() => {
     const normalized = code.replace(/\n$/, '');
@@ -29,28 +40,83 @@ export function CodeSurface({
   }, [code]);
 
   const lineCount = Math.max(lines.length, 1);
+  const bpByLine = useMemo(() => {
+    const map = new Map<number, Breakpoint>();
+    for (const bp of breakpoints) map.set(bp.line, bp);
+    return map;
+  }, [breakpoints]);
 
   if (editable) {
     return (
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div className="flex h-full min-h-0 font-mono text-[13px] leading-[1.7]">
+      <div className="relative min-h-0 flex-1 overflow-auto">
+        <div className="relative flex min-h-full font-mono text-[13px] leading-[1.7]">
           <div
             aria-hidden
-            className="sticky left-0 select-none whitespace-pre border-r border-pp-line bg-pp-editor px-3.5 py-2 text-right text-[12px] leading-[1.7] text-pp-faint tabular-nums"
+            className="sticky left-0 z-[1] flex shrink-0 select-none flex-col self-start border-r border-pp-line bg-pp-editor text-right text-[12px] leading-[1.7] text-pp-faint tabular-nums"
           >
-            {Array.from({ length: lineCount }, (_, i) => i + 1).join('\n')}
+            {Array.from({ length: lineCount }, (_, i) => {
+              const line = i + 1;
+              const bp = bpByLine.get(line);
+              const isActive = activeLine === line;
+              return (
+                <div
+                  key={line}
+                  className={cn(
+                    'flex h-[1.7em] items-center gap-1 px-1.5',
+                    isActive && 'bg-amber-400/25',
+                  )}
+                >
+                  <button
+                    type="button"
+                    title={
+                      bp
+                        ? bp.enabled
+                          ? 'Disable breakpoint'
+                          : 'Remove breakpoint'
+                        : 'Add breakpoint'
+                    }
+                    aria-label={`Toggle breakpoint on line ${line}`}
+                    className="grid h-4 w-4 place-items-center rounded-full"
+                    onClick={() => onToggleBreakpoint?.(line)}
+                  >
+                    <span
+                      className={cn(
+                        'h-2 w-2 rounded-full',
+                        bp?.enabled && 'bg-rose-500',
+                        bp && !bp.enabled && 'bg-rose-300/70 ring-1 ring-rose-400/50',
+                        !bp && 'bg-transparent hover:bg-rose-400/40',
+                      )}
+                    />
+                  </button>
+                  <span className="min-w-[1.5rem]">{line}</span>
+                </div>
+              );
+            })}
           </div>
-          <textarea
-            aria-label={ariaLabel ?? 'Pseudocode editor'}
-            spellCheck={false}
-            value={code}
-            onChange={(e) => onChange?.(e.target.value)}
-            className={cn(
-              'm-0 min-h-0 w-full flex-1 resize-none border-0 bg-transparent',
-              'px-4 py-2 text-pp-ink outline-none focus:ring-0',
-              'caret-pp-accent',
+          <div className="relative min-w-0 flex-1">
+            {activeLine != null && activeLine >= 1 && activeLine <= lineCount && (
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-x-0 bg-amber-400/15"
+                style={{
+                  top: `calc(${activeLine - 1} * 1.7em + 0.5rem)`,
+                  height: '1.7em',
+                }}
+              />
             )}
-          />
+            <textarea
+              aria-label={ariaLabel ?? 'Pseudocode editor'}
+              spellCheck={false}
+              value={code}
+              rows={lineCount}
+              onChange={(e) => onChange?.(e.target.value)}
+              className={cn(
+                'relative m-0 w-full resize-none overflow-hidden border-0 bg-transparent',
+                'px-4 py-2 text-pp-ink outline-none focus:ring-0',
+                'caret-pp-accent',
+              )}
+            />
+          </div>
         </div>
       </div>
     );

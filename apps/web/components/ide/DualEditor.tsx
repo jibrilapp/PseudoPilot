@@ -1,6 +1,7 @@
 'use client';
 
 import type { EditorTab } from '@/lib/dummy';
+import type { Breakpoint } from '@/lib/debugger';
 import { cn } from '@/lib/cn';
 import { CodeSurface } from './CodeSurface';
 
@@ -13,6 +14,9 @@ type DualEditorProps = {
   onPseudocodeChange: (value: string) => void;
   stacked?: boolean;
   translationStatus?: 'idle' | 'ok' | 'error';
+  activeLine?: number | null;
+  breakpoints?: readonly Breakpoint[];
+  onToggleBreakpoint?: (line: number) => void;
 };
 
 export function DualEditor({
@@ -24,6 +28,9 @@ export function DualEditor({
   onPseudocodeChange,
   stacked = false,
   translationStatus = 'idle',
+  activeLine = null,
+  breakpoints = [],
+  onToggleBreakpoint,
 }: DualEditorProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-pp-editor">
@@ -55,6 +62,9 @@ export function DualEditor({
           editable
           onChange={onPseudocodeChange}
           emphasis={activeFileId.includes('pseudo') || activeFileId.startsWith('ex')}
+          activeLine={activeLine}
+          breakpoints={breakpoints}
+          onToggleBreakpoint={onToggleBreakpoint}
         />
         <EditorColumn
           title="Python"
@@ -86,6 +96,9 @@ function EditorColumn({
   editable,
   onChange,
   badge,
+  activeLine,
+  breakpoints,
+  onToggleBreakpoint,
 }: {
   title: string;
   path: string;
@@ -96,6 +109,9 @@ function EditorColumn({
   editable?: boolean;
   onChange?: (value: string) => void;
   badge?: string;
+  activeLine?: number | null;
+  breakpoints?: readonly Breakpoint[];
+  onToggleBreakpoint?: (line: number) => void;
 }) {
   return (
     <section
@@ -127,6 +143,9 @@ function EditorColumn({
         editable={editable}
         onChange={onChange}
         aria-label={title}
+        activeLine={language === 'pseudocode' ? activeLine : null}
+        breakpoints={language === 'pseudocode' ? breakpoints : []}
+        onToggleBreakpoint={language === 'pseudocode' ? onToggleBreakpoint : undefined}
       />
     </section>
   );

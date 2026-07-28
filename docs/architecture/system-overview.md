@@ -11,12 +11,17 @@ Lexer → Parser → AST ┤                      ▲
          (@pseudopilot/language-core)   (@pseudopilot/checker)
                                         (@pseudopilot/translator)
 
-apps/web RuntimeController ──► Interpreter (via IdeRuntimeHost)
-         (Run / Stop / INPUT)     Translator stays independent
+apps/web RuntimeController ──► DebuggerSession / BreakpointStore
+         (Run / Stop / Step)              │
+                                          ▼
+                                   Interpreter + IdeRuntimeHost
+                                         │
+                                   VirtualFileSystem (optional host.files)
+         Translator stays independent (live Python pane; file IR mapping)
 ```
 
 Semantic rules live only in `@pseudopilot/checker` (`C_*` diagnostics).  
-The interpreter executes the **validated AST** asynchronously (awaits `RuntimeHost`).  
+The interpreter executes the **validated AST** asynchronously (awaits `RuntimeHost` and debugger gates).  
 The translator may add Python-target diagnostics (`T_*`) after checking.
 
 ## Package dependency rules

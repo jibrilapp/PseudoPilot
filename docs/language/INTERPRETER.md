@@ -1,7 +1,7 @@
 # Cambridge Interpreter
 
-**Package:** `@pseudopilot/interpreter` `0.2.0`  
-**Status:** Core AST execution + **async RuntimeHost** + AbortSignal cancellation (IDE Run wired)
+**Package:** `@pseudopilot/interpreter` `0.4.0`  
+**Status:** Core AST execution + async RuntimeHost + AbortSignal + **text-file VFS** + debugger hooks (IDE wired)
 
 ---
 
@@ -21,7 +21,7 @@ Lexer → Parser → AST → Semantic Checker → Interpreter
 **Why AST**
 
 1. Every AST node has a `SourceSpan` — required for breakpoints, stepping, and diagnostics. IR has none.
-2. AST preserves Cambridge semantics (1-based arrays, `CHAR` vs `STRING`, `DIV`/`MOD`, `&`, `EOF`/`OPENFILE` nodes even when unsupported).
+2. AST preserves Cambridge semantics (1-based arrays, `CHAR` vs `STRING`, `DIV`/`MOD`, `&`, `EOF`/`OPENFILE`).
 3. IR lives inside `@pseudopilot/translator` and is Python-oriented; executing it would couple the runtime to translation.
 4. Checker already validates the AST; the interpreter reuses that gate without re-deriving types.
 5. ADRs require a single TypeScript language core usable in browser and server — AST walk fits both.
@@ -100,16 +100,19 @@ Cancellation requires **macrotask** yields (every 256 steps via `setTimeout(0)`)
 
 ---
 
-## 4. Debugger preparation (not implemented UI)
+## 4. Debugger preparation
 
 Already present:
 
-- Statement-level `onBeforeStatement({ span, frame, step })`
+- Statement-level async `onBeforeStatement({ span, frame, step, depth })` — may `await` a resume gate
 - Frame enter/exit hooks (including `onExitFrame` after routine **errors**)
 - `InterpretResult.callStack` + `globals` snapshots for a variables panel
 - Per-iteration step accounting on `WHILE` / `REPEAT` / `FOR` (empty infinite loops cannot bypass `maxSteps`)
+- IDE debugger (`apps/web/lib/debugger`) uses hooks for breakpoints + stepping
 
-Not yet: breakpoints table, step modes, watch expressions, pause/resume loop (`pause` currently aborts with `R_DEBUG_PAUSE`).
+Legacy: returning `'pause'` **synchronously** still aborts with `R_DEBUG_PAUSE`. Prefer awaiting inside the hook.
+
+Not yet: watch expressions, conditional breakpoints, pause/resume without Promise gates, Monaco binding.
 
 Avoided anti-patterns: no source-less IR execution, no flattening spans away, no global mutable singleton interpreter.
 
@@ -126,10 +129,10 @@ Avoided anti-patterns: no source-less IR execution, no flattening spans away, no
 | `R_STEP_LIMIT` | Instruction budget |
 | `R_INPUT` | Bad INPUT text for target type / exhausted host buffer |
 | `R_CANCELLED` | AbortSignal / Stop |
+| `R_FILE_*` | Virtual file I/O (`NOT_FOUND`, `ALREADY_OPEN`, `NOT_OPEN`, `MODE`, `EOF`, `PATH`) |
 | `R_RETURN_OUTSIDE` / `R_NO_RETURN` | Invalid RETURN / missing FUNCTION return |
 | `R_BUILTIN` / `R_BUILTIN_ARGS` | Builtin execution failure |
 | `R_ASSIGN_CONSTANT` | Mutating CONSTANT |
-| `R_UNSUPPORTED_FILE` | File I/O / EOF not implemented |
 | `R_TYPE` / `R_ARG_COUNT` / `R_PROC_AS_EXPR` | Dynamic type / call misuse |
 
 Checker `C_*` diagnostics still gate the run when `semanticCheck: true`.
@@ -143,7 +146,8 @@ Checker `C_*` diagnostics still gate the run when `semanticCheck: true`.
 - No definite-assignment at runtime beyond undeclared reads
 - Not a security sandbox (instruction/depth/array-size caps only — no memory/CPU isolation, no string-size cap, no untrusted-host isolation)
 - `debugger.pause` aborts rather than suspending
-- File I/O / BYREF / DATE / OOP unsupported
+- BYREF / DATE / OOP / RANDOM files unsupported
+- Text files use VirtualFileSystem only (see `packages/interpreter/src/files/README.md`)
 - JS `number` precision (INTEGER beyond `Number.MAX_SAFE_INTEGER` is not Cambridge-arbitrary-precision)
 
 ---

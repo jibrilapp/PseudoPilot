@@ -231,6 +231,70 @@ class PyParser {
         endTok = this.previous();
       }
 
+      // Statement-level method call: f.close() / f.write(...) / _pp_files[p].write(...)
+      if (
+        this.check(PyTokenKind.Dot) &&
+        (target.kind === 'IrIdentifier' || target.kind === 'IrIndexExpression')
+      ) {
+        let expr: IrExpression =
+          target.kind === 'IrIdentifier'
+            ? { kind: 'IrIdentifier', name: nameTok.lexeme }
+            : target;
+        // Reuse primary attribute loop by peeking through a mini-parse:
+        // manually consume Dot chain for write/close only at statement level.
+        while (this.match(PyTokenKind.Dot)) {
+          if (!this.match(PyTokenKind.Identifier)) {
+            this.error('Expected method name after ".".', this.peek());
+            return null;
+          }
+          const method = this.previous().lexeme;
+          if (!this.match(PyTokenKind.LParen)) {
+            this.error('Expected "(" after method name.', this.peek());
+            return null;
+          }
+          const args: IrExpression[] = [];
+          if (!this.check(PyTokenKind.RParen)) {
+            const first = this.parseExpression();
+            if (!first) return null;
+            args.push(first);
+            while (this.match(PyTokenKind.Comma)) {
+              const arg = this.parseExpression();
+              if (!arg) return null;
+              args.push(arg);
+            }
+          }
+          if (!this.match(PyTokenKind.RParen)) {
+            this.error("Expected ')' after method arguments.", this.peek());
+            return null;
+          }
+          endTok = this.previous();
+          if (method === 'close' && args.length === 0) {
+            expr = { kind: 'IrCallExpression', callee: 'close', args: [expr] };
+          } else if (method === 'write' && args.length === 1) {
+            expr = {
+              kind: 'IrCallExpression',
+              callee: 'write',
+              args: [expr, args[0]!],
+            };
+          } else {
+            this.error(
+              `Unsupported statement-level method '.${method}()'.`,
+              this.previous(),
+            );
+            return null;
+          }
+        }
+        return {
+          span: tokenSpan(nameTok, endTok),
+          stmt: withEmptyTrivia({
+            kind: 'IrCallStatement' as const,
+            callee:
+              expr.kind === 'IrCallExpression' ? expr.callee : nameTok.lexeme,
+            args: expr.kind === 'IrCallExpression' ? expr.args : [],
+          }),
+        };
+      }
+
       if (!this.match(PyTokenKind.Equal)) {
         this.error(
           'Expected "=" after assignment target (subset supports assignments, annotations, print, if, while, for, match, and def).',
@@ -1231,28 +1295,59 @@ class PyParser {
 
       let expr: IrExpression = { kind: 'IrIdentifier', name };
 
-      // Attribute: x.lower() / x.upper()
+      // Attribute: x.lower() / x.upper() / file.readline() / file.write() / file.close()
       while (this.match(PyTokenKind.Dot)) {
         if (!this.match(PyTokenKind.Identifier)) {
           this.error('Expected attribute name after ".".', this.peek());
           return null;
         }
         const method = this.previous().lexeme;
-        if (!this.match(PyTokenKind.LParen) || !this.match(PyTokenKind.RParen)) {
-          this.error('Only zero-argument method calls (.lower/.upper) are supported.', this.peek());
+        if (!this.match(PyTokenKind.LParen)) {
+          this.error('Expected "(" after method name.', this.peek());
           return null;
         }
-        if (method === 'lower') {
+        const args: IrExpression[] = [];
+        if (!this.check(PyTokenKind.RParen)) {
+          const first = this.parseExpression();
+          if (!first) return null;
+          args.push(first);
+          while (this.match(PyTokenKind.Comma)) {
+            const arg = this.parseExpression();
+            if (!arg) return null;
+            args.push(arg);
+          }
+        }
+        if (!this.match(PyTokenKind.RParen)) {
+          this.error("Expected ')' after method arguments.", this.peek());
+          return null;
+        }
+        if (method === 'lower' && args.length === 0) {
           expr = { kind: 'IrCallExpression', callee: 'LCASE', args: [expr] };
-        } else if (method === 'upper') {
+        } else if (method === 'upper' && args.length === 0) {
           expr = { kind: 'IrCallExpression', callee: 'UCASE', args: [expr] };
         } else if (
           expr.kind === 'IrIdentifier' &&
           expr.name === 'random' &&
-          method === 'random'
+          method === 'random' &&
+          args.length === 0
         ) {
-          // Placeholder completed by `* x` → RAND(x)
           expr = { kind: 'IrCallExpression', callee: 'RAND', args: [] };
+        } else if (method === 'readline' && args.length === 0) {
+          expr = { kind: 'IrCallExpression', callee: 'readline', args: [expr] };
+        } else if (method === 'rstrip') {
+          expr = {
+            kind: 'IrCallExpression',
+            callee: 'rstrip',
+            args: [expr, ...args],
+          };
+        } else if (method === 'write' && args.length === 1) {
+          expr = {
+            kind: 'IrCallExpression',
+            callee: 'write',
+            args: [expr, args[0]!],
+          };
+        } else if (method === 'close' && args.length === 0) {
+          expr = { kind: 'IrCallExpression', callee: 'close', args: [expr] };
         } else {
           this.error(`Unsupported method '.${method}()'.`, this.previous());
           return null;

@@ -17,13 +17,9 @@ export class Scope {
 
   lookup(name: string): SymbolInfo | undefined {
     const key = identKey(name);
-    let cur: Scope | null = this;
-    while (cur) {
-      const found = cur.bindings.get(key);
-      if (found) return found;
-      cur = cur.parent;
-    }
-    return undefined;
+    const local = this.bindings.get(key);
+    if (local) return local;
+    return this.parent?.lookup(name);
   }
 
   /** Lookup only in this frame (no parents). */

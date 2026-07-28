@@ -16,16 +16,16 @@ Bidirectional **Cambridge International Computer Science (9618) pseudocode ↔ P
 | --- | --- |
 | `@pseudopilot/language-core` | Lexer + parser + AST for a large Core subset (control flow, procedures, functions, DECLARE/arrays/files parsed) |
 | `@pseudopilot/checker` | Semantic checker: scopes, symbols, types, undeclared names, call arity/types |
-| `@pseudopilot/interpreter` | **AST interpreter** — async `RuntimeHost` (browser INPUT) + AbortSignal cancellation |
-| `@pseudopilot/translator` | Bidirectional translation via IR (runs checker by default before lowering) |
-| `apps/web` | Student IDE: **Run / Stop / Restart**, Console INPUT/OUTPUT, live Variables — executes interpreter (not Python) |
-| Debugger UI / AI coach / remote sandbox | Not yet — hooks prepared |
+| `@pseudopilot/interpreter` | **AST interpreter** — async host, AbortSignal, debugger hooks, **virtual text files** |
+| `@pseudopilot/translator` | Bidirectional translation via IR (includes text file I/O mapping) |
+| `apps/web` | Student IDE: Run / Debug / Console / Variables — interpreter (not Python); VFS for files |
+| AI coach / remote OS sandbox | Not yet |
 
-**Interpreter supported subset:** assignment, I/O (host), expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, arrays (bounds-checked), builtins, `&`.
+**Interpreter supported subset:** assignment, I/O (host), expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, arrays (bounds-checked), builtins, `&`, text file I/O (VFS).
 
-**Translator supported subset (V11):** same Core surface for translation (no file I/O / BYREF).
+**Translator supported subset (V12):** same Core surface for translation including text file I/O (no BYREF / DATE / OOP / RANDOM files).
 
-Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md)). IDE runtime: [`apps/web/lib/runtime/README.md`](./apps/web/lib/runtime/README.md).
+Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md)). IDE runtime: [`apps/web/lib/runtime/README.md`](./apps/web/lib/runtime/README.md). Debugger: [`apps/web/lib/debugger/README.md`](./apps/web/lib/debugger/README.md). Files: [`packages/interpreter/src/files/README.md`](./packages/interpreter/src/files/README.md).
 
 ---
 
@@ -104,8 +104,8 @@ CI runs `pnpm check` on every PR to `main` (see `.github/workflows/ci.yml`).
 
 ## What’s next (high level)
 
-1. DECLARE + typing for INPUT / parameters
-2. File I/O and builtins in the translator
-3. Interpreter + sandboxed execution
-4. Publishable package releases with changelog automation
-5. Broader Cambridge Extended / OOP coverage
+1. Optional BYREF / DATE / Extended surface
+2. Sandboxed / worker execution for untrusted student programs
+3. Publishable package releases with changelog automation
+4. Broader Cambridge Extended / OOP coverage
+5. Monaco editor + richer debugger (watches, conditional breakpoints)

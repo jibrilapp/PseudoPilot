@@ -1,18 +1,21 @@
 'use client';
 
 import type { RuntimeVariableRow } from '@/lib/runtime';
+import type { CallStackFrameView } from '@/lib/debugger';
 import { cn } from '@/lib/cn';
 
 type VariableInspectorProps = {
   rows: readonly RuntimeVariableRow[];
   frameName?: string | null;
   executionState?: string;
+  callStack?: readonly CallStackFrameView[];
 };
 
 export function VariableInspector({
   rows,
   frameName = null,
   executionState = 'idle',
+  callStack = [],
 }: VariableInspectorProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-pp-panel">
@@ -23,6 +26,28 @@ export function VariableInspector({
           {frameName ? `Frame: ${frameName}` : subtitle(executionState)}
         </p>
       </div>
+
+      {callStack.length > 0 && (
+        <div className="border-b border-pp-line px-4 pb-3">
+          <p className="mb-1.5 text-[11px] font-medium text-pp-faint">Call stack</p>
+          <ul className="space-y-0.5">
+            {callStack.map((frame, index) => (
+              <li
+                key={`${frame.id}-${index}`}
+                className={cn(
+                  'rounded px-1.5 py-1 font-mono text-[11.5px]',
+                  index === 0 ? 'bg-pp-accentSoft text-pp-ink' : 'text-pp-muted',
+                )}
+              >
+                {frame.name}
+                {frame.line != null && (
+                  <span className="ml-2 text-pp-faint">:{frame.line}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-3">
         {rows.length === 0 ? (
@@ -63,6 +88,7 @@ export function VariableInspector({
 }
 
 function subtitle(state: string): string {
+  if (state === 'paused') return 'Paused';
   if (state === 'running' || state === 'waitingForInput') return 'Live';
   if (state === 'completed') return 'After last run';
   if (state === 'runtimeError' || state === 'semanticError') return 'At error';

@@ -245,14 +245,11 @@ function lowerExpression(
         args,
       };
     }
-    case 'EofExpression':
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_UNSUPPORTED_EOF',
-        message: 'Translator does not support EOF(...).',
-        span: expr.span,
-      });
-      return null;
+    case 'EofExpression': {
+      const fileName = lowerExpression(expr.fileName, ctx);
+      if (!fileName) return null;
+      return { kind: 'IrEofExpression', fileName };
+    }
     default: {
       const _exhaustive: never = expr;
       return _exhaustive;
@@ -643,17 +640,56 @@ function lowerStatement(
         }),
       };
     }
-    case 'OpenFileStatement':
-    case 'ReadFileStatement':
-    case 'WriteFileStatement':
-    case 'CloseFileStatement':
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_UNSUPPORTED_FILE',
-        message: 'Translator does not support file handling.',
+    case 'OpenFileStatement': {
+      const fileName = lowerExpression(stmt.fileName, ctx);
+      if (!fileName) return null;
+      return {
         span: stmt.span,
-      });
-      return null;
+        ir: withEmptyTrivia({
+          kind: 'IrOpenFileStatement' as const,
+          fileName,
+          mode: stmt.mode,
+        }),
+      };
+    }
+    case 'ReadFileStatement': {
+      if (!checkAssignToConstant(ctx, stmt.target)) return null;
+      const fileName = lowerExpression(stmt.fileName, ctx);
+      const target = lowerTarget(stmt.target, ctx);
+      if (!fileName || !target) return null;
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrReadFileStatement' as const,
+          fileName,
+          target,
+        }),
+      };
+    }
+    case 'WriteFileStatement': {
+      const fileName = lowerExpression(stmt.fileName, ctx);
+      const value = lowerExpression(stmt.value, ctx);
+      if (!fileName || !value) return null;
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrWriteFileStatement' as const,
+          fileName,
+          value,
+        }),
+      };
+    }
+    case 'CloseFileStatement': {
+      const fileName = lowerExpression(stmt.fileName, ctx);
+      if (!fileName) return null;
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrCloseFileStatement' as const,
+          fileName,
+        }),
+      };
+    }
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;

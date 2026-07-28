@@ -19,7 +19,7 @@ export function FileExplorer({ tree, activeId, onSelect }: FileExplorerProps) {
         <p className="truncate text-[13px] font-semibold tracking-[-0.02em] text-pp-ink">
           loops-lab
         </p>
-        <p className="mt-0.5 text-[12px] text-pp-muted">Cambridge 9618</p>
+        <p className="mt-0.5 text-[12px] text-pp-muted">Cambridge 9618 · preview</p>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-4">

@@ -21,9 +21,11 @@ import { Environment } from './environment.js';
 import { CallStack, type DebuggerHooks } from './frame.js';
 import {
   defaultRandom,
+  type FileSystemHost,
   type RandomSource,
   type RuntimeHost,
 } from './host.js';
+import { FileSystemError, VirtualFileSystem } from './files/VirtualFileSystem.js';
 import {
   allocateArray,
   arrayOffset,
@@ -90,6 +92,7 @@ type Routine =
  */
 export class Interpreter {
   private readonly host: RuntimeHost;
+  private readonly files: FileSystemHost;
   private readonly random: RandomSource;
   private readonly maxCallDepth: number;
   private readonly maxSteps: number;
@@ -107,6 +110,7 @@ export class Interpreter {
 
   constructor(options: InterpretOptions) {
     this.host = options.host;
+    this.files = options.host.files ?? new VirtualFileSystem();
     this.random = options.random ?? defaultRandom;
     this.maxCallDepth = options.maxCallDepth ?? 256;
     this.maxSteps = options.maxSteps ?? 1_000_000;
@@ -136,6 +140,12 @@ export class Interpreter {
     } catch (e) {
       if (e instanceof RuntimeError) {
         this.diagnostics.push(e.diagnostic);
+      } else if (e instanceof FileSystemError) {
+        this.diagnostics.push({
+          severity: 'error',
+          code: e.code,
+          message: e.message,
+        });
       } else if (e instanceof ReturnSignal) {
         this.diagnostics.push({
           severity: 'error',
@@ -194,7 +204,7 @@ export class Interpreter {
     return this.stack.current().env;
   }
 
-  private tick(span: SourceSpan): void {
+  private async tick(span: SourceSpan): Promise<void> {
     if (this.signal?.aborted) {
       throw runtimeFail('R_CANCELLED', 'Execution stopped.', span);
     }
@@ -206,12 +216,18 @@ export class Interpreter {
         span,
       );
     }
-    const action = this.hooks?.onBeforeStatement?.({
+    const action = await this.hooks?.onBeforeStatement?.({
       span,
       frame: this.stack.current(),
       step: this.steps,
+      depth: this.stack.depth(),
     });
+    // Re-check after async debugger suspend (Stop may have fired while parked).
+    if (this.signal?.aborted) {
+      throw runtimeFail('R_CANCELLED', 'Execution stopped.', span);
+    }
     if (action === 'pause') {
+      // Legacy sync pause — prefer awaiting a resume gate inside the hook.
       throw runtimeFail(
         'R_DEBUG_PAUSE',
         'Execution paused by debugger hook.',
@@ -236,7 +252,7 @@ export class Interpreter {
   }
 
   private async execStatement(stmt: Statement): Promise<void> {
-    this.tick(stmt.span);
+    await this.tick(stmt.span);
     await this.maybeYieldEventLoop(stmt.span);
 
     switch (stmt.kind) {
@@ -283,14 +299,14 @@ export class Interpreter {
         for (;;) {
           if (!isTruthyBoolean(await this.evalExpr(stmt.condition))) break;
           await this.execBlock(stmt.body);
-          this.tick(stmt.span);
+          await this.tick(stmt.span);
           await this.maybeYieldEventLoop(stmt.span);
         }
         return;
       case 'RepeatStatement':
         for (;;) {
           await this.execBlock(stmt.body);
-          this.tick(stmt.span);
+          await this.tick(stmt.span);
           if (isTruthyBoolean(await this.evalExpr(stmt.condition))) break;
           await this.maybeYieldEventLoop(stmt.span);
         }
@@ -315,14 +331,17 @@ export class Interpreter {
       case 'FunctionDeclaration':
         return;
       case 'OpenFileStatement':
+        await this.execOpenFile(stmt);
+        return;
       case 'ReadFileStatement':
+        await this.execReadFile(stmt);
+        return;
       case 'WriteFileStatement':
+        await this.execWriteFile(stmt);
+        return;
       case 'CloseFileStatement':
-        throw runtimeFail(
-          'R_UNSUPPORTED_FILE',
-          'File I/O is not supported by the interpreter yet (sandbox milestone).',
-          stmt.span,
-        );
+        await this.execCloseFile(stmt);
+        return;
       default: {
         const _exhaustive: never = stmt;
         return _exhaustive;
@@ -332,6 +351,67 @@ export class Interpreter {
 
   private async writeOut(line: string): Promise<void> {
     await this.host.writeOutput(line);
+  }
+
+  private async evalFilePath(
+    expr: Expression,
+    span: SourceSpan,
+  ): Promise<string> {
+    const v = await this.evalExpr(expr);
+    if (v.kind !== 'STRING' && v.kind !== 'CHAR') {
+      throw runtimeFail(
+        'R_FILE_PATH',
+        `File name must be STRING (got ${v.kind}).`,
+        span,
+      );
+    }
+    return v.value;
+  }
+
+  private async execOpenFile(
+    stmt: Extract<Statement, { kind: 'OpenFileStatement' }>,
+  ): Promise<void> {
+    const path = await this.evalFilePath(stmt.fileName, stmt.span);
+    try {
+      await this.files.open(path, stmt.mode);
+    } catch (e) {
+      throw mapFileError(e, stmt.span);
+    }
+  }
+
+  private async execReadFile(
+    stmt: Extract<Statement, { kind: 'ReadFileStatement' }>,
+  ): Promise<void> {
+    const path = await this.evalFilePath(stmt.fileName, stmt.span);
+    try {
+      const line = await this.files.readLine(path);
+      await this.assignTarget(stmt.target, stringValue(line), stmt.span);
+    } catch (e) {
+      throw mapFileError(e, stmt.span);
+    }
+  }
+
+  private async execWriteFile(
+    stmt: Extract<Statement, { kind: 'WriteFileStatement' }>,
+  ): Promise<void> {
+    const path = await this.evalFilePath(stmt.fileName, stmt.span);
+    const value = await this.evalExpr(stmt.value);
+    try {
+      await this.files.writeLine(path, formatValue(value));
+    } catch (e) {
+      throw mapFileError(e, stmt.span);
+    }
+  }
+
+  private async execCloseFile(
+    stmt: Extract<Statement, { kind: 'CloseFileStatement' }>,
+  ): Promise<void> {
+    const path = await this.evalFilePath(stmt.fileName, stmt.span);
+    try {
+      await this.files.close(path);
+    } catch (e) {
+      throw mapFileError(e, stmt.span);
+    }
   }
 
   private async execBlock(body: readonly Statement[]): Promise<void> {
@@ -442,7 +522,7 @@ export class Interpreter {
       i = cur + step;
       // Budget each iteration (empty FOR bodies still count).
       if (goingUp ? i <= end : i >= end) {
-        this.tick(stmt.span);
+        await this.tick(stmt.span);
         await this.maybeYieldEventLoop(stmt.span);
       }
     }
@@ -621,12 +701,15 @@ export class Interpreter {
         }
         return b.value.data[arrayOffset(b.value, indices, expr.span)]!;
       }
-      case 'EofExpression':
-        throw runtimeFail(
-          'R_UNSUPPORTED_FILE',
-          'EOF() requires file I/O (not implemented yet).',
-          expr.span,
-        );
+      case 'EofExpression': {
+        const path = await this.evalFilePath(expr.fileName, expr.span);
+        try {
+          const atEnd = await this.files.eof(path);
+          return booleanValue(Boolean(atEnd));
+        } catch (e) {
+          throw mapFileError(e, expr.span);
+        }
+      }
       default: {
         const _exhaustive: never = expr;
         return _exhaustive;
@@ -797,8 +880,9 @@ function valuesEqual(a: RuntimeValue, b: RuntimeValue): boolean {
 function evalUnary(
   op: UnaryOperator,
   arg: RuntimeValue,
-  span: SourceSpan,
+  _span: SourceSpan,
 ): RuntimeValue {
+  void _span;
   if (op === 'NOT') return booleanValue(!isTruthyBoolean(arg));
   if (op === '-' || op === '+') {
     const n = asNumber(arg, `unary ${op}`);
@@ -973,6 +1057,14 @@ function parseInput(
       return _exhaustive;
     }
   }
+}
+
+function mapFileError(e: unknown, span: SourceSpan): RuntimeError {
+  if (e instanceof FileSystemError) {
+    return runtimeFail(e.code, e.message, span);
+  }
+  if (e instanceof RuntimeError) return e;
+  throw e;
 }
 
 function isAbortError(e: unknown): boolean {

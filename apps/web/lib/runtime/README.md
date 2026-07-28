@@ -2,6 +2,7 @@
 
 **App:** `apps/web`  
 **Controller:** `apps/web/lib/runtime`  
+**Debugger:** `apps/web/lib/debugger`  
 **Engine:** `@pseudopilot/interpreter` (Cambridge AST — **not** Python)
 
 ---
@@ -9,10 +10,12 @@
 ## Architecture
 
 ```
-IdeShell / Toolbar / Console / Variables
+IdeShell / Toolbar / Console / Variables / DebugSidebar
               │ subscribe (useSyncExternalStore)
               ▼
         RuntimeController   ← session lifecycle, state machine
+              │
+     BreakpointStore + DebuggerSession
               │
         IdeRuntimeHost      ← OUTPUT → console; INPUT → Promise
               │
@@ -25,6 +28,8 @@ Translator remains independent (live Python pane). Run never executes translated
 
 React must never call the interpreter directly. `usePseudocodeRuntime` only reads a cached snapshot.
 
+See also: [`../debugger/README.md`](../debugger/README.md).
+
 ---
 
 ## Execution states
@@ -33,6 +38,7 @@ React must never call the interpreter directly. `usePseudocodeRuntime` only read
 | --- | --- |
 | `idle` | No active session |
 | `running` | Interpreter advancing |
+| `paused` | Debugger gate held (breakpoint / step / Pause) |
 | `waitingForInput` | `INPUT` paused; console accepts a line |
 | `completed` | Finished successfully |
 | `runtimeError` | `R_*` diagnostic |
@@ -48,8 +54,9 @@ Invalid transitions are rejected (`canTransition`); terminal teardown may force 
 - One `RuntimeController` singleton per IDE tab (`getRuntimeController`).
 - **Generation id:** every `run()` and every `stop()` / mid-run `restart()` **invalidates** the session by bumping `generation` *before* aborting. Late OUTPUT, INPUT callbacks, and `runPseudocode` results from the old generation are ignored — this prevents Stop/Restart races that would otherwise re-apply `R_CANCELLED` diagnostics or stale console lines.
 - `AbortController` is passed as `signal` into the interpreter (`R_CANCELLED`).
-- The interpreter yields to the **macrotask** queue every 256 steps so Stop can interrupt tight loops (microtask-only yields are insufficient and starve the event loop).
-- Pending INPUT promises are rejected on Stop via `IdeRuntimeHost.cancelInput` (`AbortError`).
+- The interpreter yields to the **macrotask** queue every 256 steps so Stop can interrupt tight loops (microtask-only yields are insufficient).
+- Pending INPUT promises are rejected on Stop via `IdeRuntimeHost.cancelInput`.
+- Parked debugger gates are rejected on Stop via `DebuggerSession.cancel`.
 - Concurrent Run while busy is ignored (no overlapping sessions).
 - Console lines are soft-capped (`MAX_CONSOLE_LINES = 2000`) so infinite OUTPUT cannot unbounded-grow the store.
 
@@ -84,20 +91,16 @@ Snapshots come from interpreter bindings (`formatValue`), not the AST:
 
 - Globals from the global environment
 - Locals / parameters / constants from the current stack frame
-- Throttled live updates via `onBeforeStatement` while running
+- Full refresh on debugger pause; throttled while running
 
 ---
 
-## Future debugger (not in this milestone)
+## Future debugger expansions
 
-Review before implementing:
-
-1. Replace abort-on-`pause` with a true suspend/resume continuation.
-2. Breakpoints keyed by statement `SourceSpan` (already on AST).
-3. Step-over / step-into using the existing `DebuggerHooks` surface.
-4. Watch expressions evaluated in the current frame environment.
-5. Keep React out of the interpreter — extend `RuntimeController` only.
-6. Debugger pause must participate in the same generation / invalidate protocol as Stop.
+1. Watch expressions evaluated in the current frame environment.
+2. Conditional breakpoints (`Breakpoint.condition`).
+3. Click call-stack frames to inspect non-top locals.
+4. Keep React out of the interpreter — extend `DebuggerSession` / controller only.
 
 ---
 
@@ -105,9 +108,8 @@ Review before implementing:
 
 - Client-local only (no sandbox / worker isolation yet)
 - Single concurrent run per IDE instance (page singleton)
-- Variable refresh is throttled (not every statement)
-- No breakpoints / stepping / watches
-- File I/O still unsupported in the interpreter
+- Variable refresh is throttled while running (full on pause)
+- Text file I/O uses an in-tab virtual filesystem (never the OS disk); cleared each run
 - Aborted interpreters may burn CPU until the next macrotask yield (~256 steps)
 - Console auto-open effects in `IdeShell` can re-open panels the student closed while busy
 - Terminal states (`completed` / `cancelled` / errors) do not auto-return to `idle`

@@ -4,6 +4,7 @@ import { lowerCambridgeProgram } from '../cambridge/lower.js';
 import { printCambridge } from '../cambridge/print.js';
 import { parsePythonToIr } from '../python/parse.js';
 import { printPython } from '../python/print.js';
+import { liftPythonFilePatterns } from '../file/lift-python.js';
 import {
   mergeOptions,
   sourceTooLargeDiagnostic,
@@ -99,6 +100,7 @@ export function translatePythonToPseudocode(
   if (oversized) return oversized;
 
   const { ir, diagnostics } = parsePythonToIr(source, opts.preserveTrivia);
-  const code = printCambridge(ir, opts.assignmentArrow);
+  const lifted = liftPythonFilePatterns(ir);
+  const code = printCambridge(lifted, opts.assignmentArrow);
   return finalize(code, diagnostics);
 }

@@ -31,7 +31,11 @@ export type IrStatement =
   | IrFunctionDeclaration
   | IrCallStatement
   | IrReturnStatement
-  | IrBreakStatement;
+  | IrBreakStatement
+  | IrOpenFileStatement
+  | IrReadFileStatement
+  | IrWriteFileStatement
+  | IrCloseFileStatement;
 
 type WithTrivia = {
   readonly leadingTrivia: IrTrivia[];
@@ -208,6 +212,33 @@ export type IrBreakStatement = WithTrivia & {
   readonly kind: 'IrBreakStatement';
 };
 
+/** OPENFILE path FOR READ|WRITE|APPEND */
+export type IrOpenFileStatement = WithTrivia & {
+  readonly kind: 'IrOpenFileStatement';
+  readonly fileName: IrExpression;
+  readonly mode: 'READ' | 'WRITE' | 'APPEND';
+};
+
+/** READFILE path, target */
+export type IrReadFileStatement = WithTrivia & {
+  readonly kind: 'IrReadFileStatement';
+  readonly fileName: IrExpression;
+  readonly target: IrAssignTarget;
+};
+
+/** WRITEFILE path, value */
+export type IrWriteFileStatement = WithTrivia & {
+  readonly kind: 'IrWriteFileStatement';
+  readonly fileName: IrExpression;
+  readonly value: IrExpression;
+};
+
+/** CLOSEFILE path */
+export type IrCloseFileStatement = WithTrivia & {
+  readonly kind: 'IrCloseFileStatement';
+  readonly fileName: IrExpression;
+};
+
 export type IrExpression =
   | IrIntegerLiteral
   | IrRealLiteral
@@ -219,7 +250,14 @@ export type IrExpression =
   | IrCallExpression
   | IrUnaryExpression
   | IrBinaryExpression
-  | IrGroupingExpression;
+  | IrGroupingExpression
+  | IrEofExpression;
+
+/** EOF(path) — Cambridge end-of-file test. */
+export type IrEofExpression = {
+  readonly kind: 'IrEofExpression';
+  readonly fileName: IrExpression;
+};
 
 export type IrIntegerLiteral = {
   readonly kind: 'IrIntegerLiteral';

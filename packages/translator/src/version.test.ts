@@ -24,9 +24,9 @@ describe('package version identity', () => {
     expect(PACKAGE_NAME).toBe(pkg.name);
   });
 
-  it('TRANSLATOR_SUBSET tags the V10 declare+checker dialect', () => {
+  it('TRANSLATOR_SUBSET tags the V12 files dialect', () => {
     expect(TRANSLATOR_SUBSET).toBe(
-      'v11-assign-io-expr-control-procedure-function-declare-check-builtins',
+      'v12-assign-io-expr-control-procedure-function-declare-check-builtins-files',
     );
   });
 });

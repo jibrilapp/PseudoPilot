@@ -20,7 +20,7 @@ Cambridge pseudocode language core: lexer → parser → AST.
 - Literals: integer, real, string, char (`'A'`), boolean
 - Identifiers (case-insensitive keywords)
 
-Not yet (parser): `BYREF`/`BYVAL`, `&` concatenation, DATE, OOP/Extended, many builtins.
+Not yet (parser): `BYREF`/`BYVAL`, DATE, OOP/Extended, many Extended builtins.
 
 > **Note:** Parsing DECLARE/CONSTANT/files does not imply every construct is lowered by the translator. See `@pseudopilot/translator` and `docs/language/TRANSLATION.md`.
 

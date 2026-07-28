@@ -3,9 +3,16 @@
  * Decoupled from interpreter internals beyond the public package API.
  */
 
+import type {
+  Breakpoint,
+  CallStackFrameView,
+  PauseLocation,
+} from '@/lib/debugger';
+
 export type ExecutionState =
   | 'idle'
   | 'running'
+  | 'paused'
   | 'waitingForInput'
   | 'completed'
   | 'runtimeError'
@@ -46,6 +53,10 @@ export type RuntimeSnapshot = {
   readonly frameName: string | null;
   readonly steps: number;
   readonly awaitingInput: boolean;
+  readonly paused: boolean;
+  readonly pauseLocation: PauseLocation | null;
+  readonly callStack: readonly CallStackFrameView[];
+  readonly breakpoints: readonly Breakpoint[];
 };
 
 export function canTransition(
@@ -59,17 +70,27 @@ export function canTransition(
     case 'running':
       return (
         to === 'waitingForInput' ||
+        to === 'paused' ||
         to === 'completed' ||
         to === 'runtimeError' ||
         to === 'cancelled' ||
         to === 'semanticError'
+      );
+    case 'paused':
+      return (
+        to === 'running' ||
+        to === 'cancelled' ||
+        to === 'runtimeError' ||
+        to === 'completed' ||
+        to === 'waitingForInput'
       );
     case 'waitingForInput':
       return (
         to === 'running' ||
         to === 'cancelled' ||
         to === 'runtimeError' ||
-        to === 'completed'
+        to === 'completed' ||
+        to === 'paused'
       );
     case 'completed':
     case 'runtimeError':

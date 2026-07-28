@@ -9,7 +9,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/checker' as const;
-export const PACKAGE_VERSION = '0.10.0' as const;
+export const PACKAGE_VERSION = '0.11.0' as const;
 
 export { check } from './check.js';
 export type {

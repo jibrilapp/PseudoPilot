@@ -62,6 +62,54 @@ export function IconStop({ className }: IconProps) {
   );
 }
 
+export function IconPause({ className }: IconProps) {
+  return (
+    <svg className={cn('h-[14px] w-[14px]', className)} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <rect x="6.5" y="5.5" width="3.5" height="13" rx="1" />
+      <rect x="14" y="5.5" width="3.5" height="13" rx="1" />
+    </svg>
+  );
+}
+
+export function IconStepInto({ className }: IconProps) {
+  return (
+    <svg className={cn('h-[14px] w-[14px]', className)} viewBox="0 0 24 24" aria-hidden {...base}>
+      <path d="M12 4v10" />
+      <path d="m8 10 4 4 4-4" />
+      <path d="M6 18h12" />
+    </svg>
+  );
+}
+
+export function IconStepOver({ className }: IconProps) {
+  return (
+    <svg className={cn('h-[14px] w-[14px]', className)} viewBox="0 0 24 24" aria-hidden {...base}>
+      <path d="M6 12h9" />
+      <path d="m12 8 4 4-4 4" />
+      <path d="M6 18h12" />
+    </svg>
+  );
+}
+
+export function IconStepOut({ className }: IconProps) {
+  return (
+    <svg className={cn('h-[14px] w-[14px]', className)} viewBox="0 0 24 24" aria-hidden {...base}>
+      <path d="M12 20V10" />
+      <path d="m8 14 4-4 4 4" />
+      <path d="M6 6h12" />
+    </svg>
+  );
+}
+
+export function IconContinue({ className }: IconProps) {
+  return (
+    <svg className={cn('h-[14px] w-[14px]', className)} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M7.2 5.8a1 1 0 0 1 1.52-.85l9.1 5.6a1 1 0 0 1 0 1.7l-9.1 5.6A1 1 0 0 1 7.2 16.6V5.8Z" />
+      <rect x="17.5" y="5.5" width="2.2" height="13" rx="0.8" />
+    </svg>
+  );
+}
+
 export function IconSplit({ className }: IconProps) {
   return (
     <svg className={cn('h-[18px] w-[18px]', className)} viewBox="0 0 24 24" aria-hidden {...base}>

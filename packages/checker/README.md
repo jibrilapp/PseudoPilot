@@ -2,7 +2,7 @@
 
 Cambridge 9618 **semantic checker**: scopes, symbols, types, and diagnostics over a `language-core` AST.
 
-**Version:** `0.10.0`
+**Version:** `0.11.0`
 
 ## Pipeline
 

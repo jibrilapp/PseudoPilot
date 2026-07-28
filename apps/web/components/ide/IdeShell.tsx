@@ -12,6 +12,7 @@ import { usePseudocodeRuntime } from '@/hooks/usePseudocodeRuntime';
 import { ActivityBar, type ActivityId } from './ActivityBar';
 import { AiAssistantPanel } from './AiAssistantPanel';
 import { ConsolePanel } from './ConsolePanel';
+import { DebugSidebar } from './DebugSidebar';
 import { DualEditor } from './DualEditor';
 import { FileExplorer } from './FileExplorer';
 import { MobileDock } from './MobileDock';
@@ -49,7 +50,8 @@ export function IdeShell() {
       translationDiagnostics.length > 0 ||
       runtime.consoleLines.length > 0 ||
       runtime.diagnostics.length > 0 ||
-      runtime.awaitingInput
+      runtime.awaitingInput ||
+      runtime.paused
     ) {
       setConsoleOpen(true);
     }
@@ -58,14 +60,22 @@ export function IdeShell() {
     runtime.consoleLines.length,
     runtime.diagnostics.length,
     runtime.awaitingInput,
+    runtime.paused,
   ]);
 
   useEffect(() => {
-    if (runtime.isBusy || runtime.variables.length > 0) {
+    if (runtime.isBusy || runtime.variables.length > 0 || runtime.paused) {
       setRightTab('vars');
       setRightOpen(true);
     }
-  }, [runtime.isBusy, runtime.variables.length]);
+  }, [runtime.isBusy, runtime.variables.length, runtime.paused]);
+
+  useEffect(() => {
+    if (runtime.paused) {
+      setActivity('debug');
+      setSidebarOpen(true);
+    }
+  }, [runtime.paused]);
 
   const handleRun = () => {
     void runtime.run(pseudocode);
@@ -74,6 +84,16 @@ export function IdeShell() {
   const handleRestart = () => {
     void runtime.restart(pseudocode);
   };
+
+  const handleStepInto = () => {
+    if (runtime.canStep) {
+      runtime.stepInto();
+      return;
+    }
+    void runtime.stepIntoFromIdle(pseudocode);
+  };
+
+  const activeLine = runtime.pauseLocation?.line ?? null;
 
   const consoleNode = (
     <ConsolePanel
@@ -94,6 +114,18 @@ export function IdeShell() {
       rows={runtime.variables}
       frameName={runtime.frameName}
       executionState={runtime.state}
+      callStack={runtime.callStack}
+    />
+  );
+
+  const debugNode = (
+    <DebugSidebar
+      breakpoints={runtime.breakpoints}
+      callStack={runtime.callStack}
+      pausedLine={activeLine}
+      onToggleBreakpoint={runtime.toggleBreakpoint}
+      onRemoveBreakpoint={runtime.removeBreakpoint}
+      onSetBreakpointEnabled={runtime.setBreakpointEnabled}
     />
   );
 
@@ -113,9 +145,17 @@ export function IdeShell() {
         consoleOpen={consoleOpen}
         executionState={runtime.state}
         isBusy={runtime.isBusy}
+        canPause={runtime.canPause}
+        canContinue={runtime.canContinue}
+        canStep={runtime.canStep}
         onRun={handleRun}
         onStop={runtime.stop}
         onRestart={handleRestart}
+        onPause={runtime.pause}
+        onContinue={runtime.continue}
+        onStepInto={handleStepInto}
+        onStepOver={runtime.stepOver}
+        onStepOut={runtime.stepOut}
       />
 
       <div className="relative flex min-h-0 flex-1">
@@ -129,13 +169,16 @@ export function IdeShell() {
               sidebarOpen ? 'w-[232px] opacity-100 lg:w-[248px]' : 'w-0 opacity-0 border-r-0',
             )}
           >
-            {sidebarOpen && (
-              <FileExplorer
-                tree={DUMMY_FILES}
-                activeId={activeFileId}
-                onSelect={setActiveFileId}
-              />
-            )}
+            {sidebarOpen &&
+              (activity === 'debug' ? (
+                debugNode
+              ) : (
+                <FileExplorer
+                  tree={DUMMY_FILES}
+                  activeId={activeFileId}
+                  onSelect={setActiveFileId}
+                />
+              ))}
           </aside>
 
           <main className="flex min-w-0 flex-1 flex-col">
@@ -148,6 +191,9 @@ export function IdeShell() {
                 python={python}
                 onPseudocodeChange={setPseudocode}
                 translationStatus={translationStatus}
+                activeLine={activeLine}
+                breakpoints={runtime.breakpoints}
+                onToggleBreakpoint={runtime.toggleBreakpoint}
               />
             </div>
             <div
@@ -220,6 +266,9 @@ export function IdeShell() {
               onPseudocodeChange={setPseudocode}
               translationStatus={translationStatus}
               stacked
+              activeLine={activeLine}
+              breakpoints={runtime.breakpoints}
+              onToggleBreakpoint={runtime.toggleBreakpoint}
             />
           )}
           {mobileView === 'console' && consoleNode}
@@ -232,6 +281,7 @@ export function IdeShell() {
         translationStatus={translationStatus}
         diagnosticCount={translationDiagnostics.length}
         executionState={runtime.state}
+        pauseLine={activeLine}
       />
       <MobileDock active={mobileView} onChange={setMobileView} />
     </div>

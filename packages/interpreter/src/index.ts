@@ -7,7 +7,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/interpreter' as const;
-export const PACKAGE_VERSION = '0.2.0' as const;
+export const PACKAGE_VERSION = '0.4.0' as const;
 
 export { runPseudocode, type RunOptions, type RunResult } from './run.js';
 export {
@@ -25,6 +25,14 @@ export {
   type RandomSource,
 } from './host.js';
 export {
+  VirtualFileSystem,
+  FileSystemError,
+  type FileOpenMode,
+  type FileSystemHost,
+  type VirtualFile,
+  type VirtualFileHandle,
+} from './files/index.js';
+export {
   Environment,
 } from './environment.js';
 export {
@@ -32,6 +40,8 @@ export {
   type StackFrame,
   type FrameKind,
   type DebuggerHooks,
+  type StatementHookInfo,
+  type StatementHookResult,
 } from './frame.js';
 export {
   executeBuiltin,

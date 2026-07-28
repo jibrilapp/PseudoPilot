@@ -143,6 +143,8 @@ function stateLabel(state: ExecutionState): string {
   switch (state) {
     case 'running':
       return 'Running';
+    case 'paused':
+      return 'Paused';
     case 'waitingForInput':
       return 'Waiting for INPUT';
     case 'completed':

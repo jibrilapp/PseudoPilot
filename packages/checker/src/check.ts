@@ -35,6 +35,10 @@ import type {
   ScalarTypeName,
 } from './types.js';
 import { DEFAULT_MAX_CHECKER_DIAGNOSTICS } from './types.js';
+import {
+  checkEofExpression,
+  checkFileStatement,
+} from './file/check-files.js';
 
 const BUILTIN_SPAN = {
   start: { offset: 0, line: 1, column: 1 },
@@ -50,6 +54,11 @@ type Ctx = {
   functionReturn: PpType | null;
   /** True when inside a PROCEDURE (RETURN forbidden — parser also checks). */
   inProcedure: boolean;
+  /**
+   * Best-effort open-file map keyed by string-literal path.
+   * Files are process-global in Cambridge; not scoped to procedures.
+   */
+  openFiles: Map<string, import('./file/check-files.js').FileOpenState>;
 };
 
 function diag(
@@ -139,6 +148,7 @@ export function check(
     scope: global,
     functionReturn: null,
     inProcedure: false,
+    openFiles: new Map(),
   };
 
   // Seed Core builtins before user routines (soft-reserved names).
@@ -388,19 +398,18 @@ function checkStatement(ctx: Ctx, stmt: Statement): void {
     case 'ReadFileStatement':
     case 'WriteFileStatement':
     case 'CloseFileStatement':
-      // Parsed but not yet in Core semantic surface for execution — warn lightly.
-      if (stmt.kind === 'ReadFileStatement') {
-        checkAssignableTarget(ctx, stmt.target, stmt.span, 'READFILE');
-      }
-      if (
-        stmt.kind === 'OpenFileStatement' ||
-        stmt.kind === 'WriteFileStatement' ||
-        stmt.kind === 'CloseFileStatement'
-      ) {
-        inferExpr(ctx, stmt.fileName);
-      }
-      if (stmt.kind === 'WriteFileStatement') inferExpr(ctx, stmt.value);
-      if (stmt.kind === 'ReadFileStatement') inferExpr(ctx, stmt.fileName);
+      checkFileStatement(
+        {
+          openFiles: ctx.openFiles,
+          diag: (partial) => diag(ctx, partial),
+          inferExpr: (e) => inferExpr(ctx, e),
+          checkAssignableTarget: (target, span, via) =>
+            checkAssignableTarget(ctx, target, span, via),
+          formatType,
+          isAssignable,
+        },
+        stmt,
+      );
       return;
     default: {
       const _exhaustive: never = stmt;
@@ -512,6 +521,11 @@ function checkRoutineBody(
   const prevScope = ctx.scope;
   const prevRet = ctx.functionReturn;
   const prevProc = ctx.inProcedure;
+  // Isolate open-file tracking: routine bodies are checked at definition
+  // time, not call time. Mutating the process-global map here would pollute
+  // top-level analysis (false C_FILE_ALREADY_OPEN / missed C_FILE_NOT_OPEN).
+  const prevOpenFiles = ctx.openFiles;
+  ctx.openFiles = new Map();
   ctx.scope = child;
   ctx.inProcedure = kind === 'procedure';
   ctx.functionReturn =
@@ -519,31 +533,33 @@ function checkRoutineBody(
       ? scalar(stmt.returnType.name)
       : null;
 
-  for (const p of stmt.parameters) {
-    bindParameter(ctx, p);
+  try {
+    for (const p of stmt.parameters) {
+      bindParameter(ctx, p);
+    }
+
+    for (const s of stmt.body) {
+      checkStatement(ctx, s);
+    }
+    const sawReturn = bodyContainsReturn(stmt.body);
+
+    if (kind === 'function' && !sawReturn) {
+      diag(ctx, {
+        severity: 'error',
+        code: 'C_FUNC_NO_RETURN',
+        message: `FUNCTION '${stmt.name.name}' has no RETURN statement.`,
+        span: stmt.span,
+        help: 'Every FUNCTION must include at least one RETURN.',
+      });
+    }
+
+    flagUnreachableAfterReturn(ctx, stmt.body);
+  } finally {
+    ctx.scope = prevScope;
+    ctx.functionReturn = prevRet;
+    ctx.inProcedure = prevProc;
+    ctx.openFiles = prevOpenFiles;
   }
-
-  let sawReturn = false;
-  for (const s of stmt.body) {
-    checkStatement(ctx, s);
-  }
-  sawReturn = bodyContainsReturn(stmt.body);
-
-  if (kind === 'function' && !sawReturn) {
-    diag(ctx, {
-      severity: 'error',
-      code: 'C_FUNC_NO_RETURN',
-      message: `FUNCTION '${stmt.name.name}' has no RETURN statement.`,
-      span: stmt.span,
-      help: 'Every FUNCTION must include at least one RETURN.',
-    });
-  }
-
-  flagUnreachableAfterReturn(ctx, stmt.body);
-
-  ctx.scope = prevScope;
-  ctx.functionReturn = prevRet;
-  ctx.inProcedure = prevProc;
 }
 
 /**
@@ -1145,8 +1161,15 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
     case 'GroupingExpression':
       return inferExpr(ctx, expr.expression);
     case 'EofExpression':
-      inferExpr(ctx, expr.fileName);
-      return scalar('BOOLEAN');
+      return checkEofExpression(
+        {
+          openFiles: ctx.openFiles,
+          diag: (partial) => diag(ctx, partial),
+          inferExpr: (e) => inferExpr(ctx, e),
+        },
+        expr.fileName,
+        expr.span,
+      );
     default: {
       const _exhaustive: never = expr;
       return _exhaustive;

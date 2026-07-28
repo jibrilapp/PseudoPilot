@@ -29,7 +29,7 @@ async function run(
 describe('interpreter package', () => {
   it('exports identity', () => {
     expect(PACKAGE_NAME).toBe('@pseudopilot/interpreter');
-    expect(PACKAGE_VERSION).toBe('0.2.0');
+    expect(PACKAGE_VERSION).toBe('0.4.0');
   });
 
   it('implements every CORE_BUILTIN', () => {
@@ -541,6 +541,38 @@ ENDWHILE
     const result = await pending;
     expect(result.ok).toBe(false);
     expect(result.diagnostics.some((d) => d.code === 'R_CANCELLED')).toBe(true);
+  });
+
+  it('awaits async onBeforeStatement suspend/resume', async () => {
+    const host = new MemoryHost();
+    let resolvePause: (() => void) | null = null;
+    let paused = false;
+    const pending = runPseudocode(
+      `
+OUTPUT 1
+OUTPUT 2
+`,
+      {
+        host,
+        debugger: {
+          onBeforeStatement: async ({ step }) => {
+            if (step === 1) {
+              paused = true;
+              await new Promise<void>((r) => {
+                resolvePause = r;
+              });
+            }
+          },
+        },
+      },
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(paused).toBe(true);
+    expect(host.outputs).toEqual([]);
+    resolvePause!();
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    expect(host.outputs).toEqual(['1', '2']);
   });
 
   it('awaits async RuntimeHost INPUT', async () => {

@@ -31,13 +31,9 @@ export class Environment {
   /** Look up binding walking parents (Cambridge case-insensitive). */
   lookup(name: string): Binding | undefined {
     const key = identKey(name);
-    let env: Environment | null = this;
-    while (env) {
-      const b = env.bindings.get(key);
-      if (b) return b;
-      env = env.parent;
-    }
-    return undefined;
+    const local = this.bindings.get(key);
+    if (local) return local;
+    return this.parent?.lookup(name);
   }
 
   /** Assign to an existing variable/parameter (not CONSTANT). */
@@ -63,17 +59,14 @@ export class Environment {
   /** Flatten visible bindings (inner shadows outer). */
   visibleSnapshot(): Map<string, Binding> {
     const out = new Map<string, Binding>();
-    const chain: Environment[] = [];
-    let env: Environment | null = this;
-    while (env) {
-      chain.push(env);
-      env = env.parent;
-    }
-    for (let i = chain.length - 1; i >= 0; i--) {
-      for (const [k, b] of chain[i]!.bindings) {
-        out.set(k, b);
-      }
-    }
+    this.collectVisible(out);
     return out;
+  }
+
+  private collectVisible(out: Map<string, Binding>): void {
+    this.parent?.collectVisible(out);
+    for (const [k, b] of this.bindings) {
+      out.set(k, b);
+    }
   }
 }

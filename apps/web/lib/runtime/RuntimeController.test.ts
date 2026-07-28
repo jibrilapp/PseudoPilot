@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
   RuntimeController,
-  resetRuntimeControllerForTests,
   canTransition,
   MAX_CONSOLE_LINES,
   IdeRuntimeHost,
@@ -21,7 +20,7 @@ describe('RuntimeController', () => {
   let controller: RuntimeController;
 
   beforeEach(() => {
-    controller = resetRuntimeControllerForTests();
+    controller = new RuntimeController();
   });
 
   it('runs OUTPUT programs and updates console', async () => {
@@ -216,6 +215,31 @@ ENDWHILE
     expect(snap.consoleLines.some((l) => l.kind === 'out' && l.text === '1')).toBe(
       true,
     );
+  });
+
+  it('does not duplicate diagnostics as console error lines', async () => {
+    await controller.run(`OUTPUT UndeclaredName\n`);
+    const snap = controller.getSnapshot();
+    expect(snap.diagnostics.length).toBeGreaterThan(0);
+    expect(snap.consoleLines.filter((l) => l.kind === 'error')).toHaveLength(0);
+  });
+
+  it('Restart drains the prior interpreter before finishing the next run', async () => {
+    const first = controller.run(`
+WHILE TRUE
+ENDWHILE
+`);
+    await waitFor(() => controller.getSnapshot().state === 'running');
+    await controller.restart(`OUTPUT "after"`);
+    await first;
+    const snap = controller.getSnapshot();
+    expect(snap.state).toBe('completed');
+    expect(
+      snap.consoleLines.filter((l) => l.kind === 'info' && l.text === 'Program finished.'),
+    ).toHaveLength(1);
+    expect(snap.consoleLines.filter((l) => l.kind === 'out').map((l) => l.text)).toEqual([
+      'after',
+    ]);
   });
 
   it('caps console growth under burst OUTPUT', async () => {

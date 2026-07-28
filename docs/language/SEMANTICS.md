@@ -66,6 +66,10 @@ Arrays: `ARRAY[…] OF <scalar>` (dimensionality checked on indexing)
 
 `INPUT` / `READFILE` require an assignable target (declared, not CONSTANT) but do **not** enforce a source type (Cambridge I/O is untyped at the language level).
 
+### Text files
+
+Checker tracks open state for **string-literal** paths (`C_FILE_*`). Dynamic path variables are type-checked only; open/mode errors surface at runtime (`R_FILE_*`). Control-flow insensitive (IF branches are not merged).
+
 ### Builtins (Core)
 
 Signatures live in `language-core` `CORE_BUILTINS` (types only). Python emission lives in `translator/src/builtins/emit.ts`. Checker validates arity/types (`C_BUILTIN_ARG_*`).
@@ -101,6 +105,8 @@ Operands must be STRING or CHAR (`C_CONCAT_TYPE`). Result is STRING. Same preced
 | `C_FOR_VAR_TYPE` / `C_FOR_BOUND_TYPE` | FOR typing |
 | `C_BUILTIN_ARG_COUNT` / `C_BUILTIN_ARG_TYPE` | Builtin call mismatch |
 | `C_CONCAT_TYPE` | `&` operand not STRING/CHAR |
+| `C_FILE_PATH_TYPE` | File path not STRING/CHAR |
+| `C_FILE_NOT_OPEN` / `C_FILE_ALREADY_OPEN` / `C_FILE_MODE` | Open-state (literal paths, best-effort) |
 | `C_COND_TYPE` / `C_BINARY_TYPE` / `C_UNARY_TYPE` / `C_COMPARE_TYPE` | Expression typing |
 | `C_CASE_LABEL_TYPE` / `C_CASE_RANGE_TYPE` | CASE (warnings / errors) |
 | `C_UNREACHABLE` | Statement after RETURN (warning) |
@@ -133,7 +139,7 @@ const { ok, diagnostics, globalSymbols } = check(ast);
 - No path-sensitive “all paths return” analysis (only “any RETURN present”).
 - Unreachable-after-RETURN is **same-block** only (including nested IF/loop/CASE bodies); does not prove a branch always returns.
 - No definite-assignment / use-before-init beyond undeclared names.
-- File I/O lightly touched (target checks only).
+- File I/O: open-state for literal paths (`C_FILE_*`), READFILE assignability to STRING, path types.
 - No BYREF / DATE / OOP / TYPE records.
 - Expression typing is best-effort; some operator combinations may under-report.
 - NEXT/FOR variable mismatch and CASE duplicate labels remain **parser** structural diagnostics (`E_*`).

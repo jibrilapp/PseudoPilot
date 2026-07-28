@@ -362,22 +362,64 @@ UNTIL
     expect(result.diagnostics.length).toBeGreaterThan(0);
   });
 
+  it('translates OPENFILE / WRITEFILE / READFILE / CLOSEFILE / EOF', () => {
+    const result = translatePseudocodeToPython(`
+OPENFILE "f.txt" FOR WRITE
+WRITEFILE "f.txt", "hi"
+CLOSEFILE "f.txt"
+OPENFILE "f.txt" FOR READ
+DECLARE Line : STRING
+WHILE NOT EOF("f.txt")
+  READFILE "f.txt", Line
+  OUTPUT Line
+ENDWHILE
+CLOSEFILE "f.txt"
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('open("f.txt", "w")');
+    expect(result.code).toContain('.write(');
+    expect(result.code).toContain('.readline()');
+    expect(result.code).toContain('_pp_eof(');
+    expect(result.code).toContain('.close()');
+  });
+
+  it('round-trips file I/O through Python', () => {
+    const src = `
+OPENFILE "f.txt" FOR WRITE
+WRITEFILE "f.txt", "hi"
+CLOSEFILE "f.txt"
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('OPENFILE "f.txt" FOR WRITE');
+    expect(norm(back.code)).toContain('WRITEFILE "f.txt", "hi"');
+    expect(norm(back.code)).toContain('CLOSEFILE "f.txt"');
+  });
+
+  it('round-trips dynamic-path file I/O via _pp_files', () => {
+    const src = `
+DECLARE Path : STRING
+Path ← "dyn.txt"
+OPENFILE Path FOR WRITE
+WRITEFILE Path, "x"
+CLOSEFILE Path
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    expect(py.code).toContain('_pp_files[');
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('OPENFILE Path FOR WRITE');
+    expect(norm(back.code)).toContain('WRITEFILE Path, "x"');
+    expect(norm(back.code)).toContain('CLOSEFILE Path');
+  });
+
   it('translates DECLARE scalars', () => {
     const result = translatePseudocodeToPython(`DECLARE Count : INTEGER\n`);
     expect(result.ok).toBe(true);
     expect(norm(result.code)).toBe('Count: int\n');
-  });
-
-  it('still emits partial code when a later unsupported stmt fails', () => {
-    const result = translatePseudocodeToPython(`
-X ← 1
-OPENFILE "f.txt" FOR READ
-`);
-    expect(result.ok).toBe(false);
-    expect(result.code).toContain('X = 1');
-    expect(
-      result.diagnostics.some((d) => d.code === 'T_UNSUPPORTED_FILE'),
-    ).toBe(true);
   });
 
   it('translates <> and unary minus', () => {

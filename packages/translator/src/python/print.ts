@@ -22,8 +22,42 @@ import {
 } from '../rules/operators.js';
 import { tryPrintBuiltinPython } from '../builtins/emit.js';
 import { printTrivia } from '../trivia/attach.js';
+import {
+  PP_EOF_HELPER,
+  PP_FILES_INIT,
+  fileHandleName,
+  programUsesEof,
+  programUsesFiles,
+  pythonMode,
+} from '../file/mapping.js';
 
 const INDENT = '    ';
+
+type FilePrintCtx = {
+  /** literal path → Python handle identifier */
+  readonly handles: Map<string, string>;
+  needsDict: boolean;
+};
+
+/** Active while {@link printPython} runs — avoids threading ctx through every expr. */
+let activeFileCtx: FilePrintCtx | null = null;
+
+function fileRef(pathExpr: IrExpression): string {
+  const ctx = activeFileCtx;
+  if (!ctx) {
+    return `_pp_files[${printExpr(pathExpr, 0)}]`;
+  }
+  if (pathExpr.kind === 'IrStringLiteral') {
+    let h = ctx.handles.get(pathExpr.value);
+    if (!h) {
+      h = fileHandleName(pathExpr.value);
+      ctx.handles.set(pathExpr.value, h);
+    }
+    return h;
+  }
+  ctx.needsDict = true;
+  return `_pp_files[${printExpr(pathExpr, 0)}]`;
+}
 
 function isNegativeLiteral(expr: IrExpression | null): boolean {
   if (!expr) return false;
@@ -121,6 +155,8 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       if (builtin !== null) return builtin;
       return `${expr.callee}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
     }
+    case 'IrEofExpression':
+      return `_pp_eof(${fileRef(expr.fileName)})`;
     case 'IrGroupingExpression':
       return `(${printExpr(expr.expression, 0)})`;
     case 'IrUnaryExpression':
@@ -294,6 +330,32 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     case 'IrBreakStatement':
       lines.push(`${p}break`);
       break;
+    case 'IrOpenFileStatement': {
+      const handle = fileRef(stmt.fileName);
+      const path = printExpr(stmt.fileName, 0);
+      const mode = pythonMode(stmt.mode);
+      lines.push(`${p}${handle} = open(${path}, "${mode}")`);
+      break;
+    }
+    case 'IrReadFileStatement': {
+      const handle = fileRef(stmt.fileName);
+      lines.push(
+        `${p}${printTarget(stmt.target)} = ${handle}.readline().rstrip("\\n")`,
+      );
+      break;
+    }
+    case 'IrWriteFileStatement': {
+      const handle = fileRef(stmt.fileName);
+      lines.push(
+        `${p}${handle}.write(str(${printExpr(stmt.value, 0)}) + "\\n")`,
+      );
+      break;
+    }
+    case 'IrCloseFileStatement': {
+      const handle = fileRef(stmt.fileName);
+      lines.push(`${p}${handle}.close()`);
+      break;
+    }
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
@@ -334,16 +396,73 @@ function finalizeOutput(lines: string[]): string {
 }
 
 export function printPython(program: IrProgram): string {
-  const lines: string[] = [...printTrivia(program.leadingTrivia, 'hash')];
-  if (irUsesRand(program)) {
-    lines.push('import random');
-    lines.push('');
+  const fileCtx: FilePrintCtx = { handles: new Map(), needsDict: false };
+  activeFileCtx = fileCtx;
+  try {
+    // Pre-walk file ops so handle names are stable before EOF exprs print.
+    if (programUsesFiles(program)) {
+      seedFileHandles(program.body, fileCtx);
+    }
+    const lines: string[] = [...printTrivia(program.leadingTrivia, 'hash')];
+    if (irUsesRand(program)) {
+      lines.push('import random');
+      lines.push('');
+    }
+    if (programUsesFiles(program)) {
+      if (fileCtx.needsDict) {
+        lines.push(PP_FILES_INIT);
+      }
+      if (programUsesEof(program)) {
+        lines.push(PP_EOF_HELPER);
+        lines.push('');
+      } else if (fileCtx.needsDict) {
+        lines.push('');
+      }
+    }
+    for (const stmt of program.body) {
+      lines.push(...printStatement(stmt, 0));
+    }
+    lines.push(...printTrivia(program.trailingTrivia, 'hash'));
+    return finalizeOutput(lines);
+  } finally {
+    activeFileCtx = null;
   }
-  for (const stmt of program.body) {
-    lines.push(...printStatement(stmt, 0));
+}
+
+function seedFileHandles(
+  stmts: readonly IrStatement[],
+  ctx: FilePrintCtx,
+): void {
+  for (const stmt of stmts) {
+    if (
+      stmt.kind === 'IrOpenFileStatement' ||
+      stmt.kind === 'IrReadFileStatement' ||
+      stmt.kind === 'IrWriteFileStatement' ||
+      stmt.kind === 'IrCloseFileStatement'
+    ) {
+      activeFileCtx = ctx;
+      fileRef(stmt.fileName);
+    }
+    if (stmt.kind === 'IrIfStatement') {
+      seedFileHandles(stmt.consequent, ctx);
+      for (const c of stmt.elseIfClauses) seedFileHandles(c.consequent, ctx);
+      if (stmt.alternate) seedFileHandles(stmt.alternate, ctx);
+    } else if (
+      stmt.kind === 'IrWhileStatement' ||
+      stmt.kind === 'IrRepeatStatement' ||
+      stmt.kind === 'IrForStatement'
+    ) {
+      seedFileHandles(stmt.body, ctx);
+    } else if (stmt.kind === 'IrCaseStatement') {
+      for (const arm of stmt.arms) seedFileHandles(arm.body, ctx);
+      if (stmt.otherwise) seedFileHandles(stmt.otherwise, ctx);
+    } else if (
+      stmt.kind === 'IrProcedureDeclaration' ||
+      stmt.kind === 'IrFunctionDeclaration'
+    ) {
+      seedFileHandles(stmt.body, ctx);
+    }
   }
-  lines.push(...printTrivia(program.trailingTrivia, 'hash'));
-  return finalizeOutput(lines);
 }
 
 function irUsesRand(program: IrProgram): boolean {

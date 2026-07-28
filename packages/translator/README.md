@@ -2,15 +2,16 @@
 
 Bidirectional **Cambridge 9618 pseudocode ↔ Python** translation via a canonical IR.
 
-**Version:** `0.11.0` · **Subset id:** `v11-assign-io-expr-control-procedure-function-declare-check-builtins`
+**Version:** `0.12.0` · **Subset id:** `v12-assign-io-expr-control-procedure-function-declare-check-builtins-files`
 
 ## Supported subset (current)
 
 | Supported | Not supported |
 | --- | --- |
 | Assignment (`←` / `<-` / Python `=`) including `A[i]` / `A[i, j]` | BYREF / BYVAL |
-| `INPUT` / `OUTPUT` (incl. indexed targets) | File I/O |
-| Control flow, PROCEDURE/FUNCTION, DECLARE/CONSTANT | DATE / OOP / Extended |
+| `INPUT` / `OUTPUT` (incl. indexed targets) | DATE / OOP / Extended |
+| Control flow, PROCEDURE/FUNCTION, DECLARE/CONSTANT | RANDOM files / REWRITE |
+| **Text file I/O** (`OPENFILE` / `READFILE` / `WRITEFILE` / `CLOSEFILE` / `EOF`) | |
 | **Semantic check** via `@pseudopilot/checker` | |
 | **Builtins:** LENGTH, LEFT, RIGHT, MID, LCASE, UCASE, INT, RAND | |
 | **`&` string concatenation** | |

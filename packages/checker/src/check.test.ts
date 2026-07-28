@@ -387,4 +387,95 @@ NEXT P
     expect(result.globalSymbols.has('Count')).toBe(false);
     expect(lookupSymbol(result.globalSymbols, 'COUNT')?.name).toBe('Count');
   });
+
+  it('accepts a well-formed file I/O sequence', () => {
+    const { result } = checkSource(`
+OPENFILE "f.txt" FOR WRITE
+WRITEFILE "f.txt", "hi"
+CLOSEFILE "f.txt"
+OPENFILE "f.txt" FOR READ
+DECLARE Line : STRING
+WHILE NOT EOF("f.txt")
+  READFILE "f.txt", Line
+ENDWHILE
+CLOSEFILE "f.txt"
+`);
+    expect(result.ok).toBe(true);
+  });
+
+  it('flags READFILE / CLOSEFILE / EOF on unopened literal paths', () => {
+    expect(
+      codes(`
+DECLARE L : STRING
+READFILE "f.txt", L
+`),
+    ).toContain('C_FILE_NOT_OPEN');
+    expect(codes(`CLOSEFILE "f.txt"\n`)).toContain('C_FILE_NOT_OPEN');
+    expect(codes(`OUTPUT EOF("f.txt")\n`)).toContain('C_FILE_NOT_OPEN');
+  });
+
+  it('flags double open and mode mismatches', () => {
+    expect(
+      codes(`
+OPENFILE "f.txt" FOR WRITE
+OPENFILE "f.txt" FOR READ
+`),
+    ).toContain('C_FILE_ALREADY_OPEN');
+    expect(
+      codes(`
+OPENFILE "f.txt" FOR WRITE
+DECLARE L : STRING
+READFILE "f.txt", L
+`),
+    ).toContain('C_FILE_MODE');
+    expect(
+      codes(`
+OPENFILE "f.txt" FOR READ
+WRITEFILE "f.txt", "x"
+`),
+    ).toContain('C_FILE_MODE');
+  });
+
+  it('flags non-STRING file paths', () => {
+    expect(
+      codes(`
+OPENFILE 1 FOR READ
+`),
+    ).toContain('C_FILE_PATH_TYPE');
+  });
+
+  it('does not pollute top-level openFiles from PROCEDURE body analysis', () => {
+    // Opening inside a procedure at definition time must not mark the file open
+    // for subsequent top-level checks.
+    expect(
+      codes(`
+PROCEDURE OpenIt
+  OPENFILE "f.txt" FOR READ
+ENDPROCEDURE
+READFILE "f.txt", L
+`),
+    ).toContain('C_FILE_NOT_OPEN');
+    expect(
+      codes(`
+PROCEDURE OpenIt
+  OPENFILE "f.txt" FOR READ
+ENDPROCEDURE
+OPENFILE "f.txt" FOR READ
+DECLARE L : STRING
+READFILE "f.txt", L
+CLOSEFILE "f.txt"
+`),
+    ).not.toContain('C_FILE_ALREADY_OPEN');
+  });
+
+  it('rejects READFILE into a non-STRING target', () => {
+    expect(
+      codes(`
+DECLARE N : INTEGER
+OPENFILE "f.txt" FOR READ
+READFILE "f.txt", N
+CLOSEFILE "f.txt"
+`),
+    ).toContain('C_ASSIGN_TYPE');
+  });
 });

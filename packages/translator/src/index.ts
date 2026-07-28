@@ -5,17 +5,17 @@
  * REPEAT/UNTIL, FOR/TO/STEP/NEXT, CASE OF/OTHERWISE/ENDCASE,
  * PROCEDURE/CALL, FUNCTION/RETURNS/RETURN, expression calls, DECLARE,
  * CONSTANT, literals, variables, arithmetic / relational / logical
- * expressions, CHAR, array indexes.
- * Not supported: BYREF, files, builtins.
+ * expressions, CHAR, array indexes, Core builtins, text file I/O.
+ * Not supported: BYREF, RANDOM files.
  *
  * @see docs/language/TRANSLATION.md
  * @see docs/adr/0006-canonical-ir-translation.md
  */
 
 export const PACKAGE_NAME = '@pseudopilot/translator' as const;
-export const PACKAGE_VERSION = '0.11.0' as const;
+export const PACKAGE_VERSION = '0.12.0' as const;
 export const TRANSLATOR_SUBSET =
-  'v11-assign-io-expr-control-procedure-function-declare-check-builtins' as const;
+  'v12-assign-io-expr-control-procedure-function-declare-check-builtins-files' as const;
 
 export {
   translatePseudocodeToPython,

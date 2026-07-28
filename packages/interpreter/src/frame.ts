@@ -65,17 +65,29 @@ export class CallStack {
   }
 }
 
+export type StatementHookInfo = {
+  readonly span: SourceSpan;
+  readonly frame: StackFrame;
+  readonly step: number;
+  /** Call-stack depth including the global frame (≥ 1 while running). */
+  readonly depth: number;
+};
+
+export type StatementHookResult = void | 'continue' | 'pause';
+
 /** Optional debugger / IDE hooks (no-op unless provided). */
 export type DebuggerHooks = {
   /**
-   * Called before executing a statement.
-   * Future: return 'pause' for breakpoints / stepping.
+   * Called before executing a statement (and on loop-header re-ticks).
+   *
+   * May return a Promise so the IDE can suspend (breakpoints / stepping)
+   * without aborting the run. Prefer awaiting a resume gate inside the hook;
+   * returning `'pause'` synchronously still aborts with `R_DEBUG_PAUSE`
+   * (legacy / tests).
    */
-  onBeforeStatement?: (info: {
-    span: SourceSpan;
-    frame: StackFrame;
-    step: number;
-  }) => void | 'continue' | 'pause';
+  onBeforeStatement?: (
+    info: StatementHookInfo,
+  ) => StatementHookResult | Promise<StatementHookResult>;
 
   onEnterFrame?: (frame: StackFrame) => void;
   onExitFrame?: (frame: StackFrame, returned?: RuntimeValue) => void;

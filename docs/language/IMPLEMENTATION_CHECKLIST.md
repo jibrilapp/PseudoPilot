@@ -131,7 +131,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| `EOF` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `EOF` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `LENGTH` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `LEFT` | ✅ | ✅ | ✅ | ✅ | ✅ | PseudoPilot Core (exam-insert style) |
 | `RIGHT` / `MID` | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -145,8 +145,8 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| `OPENFILE` READ/WRITE/APPEND | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `READFILE` / `WRITEFILE` / `CLOSEFILE` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `OPENFILE` READ/WRITE/APPEND | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `READFILE` / `WRITEFILE` / `CLOSEFILE` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Sandboxed filesystem | — | — | ❌ | — | — |
 
 ---
@@ -165,15 +165,16 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 
 | Feature | Status |
 | --- | --- |
-| Pseudocode ↔ Python translator | 🟡 | Control flow + routines + DECLARE/CONSTANT + check + **builtins/`&`**; no BYREF/files |
+| Pseudocode ↔ Python translator | 🟡 | Control flow + routines + DECLARE/CONSTANT + check + builtins/`&` + **text files**; no BYREF |
 | **Cambridge interpreter** | ✅ | AST execution via `@pseudopilot/interpreter` — see [`INTERPRETER.md`](./INTERPRETER.md) |
 | **Web IDE Run integration** | ✅ | `apps/web/lib/runtime` — Run/Stop/Restart, Console INPUT, Variables |
+| **Web IDE Debugger** | ✅ | `apps/web/lib/debugger` — breakpoints, pause/continue, step into/over/out |
 | Official language specification docs | ✅ |
 | Complete EBNF document | ✅ |
 | Parser coverage checklist | ✅ |
 | **Semantics document** | ✅ | [`SEMANTICS.md`](./SEMANTICS.md) |
 | IDE Monaco binding to parser | ❌ |
-| Debugger UI (breakpoints / step) | ❌ | Hooks prepared in interpreter + RuntimeController |
+| Debugger UI (breakpoints / step) | ✅ | See [`apps/web/lib/debugger/README.md`](../../apps/web/lib/debugger/README.md) |
 | AI coach grounded on this dialect | ❌ |
 
 ---
@@ -188,7 +189,8 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 6. ❌ `BYVAL` / `BYREF`
 7. ✅ Semantic checker (scopes, types, calls, builtins) — see [`SEMANTICS.md`](./SEMANTICS.md)
 8. ✅ Interpreter (Core AST execution) — see [`INTERPRETER.md`](./INTERPRETER.md)
-9. 🟡 Translator (V11 subset ↔ Python; Core incomplete — no BYREF/files)
-10. ❌ Extended TYPE / files / OOP / sandbox
+9. 🟡 Translator (V12 subset ↔ Python; Core incomplete — no BYREF)
+10. ❌ Extended TYPE / RANDOM files / OOP / OS sandbox
 
-**Gate for “run in IDE” milestone:** ✅ `RuntimeController` + Run/Stop/INPUT wired in `apps/web`.
+**Gate for “run in IDE” milestone:** ✅ `RuntimeController` + Run/Stop/INPUT wired in `apps/web`.  
+**Gate for “debugger” milestone:** ✅ `DebuggerSession` + breakpoints / stepping wired in `apps/web`.

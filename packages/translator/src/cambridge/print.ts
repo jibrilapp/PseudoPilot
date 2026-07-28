@@ -50,6 +50,8 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return printTarget(expr);
     case 'IrCallExpression':
       return `${expr.callee}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
+    case 'IrEofExpression':
+      return `EOF(${printExpr(expr.fileName, 0)})`;
     case 'IrGroupingExpression':
       return `(${printExpr(expr.expression, 0)})`;
     case 'IrUnaryExpression':
@@ -224,6 +226,24 @@ function printStatement(
       lines.push(`${p}RETURN ${printExpr(stmt.value, 0)}`);
       break;
     case 'IrBreakStatement':
+      break;
+    case 'IrOpenFileStatement':
+      lines.push(
+        `${p}OPENFILE ${printExpr(stmt.fileName, 0)} FOR ${stmt.mode}`,
+      );
+      break;
+    case 'IrReadFileStatement':
+      lines.push(
+        `${p}READFILE ${printExpr(stmt.fileName, 0)}, ${printTarget(stmt.target)}`,
+      );
+      break;
+    case 'IrWriteFileStatement':
+      lines.push(
+        `${p}WRITEFILE ${printExpr(stmt.fileName, 0)}, ${printExpr(stmt.value, 0)}`,
+      );
+      break;
+    case 'IrCloseFileStatement':
+      lines.push(`${p}CLOSEFILE ${printExpr(stmt.fileName, 0)}`);
       break;
     default: {
       const _exhaustive: never = stmt;

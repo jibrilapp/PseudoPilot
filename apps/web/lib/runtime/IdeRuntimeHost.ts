@@ -1,4 +1,7 @@
-import type { RuntimeHost } from '@pseudopilot/interpreter';
+import {
+  VirtualFileSystem,
+  type RuntimeHost,
+} from '@pseudopilot/interpreter';
 
 export type InputRequestHandlers = {
   readonly onWaiting: () => void;
@@ -8,8 +11,10 @@ export type InputRequestHandlers = {
 /**
  * Browser RuntimeHost: OUTPUT is sync into the controller;
  * INPUT returns a Promise resolved by {@link IdeRuntimeHost.submitInput}.
+ * File I/O uses an in-tab {@link VirtualFileSystem} (never the OS disk).
  */
 export class IdeRuntimeHost implements RuntimeHost {
+  readonly files = new VirtualFileSystem();
   private pending:
     | {
         resolve: (value: string) => void;
@@ -26,7 +31,8 @@ export class IdeRuntimeHost implements RuntimeHost {
     this.onOutput(line);
   }
 
-  readInput(_prompt?: string): Promise<string> {
+  readInput(prompt?: string): Promise<string> {
+    void prompt;
     // Interpreter is single-threaded; overlapping INPUT would deadlock the UI
     // (second wait with no way to resolve the first). Reject the stale waiter.
     if (this.pending) {

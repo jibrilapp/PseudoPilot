@@ -1,7 +1,7 @@
 # Translation Engine — Architecture (V1)
 
 **Package:** `@pseudopilot/translator`  
-**Dialect version:** Core subset V11 (V10 + **builtins** + **`&`**)  
+**Dialect version:** Core subset V12 (V11 + **text file I/O**)  
 **Status:** Builtins + `&` milestone complete — signatures in `language-core`, Python emit in `translator/builtins/emit.ts`, check + bidirectional translate. Semantic checker runs after parse, before IR lowering.
 
 ---
@@ -46,7 +46,7 @@ PseudoPilot does **not** translate by string rewrite. The engine is a classic mu
 
 - Deterministic: same input → same IR → same output (stable formatting).
 - Pure library: no I/O, network, or AI.
-- Fail loudly on unsupported constructs (BYREF, files, …) with structured diagnostics — never invent control flow.
+- Fail loudly on unsupported constructs (BYREF, RANDOM files, …) with structured diagnostics — never invent control flow.
 - **Semantic check** (default on): `@pseudopilot/checker` validates scopes/types/builtins before lowering. Disable with `semanticCheck: false` only for IR experiments.
 - **Builtins:** signatures in `language-core` `CORE_BUILTINS`; Python emission in `translator/src/builtins/emit.ts` (backend-owned, not in language-core).
 - New languages plug in as **frontend + printer** only; IR and rule registries stay shared.
@@ -152,7 +152,7 @@ Trivia is stored on IR nodes, not re-derived from target language, so Cambridge 
 | `A[i] ← expr` / `A[i, j] ← expr` | `IrAssignment` + `IrIndexExpression` | `A[i] = expr` / `A[i][j] = expr` |
 | `INPUT x` / `INPUT A[i]` | `IrInput` | `x = input()` / `A[i] = input()` |
 | `OUTPUT a, b` | `IrOutput` | `print(a, b)` |
-| `DIV` / `MOD` | `//` / `%` | `//` / `%` |
+| `DIV` / `MOD` | `//` / `%` | `//` / `%` (**note:** Python floors on negatives; the AST interpreter truncates toward zero — known Cambridge ambiguity) |
 | `=` `<>` … | `==` `!=` … | `==` `!=` … |
 | `AND` `OR` `NOT` | `and` `or` `not` | `and` `or` `not` |
 | `TRUE`/`FALSE` | bool | `True`/`False` |
@@ -187,4 +187,22 @@ Trivia is stored on IR nodes, not re-derived from target language, so Cambridge 
 
 **Builtin emission (Python):** `RIGHT` uses `s[-(n):]` and `RAND` uses `random.random() * (x)` so additive count expressions keep correct precedence. `MID` uses parenthesized `s[(start)-1:(start)-1+(length)]`. Reverse maps those forms back; `len(x) + …` stays numeric `+` (LENGTH is not stringy).
 
-**Explicitly out of scope for this subset:** BYREF, file I/O, DATE literals, typed INPUT coercion, ASC/CHR and other exam-insert-only builtins (except PseudoPilot Core `LEFT`).
+**Explicitly out of scope for this subset:** BYREF, RANDOM file I/O, DATE literals, typed INPUT coercion, ASC/CHR and other exam-insert-only builtins (except PseudoPilot Core `LEFT`).
+
+### Text file I/O (V12)
+
+Cambridge → Python (literal paths):
+
+| Cambridge | Python |
+| --- | --- |
+| `OPENFILE "f.txt" FOR READ` | `_f_f_txt = open("f.txt", "r")` |
+| `OPENFILE … FOR WRITE` | `open(..., "w")` |
+| `OPENFILE … FOR APPEND` | `open(..., "a")` |
+| `READFILE path, target` | `target = handle.readline().rstrip("\n")` |
+| `WRITEFILE path, value` | `handle.write(str(value) + "\n")` |
+| `CLOSEFILE path` | `handle.close()` |
+| `EOF(path)` | `_pp_eof(handle)` using tell/read(1)/seek |
+
+Dynamic paths use `_pp_files[path] = open(...)`. Reverse translation lifts `open` / `readline` / `write` / `close` patterns back to Cambridge where practical.
+
+**Fidelity notes:** Python file objects are not Cambridge path-handles; EOF via tell/seek is a documented teaching mapping, not a byte-identical Cambridge runtime.

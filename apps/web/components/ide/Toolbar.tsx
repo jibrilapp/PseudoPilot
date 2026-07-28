@@ -1,6 +1,17 @@
 'use client';
 
-import { IconPanel, IconPlay, IconSidebar, IconStop, IconTerminal } from './Icons';
+import {
+  IconContinue,
+  IconPanel,
+  IconPause,
+  IconPlay,
+  IconSidebar,
+  IconStepInto,
+  IconStepOut,
+  IconStepOver,
+  IconStop,
+  IconTerminal,
+} from './Icons';
 import type { ExecutionState } from '@/lib/runtime';
 import { cn } from '@/lib/cn';
 
@@ -13,9 +24,17 @@ type ToolbarProps = {
   onToggleConsole: () => void;
   executionState: ExecutionState;
   isBusy: boolean;
+  canPause: boolean;
+  canContinue: boolean;
+  canStep: boolean;
   onRun: () => void;
   onStop: () => void;
   onRestart: () => void;
+  onPause: () => void;
+  onContinue: () => void;
+  onStepInto: () => void;
+  onStepOver: () => void;
+  onStepOut: () => void;
 };
 
 export function Toolbar({
@@ -27,9 +46,17 @@ export function Toolbar({
   onToggleConsole,
   executionState,
   isBusy,
+  canPause,
+  canContinue,
+  canStep,
   onRun,
   onStop,
   onRestart,
+  onPause,
+  onContinue,
+  onStepInto,
+  onStepOver,
+  onStepOut,
 }: ToolbarProps) {
   return (
     <header className="relative z-20 flex h-11 shrink-0 items-center gap-4 border-b border-pp-line bg-pp-panel/90 px-3 backdrop-blur-xl md:px-4">
@@ -75,6 +102,54 @@ export function Toolbar({
           aria-pressed={rightOpen}
         >
           <IconPanel />
+        </button>
+
+        <span className="mx-1.5 hidden h-4 w-px bg-pp-lineStrong sm:block" />
+
+        <button
+          type="button"
+          className="pp-icon-btn"
+          title="Continue"
+          disabled={!canContinue}
+          onClick={onContinue}
+        >
+          <IconContinue />
+        </button>
+        <button
+          type="button"
+          className="pp-icon-btn"
+          title="Pause"
+          disabled={!canPause}
+          onClick={onPause}
+        >
+          <IconPause />
+        </button>
+        <button
+          type="button"
+          className="pp-icon-btn"
+          title="Step Into"
+          disabled={!canStep && isBusy}
+          onClick={onStepInto}
+        >
+          <IconStepInto />
+        </button>
+        <button
+          type="button"
+          className="pp-icon-btn"
+          title="Step Over"
+          disabled={!canStep}
+          onClick={onStepOver}
+        >
+          <IconStepOver />
+        </button>
+        <button
+          type="button"
+          className="pp-icon-btn"
+          title="Step Out"
+          disabled={!canStep}
+          onClick={onStepOut}
+        >
+          <IconStepOut />
         </button>
 
         <span className="mx-1.5 hidden h-4 w-px bg-pp-lineStrong sm:block" />

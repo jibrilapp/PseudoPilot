@@ -8,11 +8,30 @@ with the usual **0.x** caveat: breaking changes may land in minor bumps until 1.
 
 ## [Unreleased]
 
+### Fixed (RC audit)
+
+- Checker: isolate `openFiles` when analysing PROCEDURE/FUNCTION bodies (no false `C_FILE_*` at top level)
+- Checker: `READFILE` requires a STRING-assignable target (`C_ASSIGN_TYPE`)
+- Debugger: Step Over / Step Out still stop on enabled breakpoints
+- IDE: Restart awaits the prior interpreter; diagnostics no longer double-printed in the console
+- IDE: editable editor uses one scroll container so gutter breakpoints stay aligned
+- Translator: reverse-lift dynamic `_pp_files[path]` open/read/write/close; parse `_pp_files[p].write/close()`
+
+### Added
+
+- **Cambridge text file I/O** across checker / interpreter (VirtualFileSystem) / translator (forward + reverse)
+- IDE `IdeRuntimeHost.files` in-tab VFS (never OS disk)
+
+### Added (earlier)
+
+- **IDE debugger** (`apps/web/lib/debugger`): line breakpoints, pause/continue, step into/over/out, call stack, current-line highlight
+- Interpreter **async debugger hooks** (`onBeforeStatement` may await; exposes `depth`) — `@pseudopilot/interpreter` `0.3.0`
+
 ### Fixed
 
 - **IDE runtime review:** stable `useSyncExternalStore` snapshots; Stop/Restart bump session generation before abort (no stale `R_CANCELLED` / OUTPUT races); console soft-cap; INPUT cancel + restart regression tests
 
-### Added
+### Added (earlier)
 
 - **Web IDE Run integration** (`apps/web/lib/runtime`): Run / Stop / Restart, Console INPUT/OUTPUT, Variables panel via `RuntimeController`
 - Interpreter **async RuntimeHost** + `AbortSignal` cancellation (`R_CANCELLED`)
@@ -20,8 +39,10 @@ with the usual **0.x** caveat: breaking changes may land in minor bumps until 1.
 
 ### Changed
 
-- `@pseudopilot/interpreter` `0.2.0` — `runPseudocode` / `interpret` are async
-- Architecture: IDE consumes interpreter through controller only (not React → interpreter)
+- `@pseudopilot/interpreter` `0.4.0` — virtual text files
+- `@pseudopilot/checker` `0.11.0` — `C_FILE_*` diagnostics
+- `@pseudopilot/translator` `0.12.0` — file IR + Python mapping
+- Architecture: IDE consumes interpreter through controller + debugger session only
 ## [0.10.0] — semantic checker
 
 ### Added
