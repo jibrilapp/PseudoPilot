@@ -1,9 +1,23 @@
 {
   "name": "@pseudopilot/interpreter",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
-  "description": "Execution engine (tree-walk / VM) with debugger hooks and instruction budgets.",
+  "description": "Cambridge 9618 AST interpreter: execute validated pseudocode with RuntimeHost I/O, call stack, and debugger hooks.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jibrilapp/PseudoPilot.git",
+    "directory": "packages/interpreter"
+  },
+  "bugs": {
+    "url": "https://github.com/jibrilapp/PseudoPilot/issues"
+  },
+  "homepage": "https://github.com/jibrilapp/PseudoPilot/tree/main/packages/interpreter",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -14,10 +28,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "vitest run",
+    "test": "pnpm run build && vitest run",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist .turbo coverage"
+  },
+  "dependencies": {
+    "@pseudopilot/checker": "workspace:*",
+    "@pseudopilot/language-core": "workspace:*"
   },
   "devDependencies": {
     "@pseudopilot/eslint-config": "workspace:*",

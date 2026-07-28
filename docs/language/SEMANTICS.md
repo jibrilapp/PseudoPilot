@@ -137,16 +137,15 @@ const { ok, diagnostics, globalSymbols } = check(ast);
 - No BYREF / DATE / OOP / TYPE records.
 - Expression typing is best-effort; some operator combinations may under-report.
 - NEXT/FOR variable mismatch and CASE duplicate labels remain **parser** structural diagnostics (`E_*`).
-- No runtime evaluation of builtins (interpreter TBD); checker/translator only.
-- `RIGHT(S, 0)` Python mapping `S[-(0):]` equals `S[0:]` (whole string), not Cambridge empty string — expression-level `0` is not special-cased.
-- Reverse Python→Cambridge: bare identifier `+` is not rewritten to `&` (no types on reverse); only stringy literals / string builtins / existing `&` chains.
+- Runtime execution lives in `@pseudopilot/interpreter` (see [`INTERPRETER.md`](./INTERPRETER.md)); checker does not evaluate code.
+- `RIGHT(S, 0)` Python mapping differs from interpreter (`""` at runtime) — documented in interpreter + translation docs.
 
 ---
 
 ## 7. Future work
 
-- Reuse `globalSymbols` + per-routine scopes in the interpreter
-- Debugger / variables panel snapshots
+- Reuse `globalSymbols` + per-routine scopes in the debugger UI
+- Wire interpreter into `apps/web` via `RuntimeHost`
 - Stricter definite assignment
 - Exam-insert builtin packs (ASC/CHR/…) extending the registry
-- AI coach explanations keyed by `C_*` codes
+- AI coach explanations keyed by `C_*` / `R_*` codes

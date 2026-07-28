@@ -5,12 +5,15 @@ PseudoPilot is a **modular monorepo**. Deployables live under `apps/` and `servi
 ## Language pipeline
 
 ```
-Lexer → Parser → AST → Semantic Checker → IR → Translator → Interpreter
+                    ┌──► Interpreter  (@pseudopilot/interpreter)
+Lexer → Parser → AST ┤
+                    └──► Checker → IR → Translator  (@pseudopilot/translator)
          (@pseudopilot/language-core)   (@pseudopilot/checker)
-                                        (@pseudopilot/translator)
 ```
 
-Semantic rules live only in `@pseudopilot/checker` (`C_*` diagnostics). The translator may add Python-target diagnostics (`T_*`) after checking.
+Semantic rules live only in `@pseudopilot/checker` (`C_*` diagnostics).  
+The interpreter executes the **validated AST** (not Python, not required to lower to IR).  
+The translator may add Python-target diagnostics (`T_*`) after checking.
 
 ## Package dependency rules
 
@@ -22,6 +25,7 @@ packages/* ─╳───► apps/*          (FORBIDDEN)
 language-core ─╳► ai-coach        (FORBIDDEN — AI never owns language truth)
 checker ─────────► language-core  (AST + spans only)
 translator ──────► language-core + checker
+interpreter ─────► language-core + checker   (NOT translator)
 ```
 
 ## Deployables

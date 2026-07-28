@@ -234,6 +234,13 @@ importers:
         version: 8.64.0(eslint@9.39.5(jiti@1.21.7))(typescript@5.9.3)
 
   packages/interpreter:
+    dependencies:
+      '@pseudopilot/checker':
+        specifier: workspace:*
+        version: link:../checker
+      '@pseudopilot/language-core':
+        specifier: workspace:*
+        version: link:../language-core
     devDependencies:
       '@pseudopilot/eslint-config':
         specifier: workspace:*

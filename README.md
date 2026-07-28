@@ -16,15 +16,16 @@ Bidirectional **Cambridge International Computer Science (9618) pseudocode ↔ P
 | --- | --- |
 | `@pseudopilot/language-core` | Lexer + parser + AST for a large Core subset (control flow, procedures, functions, DECLARE/arrays/files parsed) |
 | `@pseudopilot/checker` | Semantic checker: scopes, symbols, types, undeclared names, call arity/types |
+| `@pseudopilot/interpreter` | **AST interpreter** — run Cambridge pseudocode via `RuntimeHost` (not Python) |
 | `@pseudopilot/translator` | Bidirectional translation via IR (runs checker by default before lowering) |
-| `apps/web` | Student IDE: **translate-only** — edit pseudocode → live Python (Python pane read-only). **No code execution.** |
-| Interpreter / debugger / AI coach / remote sandbox | Scaffold / placeholders only — **not** production-ready |
+| `apps/web` | Student IDE: **translate-only** for now — edit pseudocode → live Python. Interpreter not wired into UI yet |
+| Debugger UI / AI coach / remote sandbox | Scaffold / placeholders — **not** production-ready |
 
-**Translator supported subset (V11):** assignment, I/O, expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, semantic check, **builtins** (LENGTH/LEFT/RIGHT/MID/LCASE/UCASE/INT/RAND), **`&` concat**.
+**Interpreter supported subset:** assignment, I/O (host), expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, arrays (bounds-checked), builtins, `&`.
 
-**Not translated yet:** BYREF, file I/O, OOP/Extended constructs.
+**Translator supported subset (V11):** same Core surface for translation (no file I/O / BYREF).
 
-Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md)).
+Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md)).
 
 ---
 
@@ -48,12 +49,12 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
 ```ts
 import { translatePseudocodeToPython } from '@pseudopilot/translator';
+import { runPseudocode, MemoryHost } from '@pseudopilot/interpreter';
 
-const result = translatePseudocodeToPython(`
-FUNCTION Double(n : INTEGER) RETURNS INTEGER
-    RETURN n * 2
-ENDFUNCTION
-`);
+const py = translatePseudocodeToPython(`OUTPUT 1 + 1`);
+
+const host = new MemoryHost();
+const run = runPseudocode(`OUTPUT 1 + 1`, { host });
 ```
 
 Packages are currently `private: true` in the monorepo (consume via workspace). Public npm publish is deferred until a stable 0.x packaging pass.
@@ -63,14 +64,16 @@ Packages are currently `private: true` in the monorepo (consume via workspace). 
 ## Architecture (current)
 
 ```
-apps/web  ──imports──►  @pseudopilot/translator  ──►  @pseudopilot/language-core
+apps/web  ──imports──►  @pseudopilot/translator  ──►  language-core + checker
                               │
-                         canonical IR
+                         canonical IR (translation only)
+
+@pseudopilot/interpreter  ──►  language-core + checker
                               │
-                    Python subset parse/print
+                         AST tree-walk + RuntimeHost
 ```
 
-**Boundary rule:** `language-core` and `translator` must not import from `apps/*` or AI packages.
+**Boundary rule:** `language-core`, `checker`, `interpreter`, and `translator` must not import from `apps/*` or AI packages. Interpreter must **not** depend on translator.
 
 Scale notes for a future multi-tenant product: [`docs/architecture/scalability.md`](./docs/architecture/scalability.md).
 

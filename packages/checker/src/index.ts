@@ -2,7 +2,8 @@
  * @pseudopilot/checker — Cambridge 9618 semantic analysis.
  *
  * Pipeline position:
- *   Lexer → Parser → AST → **Semantic Checker** → IR → Translator → Interpreter
+ *   Lexer → Parser → AST → **Semantic Checker** → Interpreter
+ *                                      ↘ IR → Translator
  *
  * Language rules only. Python-target constraints stay in `@pseudopilot/translator`.
  */

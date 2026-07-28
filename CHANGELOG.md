@@ -10,19 +10,14 @@ with the usual **0.x** caveat: breaking changes may land in minor bumps until 1.
 
 ### Added
 
-- Cambridge Core **builtins** + **`&`**: LENGTH, LEFT, RIGHT, MID, LCASE, UCASE, INT, RAND
-- `language-core` builtin registry (`CORE_BUILTINS`) shared by checker + translator
-- Diagnostics `C_BUILTIN_ARG_*`, `C_CONCAT_TYPE`
+- **`@pseudopilot/interpreter` `0.1.0`**: Cambridge AST interpreter (DECLARE/CONSTANT, control flow, routines, arrays, builtins, `&`, `RuntimeHost` I/O)
+- `docs/language/INTERPRETER.md` — execution model, call stack, debugger hooks, limitations
 
 ### Changed
 
-- Package versions: language-core `0.10.0`, translator `0.11.0`; subset `v11-…-builtins`
-- RAND returns **REAL** (Cambridge); Python `import random` + `random.random() * (x)`
-- MID uses 1-based start → Python `S[(start)-1 : (start)-1+(length)]`
-- RIGHT emits `S[-(n):]` (fixes `RIGHT(S, n+1)` precedence)
-- Python emit moved out of `language-core` into `translator/builtins/emit.ts`
-- Reverse: LENGTH is not treated as stringy for `+` → `&`
-
+- Architecture diagram: interpreter runs validated AST in parallel with translator IR (does not execute Python)
+- Implementation checklist **Run** column marked ✅ for Core features the interpreter supports
+- Interpreter review fixes: OUTPUT space join, loop step budgeting, AND/OR short-circuit, array bound-shape checks, sync host errors
 ## [0.10.0] — semantic checker
 
 ### Added
