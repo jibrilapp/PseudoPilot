@@ -54,6 +54,14 @@ export function IconPlay({ className }: IconProps) {
   );
 }
 
+export function IconStop({ className }: IconProps) {
+  return (
+    <svg className={cn('h-[14px] w-[14px]', className)} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+    </svg>
+  );
+}
+
 export function IconSplit({ className }: IconProps) {
   return (
     <svg className={cn('h-[18px] w-[18px]', className)} viewBox="0 0 24 24" aria-hidden {...base}>

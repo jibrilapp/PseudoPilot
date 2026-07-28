@@ -1,6 +1,8 @@
 'use client';
 
-import { IconPanel, IconPlay, IconSidebar, IconTerminal } from './Icons';
+import { IconPanel, IconPlay, IconSidebar, IconStop, IconTerminal } from './Icons';
+import type { ExecutionState } from '@/lib/runtime';
+import { cn } from '@/lib/cn';
 
 type ToolbarProps = {
   sidebarOpen: boolean;
@@ -9,6 +11,11 @@ type ToolbarProps = {
   onToggleSidebar: () => void;
   onToggleRight: () => void;
   onToggleConsole: () => void;
+  executionState: ExecutionState;
+  isBusy: boolean;
+  onRun: () => void;
+  onStop: () => void;
+  onRestart: () => void;
 };
 
 export function Toolbar({
@@ -18,6 +25,11 @@ export function Toolbar({
   onToggleSidebar,
   onToggleRight,
   onToggleConsole,
+  executionState,
+  isBusy,
+  onRun,
+  onStop,
+  onRestart,
 }: ToolbarProps) {
   return (
     <header className="relative z-20 flex h-11 shrink-0 items-center gap-4 border-b border-pp-line bg-pp-panel/90 px-3 backdrop-blur-xl md:px-4">
@@ -67,10 +79,37 @@ export function Toolbar({
 
         <span className="mx-1.5 hidden h-4 w-px bg-pp-lineStrong sm:block" />
 
-        <button type="button" className="pp-btn-primary gap-1.5 pl-2.5 pr-3" title="Run (preview)">
-          <IconPlay />
-          Run
+        <button
+          type="button"
+          className="pp-btn-ghost hidden gap-1.5 px-2.5 sm:inline-flex"
+          onClick={onRestart}
+          disabled={executionState === 'idle' && !isBusy}
+          title="Restart"
+        >
+          Restart
         </button>
+
+        {isBusy ? (
+          <button
+            type="button"
+            className={cn('pp-btn-primary gap-1.5 pl-2.5 pr-3', 'bg-rose-600 hover:bg-rose-500')}
+            onClick={onStop}
+            title="Stop"
+          >
+            <IconStop />
+            Stop
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="pp-btn-primary gap-1.5 pl-2.5 pr-3"
+            onClick={onRun}
+            title="Run pseudocode"
+          >
+            <IconPlay />
+            Run
+          </button>
+        )}
       </div>
     </header>
   );

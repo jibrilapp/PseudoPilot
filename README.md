@@ -16,16 +16,16 @@ Bidirectional **Cambridge International Computer Science (9618) pseudocode ↔ P
 | --- | --- |
 | `@pseudopilot/language-core` | Lexer + parser + AST for a large Core subset (control flow, procedures, functions, DECLARE/arrays/files parsed) |
 | `@pseudopilot/checker` | Semantic checker: scopes, symbols, types, undeclared names, call arity/types |
-| `@pseudopilot/interpreter` | **AST interpreter** — run Cambridge pseudocode via `RuntimeHost` (not Python) |
+| `@pseudopilot/interpreter` | **AST interpreter** — async `RuntimeHost` (browser INPUT) + AbortSignal cancellation |
 | `@pseudopilot/translator` | Bidirectional translation via IR (runs checker by default before lowering) |
-| `apps/web` | Student IDE: **translate-only** for now — edit pseudocode → live Python. Interpreter not wired into UI yet |
-| Debugger UI / AI coach / remote sandbox | Scaffold / placeholders — **not** production-ready |
+| `apps/web` | Student IDE: **Run / Stop / Restart**, Console INPUT/OUTPUT, live Variables — executes interpreter (not Python) |
+| Debugger UI / AI coach / remote sandbox | Not yet — hooks prepared |
 
 **Interpreter supported subset:** assignment, I/O (host), expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, arrays (bounds-checked), builtins, `&`.
 
 **Translator supported subset (V11):** same Core surface for translation (no file I/O / BYREF).
 
-Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md)).
+Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md)). IDE runtime: [`apps/web/lib/runtime/README.md`](./apps/web/lib/runtime/README.md).
 
 ---
 
@@ -65,15 +65,17 @@ Packages are currently `private: true` in the monorepo (consume via workspace). 
 
 ```
 apps/web  ──imports──►  @pseudopilot/translator  ──►  language-core + checker
-                              │
-                         canonical IR (translation only)
-
-@pseudopilot/interpreter  ──►  language-core + checker
-                              │
-                         AST tree-walk + RuntimeHost
+                │              │
+                │         canonical IR (translation only)
+                │
+                └──imports──►  @pseudopilot/interpreter  ──►  language-core + checker
+                                    │
+                               RuntimeController + IdeRuntimeHost
+                                    │
+                               AST tree-walk (async I/O)
 ```
 
-**Boundary rule:** `language-core`, `checker`, `interpreter`, and `translator` must not import from `apps/*` or AI packages. Interpreter must **not** depend on translator.
+**Boundary rule:** `language-core`, `checker`, `interpreter`, and `translator` must not import from `apps/*` or AI packages. Interpreter must **not** depend on translator. React components must **not** call the interpreter directly — use `RuntimeController`.
 
 Scale notes for a future multi-tenant product: [`docs/architecture/scalability.md`](./docs/architecture/scalability.md).
 

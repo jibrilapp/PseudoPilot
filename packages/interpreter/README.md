@@ -2,14 +2,16 @@
 
 Cambridge **9618 AST interpreter** — executes validated pseudocode directly.
 
-**Version:** `0.1.0`  
+**Version:** `0.2.0`  
 **Does not** execute translated Python. Translator remains a separate package.
 
 ## Pipeline
 
 ```
-parse → semantic check → tree-walk AST
+parse → semantic check → async tree-walk AST
 ```
+
+Host I/O may be sync or `Promise`-based (browser INPUT). Pass `signal` for cooperative Stop.
 
 Docs: [`docs/language/INTERPRETER.md`](../../docs/language/INTERPRETER.md)
 

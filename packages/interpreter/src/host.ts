@@ -3,13 +3,14 @@
  *
  * Web IDE, Vitest, and future CLI all implement this — never hardcode console.
  *
- * V1 interpreter requires **synchronous** hosts. Returning a Promise is rejected
- * with `R_ASYNC_HOST` (async writes/reads are not silently ignored).
+ * Host methods may return values synchronously or via Promise. The interpreter
+ * awaits both. Browser INPUT should return a Promise that resolves when the
+ * student submits a line in the Console.
  */
 import { runtimeFail } from './value.js';
 
 export interface RuntimeHost {
-  /** Read one INPUT line. Must return a string synchronously in V1. */
+  /** Read one INPUT line (sync or async). */
   readInput(prompt?: string): string | Promise<string>;
   /** Write one OUTPUT line (values already joined by the interpreter). */
   writeOutput(line: string): void | Promise<void>;

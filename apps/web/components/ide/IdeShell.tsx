@@ -3,13 +3,12 @@
 import { useEffect, useState } from 'react';
 import {
   DUMMY_AI,
-  DUMMY_CONSOLE,
   DUMMY_FILES,
   DUMMY_PSEUDOCODE,
   DUMMY_TABS,
-  DUMMY_VARIABLES,
 } from '@/lib/dummy';
 import { usePseudocodeTranslation } from '@/hooks/usePseudocodeTranslation';
+import { usePseudocodeRuntime } from '@/hooks/usePseudocodeRuntime';
 import { ActivityBar, type ActivityId } from './ActivityBar';
 import { AiAssistantPanel } from './AiAssistantPanel';
 import { ConsolePanel } from './ConsolePanel';
@@ -29,7 +28,7 @@ export function IdeShell() {
   const [rightOpen, setRightOpen] = useState(true);
   const [consoleOpen, setConsoleOpen] = useState(true);
   const [activeFileId, setActiveFileId] = useState('main-pseudo');
-  const [rightTab, setRightTab] = useState<'ai' | 'vars'>('ai');
+  const [rightTab, setRightTab] = useState<'ai' | 'vars'>('vars');
   const [mobileView, setMobileView] = useState<MobileView>('editors');
   const [mounted, setMounted] = useState(false);
 
@@ -37,18 +36,66 @@ export function IdeShell() {
     pseudocode,
     setPseudocode,
     python,
-    diagnostics,
+    diagnostics: translationDiagnostics,
     status: translationStatus,
   } = usePseudocodeTranslation(DUMMY_PSEUDOCODE);
 
+  const runtime = usePseudocodeRuntime();
+
   useEffect(() => setMounted(true), []);
 
-  // Surface diagnostics: keep console open when there are issues (errors or warnings).
   useEffect(() => {
-    if (diagnostics.length > 0) {
+    if (
+      translationDiagnostics.length > 0 ||
+      runtime.consoleLines.length > 0 ||
+      runtime.diagnostics.length > 0 ||
+      runtime.awaitingInput
+    ) {
       setConsoleOpen(true);
     }
-  }, [diagnostics.length]);
+  }, [
+    translationDiagnostics.length,
+    runtime.consoleLines.length,
+    runtime.diagnostics.length,
+    runtime.awaitingInput,
+  ]);
+
+  useEffect(() => {
+    if (runtime.isBusy || runtime.variables.length > 0) {
+      setRightTab('vars');
+      setRightOpen(true);
+    }
+  }, [runtime.isBusy, runtime.variables.length]);
+
+  const handleRun = () => {
+    void runtime.run(pseudocode);
+  };
+
+  const handleRestart = () => {
+    void runtime.restart(pseudocode);
+  };
+
+  const consoleNode = (
+    <ConsolePanel
+      lines={runtime.consoleLines}
+      runtimeDiagnostics={runtime.diagnostics}
+      translationDiagnostics={translationDiagnostics}
+      executionState={runtime.state}
+      awaitingInput={runtime.awaitingInput}
+      inputDraft={runtime.inputDraft}
+      onInputDraftChange={runtime.setInputDraft}
+      onSubmitInput={runtime.submitInput}
+      onClear={runtime.clearConsole}
+    />
+  );
+
+  const varsNode = (
+    <VariableInspector
+      rows={runtime.variables}
+      frameName={runtime.frameName}
+      executionState={runtime.state}
+    />
+  );
 
   return (
     <div
@@ -64,6 +111,11 @@ export function IdeShell() {
         sidebarOpen={sidebarOpen}
         rightOpen={rightOpen}
         consoleOpen={consoleOpen}
+        executionState={runtime.state}
+        isBusy={runtime.isBusy}
+        onRun={handleRun}
+        onStop={runtime.stop}
+        onRestart={handleRestart}
       />
 
       <div className="relative flex min-h-0 flex-1">
@@ -104,9 +156,7 @@ export function IdeShell() {
                 consoleOpen ? 'h-[168px] opacity-100 lg:h-[188px]' : 'h-0 border-t-0 opacity-0',
               )}
             >
-              {consoleOpen && (
-                <ConsolePanel lines={DUMMY_CONSOLE} diagnostics={diagnostics} />
-              )}
+              {consoleOpen && consoleNode}
             </div>
           </main>
 
@@ -141,7 +191,7 @@ export function IdeShell() {
                   {rightTab === 'ai' ? (
                     <AiAssistantPanel messages={DUMMY_AI} />
                   ) : (
-                    <VariableInspector rows={DUMMY_VARIABLES} />
+                    varsNode
                   )}
                 </div>
               </>
@@ -172,17 +222,16 @@ export function IdeShell() {
               stacked
             />
           )}
-          {mobileView === 'console' && (
-            <ConsolePanel lines={DUMMY_CONSOLE} diagnostics={diagnostics} />
-          )}
+          {mobileView === 'console' && consoleNode}
           {mobileView === 'ai' && <AiAssistantPanel messages={DUMMY_AI} />}
-          {mobileView === 'vars' && <VariableInspector rows={DUMMY_VARIABLES} />}
+          {mobileView === 'vars' && varsNode}
         </div>
       </div>
 
       <StatusBar
         translationStatus={translationStatus}
-        diagnosticCount={diagnostics.length}
+        diagnosticCount={translationDiagnostics.length}
+        executionState={runtime.state}
       />
       <MobileDock active={mobileView} onChange={setMobileView} />
     </div>

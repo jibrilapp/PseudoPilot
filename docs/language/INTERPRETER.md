@@ -1,7 +1,7 @@
 # Cambridge Interpreter
 
-**Package:** `@pseudopilot/interpreter` `0.1.0`  
-**Status:** Core AST execution complete (no file I/O, no sandbox, no debugger UI)
+**Package:** `@pseudopilot/interpreter` `0.2.0`  
+**Status:** Core AST execution + **async RuntimeHost** + AbortSignal cancellation (IDE Run wired)
 
 ---
 
@@ -90,9 +90,13 @@ interface RuntimeHost {
 }
 ```
 
-V1 interpreter requires **synchronous** hosts (`MemoryHost` for tests). Returning a `Promise` raises `R_ASYNC_HOST` — async is not silently dropped.
+V1+ interpreter **awaits** host I/O. Sync hosts (`MemoryHost`) still work. Browser INPUT should return a `Promise` resolved when the student submits a console line.
 
 `INPUT` parses according to the target’s declared type (`R_INPUT` on failure, including exhausted `MemoryHost` buffers).
+
+`AbortSignal` (`RunOptions.signal`) cooperatively cancels at statement ticks (`R_CANCELLED`).
+
+Cancellation requires **macrotask** yields (every 256 steps via `setTimeout(0)`). Microtask-only yields (`Promise.resolve`) keep the event loop busy, so IDE Stop clicks and timer-based `abort()` never run until the step limit.
 
 ---
 
@@ -121,7 +125,7 @@ Avoided anti-patterns: no source-less IR execution, no flattening spans away, no
 | `R_STACK_OVERFLOW` | Call depth limit |
 | `R_STEP_LIMIT` | Instruction budget |
 | `R_INPUT` | Bad INPUT text for target type / exhausted host buffer |
-| `R_ASYNC_HOST` | Host returned a Promise (V1 requires sync I/O) |
+| `R_CANCELLED` | AbortSignal / Stop |
 | `R_RETURN_OUTSIDE` / `R_NO_RETURN` | Invalid RETURN / missing FUNCTION return |
 | `R_BUILTIN` / `R_BUILTIN_ARGS` | Builtin execution failure |
 | `R_ASSIGN_CONSTANT` | Mutating CONSTANT |
@@ -134,14 +138,12 @@ Checker `C_*` diagnostics still gate the run when `semanticCheck: true`.
 
 ## 6. Known limitations
 
-- No text-file runtime / `EOF`
-- No BYREF / DATE / OOP
-- Async `RuntimeHost` rejected (`R_ASYNC_HOST`), not awaited
+- Async `RuntimeHost` is supported (IDE INPUT); sync hosts still work
 - Whole-array assignment requires identical element type **and** bounds
 - No definite-assignment at runtime beyond undeclared reads
 - Not a security sandbox (instruction/depth/array-size caps only — no memory/CPU isolation, no string-size cap, no untrusted-host isolation)
 - `debugger.pause` aborts rather than suspending
-- Web IDE not wired yet
+- File I/O / BYREF / DATE / OOP unsupported
 - JS `number` precision (INTEGER beyond `Number.MAX_SAFE_INTEGER` is not Cambridge-arbitrary-precision)
 
 ---

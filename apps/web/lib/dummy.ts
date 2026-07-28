@@ -70,34 +70,30 @@ export const DUMMY_TABS: EditorTab[] = [
   },
 ];
 
-export const DUMMY_PSEUDOCODE = `// PseudoPilot — live translate (includes FUNCTION + RETURN)
-FUNCTION Add(A : INTEGER, B : INTEGER) RETURNS INTEGER
-    RETURN A + B
-ENDFUNCTION
-
-OUTPUT Add(2, 3)
+export const DUMMY_PSEUDOCODE = `// PseudoPilot — Run executes the Cambridge interpreter (not Python)
+DECLARE Name : STRING
+DECLARE N : INTEGER
+OUTPUT "Enter a number:"
+INPUT N
+OUTPUT "Squared =", N * N
 `;
 
-export const DUMMY_PYTHON = `def Add(A: int, B: int) -> int:
-    return A + B
-
-print(Add(2, 3))
+export const DUMMY_PYTHON = `Name = ""  # STRING
+N = 0  # INTEGER
+print("Enter a number:")
+N = int(input())
+print("Squared =", N * N)
 `;
 
 export const DUMMY_CONSOLE: ConsoleLine[] = [
   {
     id: 'c1',
     kind: 'info',
-    text: 'Live translation active — edit pseudocode to update Python',
+    text: 'Press Run to execute Cambridge pseudocode',
   },
 ];
 
-export const DUMMY_VARIABLES: VariableRow[] = [
-  { name: 'Count', type: 'INTEGER', value: '5', scope: 'global' },
-  { name: 'Total', type: 'INTEGER', value: '15', scope: 'global' },
-  { name: 'Name', type: 'STRING', value: '"PseudoPilot"', scope: 'global' },
-  { name: 'i', type: 'INTEGER', value: '—', scope: 'local' },
-];
+export const DUMMY_VARIABLES: VariableRow[] = [];
 
 export const DUMMY_AI: AiMessage[] = [
   {

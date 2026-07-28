@@ -9,13 +9,13 @@ import {
   builtinImplNames,
 } from './index.js';
 
-function run(
+async function run(
   source: string,
   inputs: string[] = [],
   opts: { maxSteps?: number; maxCallDepth?: number; seed?: number } = {},
 ) {
   const host = new MemoryHost(inputs);
-  const result = runPseudocode(source, {
+  const result = await runPseudocode(source, {
     host,
     random: new SeededRandom(opts.seed ?? 1),
     ...(opts.maxSteps !== undefined ? { maxSteps: opts.maxSteps } : {}),
@@ -29,7 +29,7 @@ function run(
 describe('interpreter package', () => {
   it('exports identity', () => {
     expect(PACKAGE_NAME).toBe('@pseudopilot/interpreter');
-    expect(PACKAGE_VERSION).toBe('0.1.0');
+    expect(PACKAGE_VERSION).toBe('0.2.0');
   });
 
   it('implements every CORE_BUILTIN', () => {
@@ -41,8 +41,7 @@ describe('interpreter package', () => {
 });
 
 describe('assignments, DECLARE, CONSTANT', () => {
-  it('assigns and outputs scalars', () => {
-    const { result, host } = run(`
+  it('assigns and outputs scalars', async () => {    const { result, host } = await run(`
 DECLARE A : INTEGER
 DECLARE B : REAL
 DECLARE S : STRING
@@ -60,15 +59,14 @@ OUTPUT F
     expect(host.outputs).toEqual(['10', '2.5', 'hi', 'TRUE']);
   });
 
-  it('supports CONSTANT and rejects mutation', () => {
-    const ok = run(`
+  it('supports CONSTANT and rejects mutation', async () => {    const ok = await run(`
 CONSTANT Max = 5
 OUTPUT Max
 `);
     expect(ok.result.ok).toBe(true);
     expect(ok.host.outputs).toEqual(['5']);
 
-    const bad = run(`
+    const bad = await run(`
 CONSTANT Max = 5
 Max ← 6
 `);
@@ -78,8 +76,7 @@ Max ← 6
 });
 
 describe('arithmetic and logic', () => {
-  it('evaluates arithmetic, DIV, MOD, /', () => {
-    const { result, host } = run(`
+  it('evaluates arithmetic, DIV, MOD, /', async () => {    const { result, host } = await run(`
 OUTPUT 7 + 3
 OUTPUT 7 DIV 2
 OUTPUT 7 MOD 2
@@ -89,14 +86,12 @@ OUTPUT 7 / 2
     expect(host.outputs).toEqual(['10', '3', '1', '3.5']);
   });
 
-  it('errors on division by zero', () => {
-    const { result } = run(`OUTPUT 1 / 0`);
+  it('errors on division by zero', async () => {    const { result } = await run(`OUTPUT 1 / 0`);
     expect(result.ok).toBe(false);
     expect(result.diagnostics[0]?.code).toBe('R_DIV_ZERO');
   });
 
-  it('evaluates boolean and comparisons', () => {
-    const { host } = run(`
+  it('evaluates boolean and comparisons', async () => {    const { host } = await run(`
 OUTPUT TRUE AND FALSE
 OUTPUT TRUE OR FALSE
 OUTPUT NOT FALSE
@@ -106,15 +101,13 @@ OUTPUT "a" = "a"
     expect(host.outputs).toEqual(['FALSE', 'TRUE', 'TRUE', 'TRUE', 'TRUE']);
   });
 
-  it('concatenates with &', () => {
-    const { host } = run(`OUTPUT "Hello" & " " & "World"`);
+  it('concatenates with &', async () => {    const { host } = await run(`OUTPUT "Hello" & " " & "World"`);
     expect(host.outputs).toEqual(['Hello World']);
   });
 });
 
 describe('INPUT / OUTPUT', () => {
-  it('reads typed INPUT', () => {
-    const { result, host } = run(
+  it('reads typed INPUT', async () => {    const { result, host } = await run(
       `
 DECLARE N : INTEGER
 DECLARE S : STRING
@@ -129,8 +122,7 @@ OUTPUT S
     expect(host.outputs).toEqual(['42', 'Cambridge']);
   });
 
-  it('rejects invalid INTEGER INPUT', () => {
-    const { result } = run(
+  it('rejects invalid INTEGER INPUT', async () => {    const { result } = await run(
       `
 DECLARE N : INTEGER
 INPUT N
@@ -143,8 +135,7 @@ INPUT N
 });
 
 describe('control flow', () => {
-  it('runs IF / ELSE IF / ELSE', () => {
-    const { host } = run(`
+  it('runs IF / ELSE IF / ELSE', async () => {    const { host } = await run(`
 DECLARE X : INTEGER
 X ← 2
 IF X = 1 THEN
@@ -158,8 +149,7 @@ ENDIF
     expect(host.outputs).toEqual(['two']);
   });
 
-  it('runs WHILE', () => {
-    const { host } = run(`
+  it('runs WHILE', async () => {    const { host } = await run(`
 DECLARE I : INTEGER
 I ← 1
 WHILE I <= 3
@@ -170,8 +160,7 @@ ENDWHILE
     expect(host.outputs).toEqual(['1', '2', '3']);
   });
 
-  it('runs REPEAT UNTIL', () => {
-    const { host } = run(`
+  it('runs REPEAT UNTIL', async () => {    const { host } = await run(`
 DECLARE I : INTEGER
 I ← 1
 REPEAT
@@ -182,8 +171,7 @@ UNTIL I > 3
     expect(host.outputs).toEqual(['1', '2', '3']);
   });
 
-  it('runs FOR with STEP', () => {
-    const { host } = run(`
+  it('runs FOR with STEP', async () => {    const { host } = await run(`
 FOR I ← 1 TO 5 STEP 2
   OUTPUT I
 NEXT I
@@ -191,8 +179,7 @@ NEXT I
     expect(host.outputs).toEqual(['1', '3', '5']);
   });
 
-  it('runs nested FOR', () => {
-    const { host } = run(`
+  it('runs nested FOR', async () => {    const { host } = await run(`
 FOR I ← 1 TO 2
   FOR J ← 1 TO 2
     OUTPUT I * 10 + J
@@ -202,8 +189,7 @@ NEXT I
     expect(host.outputs).toEqual(['11', '12', '21', '22']);
   });
 
-  it('runs CASE with OTHERWISE', () => {
-    const { host } = run(`
+  it('runs CASE with OTHERWISE', async () => {    const { host } = await run(`
 DECLARE G : CHAR
 G ← 'B'
 CASE OF G
@@ -215,8 +201,7 @@ ENDCASE
     expect(host.outputs).toEqual(['Merit']);
   });
 
-  it('runs CASE ranges', () => {
-    const { host } = run(`
+  it('runs CASE ranges', async () => {    const { host } = await run(`
 DECLARE N : INTEGER
 N ← 15
 CASE OF N
@@ -230,8 +215,7 @@ ENDCASE
 });
 
 describe('arrays', () => {
-  it('allocates 1-based arrays and indexes', () => {
-    const { host } = run(`
+  it('allocates 1-based arrays and indexes', async () => {    const { host } = await run(`
 DECLARE A : ARRAY[1:3] OF INTEGER
 A[1] ← 10
 A[2] ← 20
@@ -241,8 +225,7 @@ OUTPUT A[1] + A[2] + A[3]
     expect(host.outputs).toEqual(['60']);
   });
 
-  it('supports 2D arrays', () => {
-    const { host } = run(`
+  it('supports 2D arrays', async () => {    const { host } = await run(`
 DECLARE G : ARRAY[1:2, 1:2] OF INTEGER
 G[1,1] ← 1
 G[1,2] ← 2
@@ -253,8 +236,7 @@ OUTPUT G[2,1]
     expect(host.outputs).toEqual(['3']);
   });
 
-  it('errors on out-of-bounds index', () => {
-    const { result } = run(`
+  it('errors on out-of-bounds index', async () => {    const { result } = await run(`
 DECLARE A : ARRAY[1:2] OF INTEGER
 OUTPUT A[3]
 `);
@@ -264,8 +246,7 @@ OUTPUT A[3]
 });
 
 describe('procedures and functions', () => {
-  it('calls PROCEDURE with parameters', () => {
-    const { host } = run(`
+  it('calls PROCEDURE with parameters', async () => {    const { host } = await run(`
 PROCEDURE Greet(Name : STRING)
   OUTPUT "Hi " & Name
 ENDPROCEDURE
@@ -274,8 +255,7 @@ CALL Greet("Ada")
     expect(host.outputs).toEqual(['Hi Ada']);
   });
 
-  it('calls FUNCTION and returns', () => {
-    const { host } = run(`
+  it('calls FUNCTION and returns', async () => {    const { host } = await run(`
 FUNCTION Add(A : INTEGER, B : INTEGER) RETURNS INTEGER
   RETURN A + B
 ENDFUNCTION
@@ -284,8 +264,7 @@ OUTPUT Add(2, 3)
     expect(host.outputs).toEqual(['5']);
   });
 
-  it('supports recursion', () => {
-    const { host } = run(`
+  it('supports recursion', async () => {    const { host } = await run(`
 FUNCTION Fact(N : INTEGER) RETURNS INTEGER
   IF N <= 1 THEN
     RETURN 1
@@ -297,8 +276,7 @@ OUTPUT Fact(5)
     expect(host.outputs).toEqual(['120']);
   });
 
-  it('reads globals from routines', () => {
-    const { host } = run(`
+  it('reads globals from routines', async () => {    const { host } = await run(`
 DECLARE Total : INTEGER
 PROCEDURE Inc()
   Total ← Total + 1
@@ -311,8 +289,7 @@ OUTPUT Total
     expect(host.outputs).toEqual(['2']);
   });
 
-  it('guards stack overflow', () => {
-    const { result } = run(
+  it('guards stack overflow', async () => {    const { result } = await run(
       `
 FUNCTION Boom(N : INTEGER) RETURNS INTEGER
   RETURN Boom(N + 1)
@@ -328,8 +305,7 @@ OUTPUT Boom(1)
 });
 
 describe('builtins', () => {
-  it('executes string and numeric builtins', () => {
-    const { host } = run(`
+  it('executes string and numeric builtins', async () => {    const { host } = await run(`
 OUTPUT LENGTH("abc")
 OUTPUT LEFT("abcdef", 3)
 OUTPUT RIGHT("abcdef", 2)
@@ -349,13 +325,11 @@ OUTPUT INT(4.9)
     ]);
   });
 
-  it('RIGHT with 0 yields empty string', () => {
-    const { host } = run(`OUTPUT RIGHT("abc", 0)`);
+  it('RIGHT with 0 yields empty string', async () => {    const { host } = await run(`OUTPUT RIGHT("abc", 0)`);
     expect(host.outputs).toEqual(['']);
   });
 
-  it('RAND returns REAL in [0, x)', () => {
-    const { host } = run(`OUTPUT RAND(10)`, [], { seed: 42 });
+  it('RAND returns REAL in [0, x)', async () => {    const { host } = await run(`OUTPUT RAND(10)`, [], { seed: 42 });
     expect(host.outputs).toHaveLength(1);
     const v = Number(host.outputs[0]);
     expect(v).toBeGreaterThanOrEqual(0);
@@ -364,8 +338,7 @@ OUTPUT INT(4.9)
 });
 
 describe('runtime limits and errors', () => {
-  it('stops infinite WHILE via step limit', () => {
-    const { result } = run(
+  it('stops infinite WHILE via step limit', async () => {    const { result } = await run(
       `
 DECLARE I : INTEGER
 I ← 1
@@ -380,9 +353,8 @@ ENDWHILE
     expect(result.diagnostics[0]?.code).toBe('R_STEP_LIMIT');
   });
 
-  it('rejects missing routine at runtime when check skipped', () => {
-    const host = new MemoryHost();
-    const result = runPseudocode(`CALL Missing()`, {
+  it('rejects missing routine at runtime when check skipped', async () => {    const host = new MemoryHost();
+    const result = await runPseudocode(`CALL Missing()`, {
       host,
       semanticCheck: false,
     });
@@ -394,13 +366,11 @@ ENDWHILE
 });
 
 describe('review regressions', () => {
-  it('joins multi-value OUTPUT with spaces (SPEC §13.15)', () => {
-    const { host } = run(`OUTPUT 1, 2, 3`);
+  it('joins multi-value OUTPUT with spaces (SPEC §13.15)', async () => {    const { host } = await run(`OUTPUT 1, 2, 3`);
     expect(host.outputs).toEqual(['1 2 3']);
   });
 
-  it('enforces step limit on empty WHILE TRUE', () => {
-    const { result } = run(
+  it('enforces step limit on empty WHILE TRUE', async () => {    const { result } = await run(
       `
 WHILE TRUE
 ENDWHILE
@@ -412,8 +382,7 @@ ENDWHILE
     expect(result.diagnostics[0]?.code).toBe('R_STEP_LIMIT');
   });
 
-  it('short-circuits AND / OR side effects', () => {
-    const andCase = run(`
+  it('short-circuits AND / OR side effects', async () => {    const andCase = await run(`
 DECLARE N : INTEGER
 N ← 0
 FUNCTION Boom() RETURNS BOOLEAN
@@ -425,7 +394,7 @@ OUTPUT N
 `);
     expect(andCase.host.outputs).toEqual(['FALSE', '0']);
 
-    const orCase = run(`
+    const orCase = await run(`
 DECLARE N : INTEGER
 N ← 0
 FUNCTION Boom() RETURNS BOOLEAN
@@ -438,8 +407,7 @@ OUTPUT N
     expect(orCase.host.outputs).toEqual(['TRUE', '0']);
   });
 
-  it('indexes arrays with non-1 lower bounds', () => {
-    const { host } = run(`
+  it('indexes arrays with non-1 lower bounds', async () => {    const { host } = await run(`
 DECLARE A : ARRAY[0:2] OF INTEGER
 A[0] ← 7
 A[2] ← 9
@@ -449,8 +417,7 @@ OUTPUT A[2]
     expect(host.outputs).toEqual(['7', '9']);
   });
 
-  it('rejects whole-array assign when bounds differ but length matches', () => {
-    const { result } = run(`
+  it('rejects whole-array assign when bounds differ but length matches', async () => {    const { result } = await run(`
 DECLARE A : ARRAY[1:3] OF INTEGER
 DECLARE B : ARRAY[0:2] OF INTEGER
 A[1] ← 1
@@ -460,8 +427,7 @@ B ← A
     expect(result.diagnostics.some((d) => d.code === 'R_TYPE')).toBe(true);
   });
 
-  it('maps exhausted MemoryHost INPUT to R_INPUT', () => {
-    const { result } = run(
+  it('maps exhausted MemoryHost INPUT to R_INPUT', async () => {    const { result } = await run(
       `
 DECLARE N : INTEGER
 INPUT N
@@ -472,10 +438,9 @@ INPUT N
     expect(result.diagnostics[0]?.code).toBe('R_INPUT');
   });
 
-  it('calls onExitFrame when a routine errors', () => {
-    const exits: string[] = [];
+  it('calls onExitFrame when a routine errors', async () => {    const exits: string[] = [];
     const host = new MemoryHost();
-    const result = runPseudocode(
+    const result = await runPseudocode(
       `
 PROCEDURE Bad()
   OUTPUT 1 / 0
@@ -496,8 +461,7 @@ CALL Bad()
     expect(exits).toContain('Bad');
   });
 
-  it('isolates recursive locals across frames', () => {
-    const { host } = run(`
+  it('isolates recursive locals across frames', async () => {    const { host } = await run(`
 FUNCTION Weave(N : INTEGER) RETURNS INTEGER
   DECLARE Local : INTEGER
   Local ← N
@@ -513,8 +477,7 @@ OUTPUT Weave(3)
 });
 
 describe('realistic Cambridge-style programs', () => {
-  it('sums array with FOR', () => {
-    const { host } = run(`
+  it('sums array with FOR', async () => {    const { host } = await run(`
 DECLARE Scores : ARRAY[1:5] OF INTEGER
 DECLARE Sum : INTEGER
 DECLARE I : INTEGER
@@ -532,8 +495,7 @@ OUTPUT Sum
     expect(host.outputs).toEqual(['150']);
   });
 
-  it('validates password loop with INPUT', () => {
-    const { host } = run(
+  it('validates password loop with INPUT', async () => {    const { host } = await run(
       `
 DECLARE Attempt : STRING
 DECLARE Ok : BOOLEAN
@@ -554,13 +516,59 @@ OUTPUT "Welcome"
     expect(host.outputs).toEqual(['Wrong', 'Welcome']);
   });
 
-  it('exposes globals for variables panel', () => {
-    const { result } = run(`
+  it('exposes globals for variables panel', async () => {
+    const { result } = await run(`
 DECLARE Count : INTEGER
 Count ← 7
 `);
     expect(result.ok).toBe(true);
     const count = result.globals.find((g) => g.name === 'Count');
     expect(count?.value).toBe('7');
+  });
+
+  it('cancels via AbortSignal', async () => {
+    const host = new MemoryHost();
+    const abort = new AbortController();
+    const pending = runPseudocode(
+      `
+WHILE TRUE
+ENDWHILE
+`,
+      { host, signal: abort.signal, maxSteps: 1_000_000 },
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    abort.abort();
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'R_CANCELLED')).toBe(true);
+  });
+
+  it('awaits async RuntimeHost INPUT', async () => {
+    let resolveInput: ((v: string) => void) | null = null;
+    const host = {
+      outputs: [] as string[],
+      writeOutput(line: string) {
+        this.outputs.push(line);
+      },
+      readInput() {
+        return new Promise<string>((resolve) => {
+          resolveInput = resolve;
+        });
+      },
+    };
+    const pending = runPseudocode(
+      `
+DECLARE N : INTEGER
+INPUT N
+OUTPUT N
+`,
+      { host },
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    expect(resolveInput).not.toBeNull();
+    resolveInput!('9');
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    expect(host.outputs).toContain('9');
   });
 });

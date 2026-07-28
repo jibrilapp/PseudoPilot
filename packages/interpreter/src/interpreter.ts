@@ -54,6 +54,8 @@ export type InterpretOptions = {
   /** Max statement ticks. Default 1_000_000. */
   readonly maxSteps?: number;
   readonly debugger?: DebuggerHooks;
+  /** Cooperative cancellation (Stop in the IDE). */
+  readonly signal?: AbortSignal;
 };
 
 export type VariableSnapshot = {
@@ -92,6 +94,7 @@ export class Interpreter {
   private readonly maxCallDepth: number;
   private readonly maxSteps: number;
   private readonly hooks: DebuggerHooks | undefined;
+  private readonly signal: AbortSignal | undefined;
 
   private globalEnv: Environment = new Environment(null);
   private readonly stack = new CallStack();
@@ -99,6 +102,8 @@ export class Interpreter {
 
   private steps = 0;
   private diagnostics: RuntimeDiagnostic[] = [];
+  /** How often to yield to the macrotask queue so Stop / AbortSignal can run. */
+  private readonly eventLoopYieldEvery: number;
 
   constructor(options: InterpretOptions) {
     this.host = options.host;
@@ -106,9 +111,13 @@ export class Interpreter {
     this.maxCallDepth = options.maxCallDepth ?? 256;
     this.maxSteps = options.maxSteps ?? 1_000_000;
     this.hooks = options.debugger;
+    this.signal = options.signal;
+    // Microtask-only yields (`Promise.resolve`) never flush UI / setTimeout;
+    // macrotask yields are required for cooperative cancellation.
+    this.eventLoopYieldEvery = 256;
   }
 
-  interpret(program: Program): InterpretResult {
+  async interpret(program: Program): Promise<InterpretResult> {
     this.diagnostics = [];
     this.steps = 0;
     this.routines.clear();
@@ -116,7 +125,7 @@ export class Interpreter {
     this.globalEnv = new Environment(null);
 
     try {
-      this.runProgram(program);
+      await this.runProgram(program);
       return {
         ok: true,
         diagnostics: this.diagnostics,
@@ -133,6 +142,12 @@ export class Interpreter {
           code: 'R_RETURN_OUTSIDE',
           message: 'RETURN outside of a FUNCTION.',
         });
+      } else if (isAbortError(e)) {
+        this.diagnostics.push({
+          severity: 'error',
+          code: 'R_CANCELLED',
+          message: 'Execution stopped.',
+        });
       } else {
         throw e;
       }
@@ -146,7 +161,7 @@ export class Interpreter {
     }
   }
 
-  private runProgram(program: Program): void {
+  private async runProgram(program: Program): Promise<void> {
     this.stack.push('global', '<global>', this.globalEnv);
     this.hooks?.onEnterFrame?.(this.stack.current());
 
@@ -171,7 +186,7 @@ export class Interpreter {
       ) {
         continue;
       }
-      this.execStatement(stmt);
+      await this.execStatement(stmt);
     }
   }
 
@@ -180,6 +195,9 @@ export class Interpreter {
   }
 
   private tick(span: SourceSpan): void {
+    if (this.signal?.aborted) {
+      throw runtimeFail('R_CANCELLED', 'Execution stopped.', span);
+    }
     this.steps += 1;
     if (this.steps > this.maxSteps) {
       throw runtimeFail(
@@ -202,19 +220,35 @@ export class Interpreter {
     }
   }
 
-  private execStatement(stmt: Statement): void {
+  /**
+   * Periodically yield to the macrotask queue so IDE Stop clicks and
+   * `AbortController.abort()` scheduled via timers can run. Checking
+   * `signal.aborted` alone is insufficient while only microtasks run.
+   */
+  private async maybeYieldEventLoop(span: SourceSpan): Promise<void> {
+    if (this.steps % this.eventLoopYieldEvery !== 0) return;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    if (this.signal?.aborted) {
+      throw runtimeFail('R_CANCELLED', 'Execution stopped.', span);
+    }
+  }
+
+  private async execStatement(stmt: Statement): Promise<void> {
     this.tick(stmt.span);
+    await this.maybeYieldEventLoop(stmt.span);
 
     switch (stmt.kind) {
       case 'DeclareStatement':
-        this.execDeclare(
+        await this.execDeclare(
           stmt.names.map((n: Identifier) => n.name),
           stmt.typeRef,
           stmt.span,
         );
         return;
       case 'ConstantStatement': {
-        const value = this.evalExpr(stmt.value);
+        const value = await this.evalExpr(stmt.value);
         this.env().define(
           stmt.name.name,
           'constant',
@@ -224,45 +258,48 @@ export class Interpreter {
         return;
       }
       case 'AssignmentStatement':
-        this.assignTarget(stmt.target, this.evalExpr(stmt.value), stmt.span);
+        await this.assignTarget(stmt.target, await this.evalExpr(stmt.value), stmt.span);
         return;
       case 'InputStatement':
-        this.execInput(stmt.target, stmt.span);
+        await this.execInput(stmt.target, stmt.span);
         return;
       case 'OutputStatement': {
         // SPEC §13.15: multi-value OUTPUT joins with a space separator.
-        const parts = stmt.expressions.map((e: Expression) =>
-          formatValue(this.evalExpr(e)),
-        );
-        this.writeOut(parts.join(' '));
+        const parts: string[] = [];
+        for (const e of stmt.expressions) {
+          parts.push(formatValue(await this.evalExpr(e)));
+        }
+        await this.writeOut(parts.join(' '));
         return;
       }
       case 'IfStatement':
-        this.execIf(stmt);
+        await this.execIf(stmt);
         return;
       case 'CaseStatement':
-        this.execCase(stmt);
+        await this.execCase(stmt);
         return;
       case 'WhileStatement':
         // Tick each iteration so empty `WHILE TRUE` cannot bypass maxSteps.
         for (;;) {
-          if (!isTruthyBoolean(this.evalExpr(stmt.condition))) break;
-          this.execBlock(stmt.body);
+          if (!isTruthyBoolean(await this.evalExpr(stmt.condition))) break;
+          await this.execBlock(stmt.body);
           this.tick(stmt.span);
+          await this.maybeYieldEventLoop(stmt.span);
         }
         return;
       case 'RepeatStatement':
         for (;;) {
-          this.execBlock(stmt.body);
+          await this.execBlock(stmt.body);
           this.tick(stmt.span);
-          if (isTruthyBoolean(this.evalExpr(stmt.condition))) break;
+          if (isTruthyBoolean(await this.evalExpr(stmt.condition))) break;
+          await this.maybeYieldEventLoop(stmt.span);
         }
         return;
       case 'ForStatement':
-        this.execFor(stmt);
+        await this.execFor(stmt);
         return;
       case 'CallStatement':
-        this.callRoutine(stmt.callee.name, stmt.args, 'procedure', stmt.span);
+        await this.callRoutine(stmt.callee.name, stmt.args, 'procedure', stmt.span);
         return;
       case 'ReturnStatement': {
         if (this.stack.current().kind !== 'function') {
@@ -272,7 +309,7 @@ export class Interpreter {
             stmt.span,
           );
         }
-        throw new ReturnSignal(this.evalExpr(stmt.value));
+        throw new ReturnSignal(await this.evalExpr(stmt.value));
       }
       case 'ProcedureDeclaration':
       case 'FunctionDeclaration':
@@ -293,29 +330,19 @@ export class Interpreter {
     }
   }
 
-  private writeOut(line: string): void {
-    const result = this.host.writeOutput(line);
-    if (
-      result !== undefined &&
-      result !== null &&
-      typeof (result as Promise<void>).then === 'function'
-    ) {
-      throw runtimeFail(
-        'R_ASYNC_HOST',
-        'Async RuntimeHost.writeOutput is not supported yet; return void synchronously.',
-      );
-    }
+  private async writeOut(line: string): Promise<void> {
+    await this.host.writeOutput(line);
   }
 
-  private execBlock(body: readonly Statement[]): void {
-    for (const s of body) this.execStatement(s);
+  private async execBlock(body: readonly Statement[]): Promise<void> {
+    for (const s of body) await this.execStatement(s);
   }
 
-  private execDeclare(
+  private async execDeclare(
     names: readonly string[],
     typeRef: TypeReference,
     span: SourceSpan,
-  ): void {
+  ): Promise<void> {
     if (typeRef.kind === 'TypeName') {
       for (const name of names) {
         this.env().define(
@@ -328,61 +355,61 @@ export class Interpreter {
       return;
     }
     for (let i = 0; i < names.length; i++) {
-      const arr = this.allocateFromType(typeRef, span);
+      const arr = await this.allocateFromType(typeRef, span);
       this.env().define(names[i]!, 'variable', 'ARRAY', arr);
     }
   }
 
-  private allocateFromType(typeRef: ArrayType, span: SourceSpan): ArrayValue {
+  private async allocateFromType(typeRef: ArrayType, span: SourceSpan): Promise<ArrayValue> {
     const lowers: number[] = [];
     const uppers: number[] = [];
     for (const dim of typeRef.dimensions) {
-      lowers.push(asInteger(this.evalExpr(dim.lower), 'array lower bound'));
-      uppers.push(asInteger(this.evalExpr(dim.upper), 'array upper bound'));
+      lowers.push(asInteger(await this.evalExpr(dim.lower), 'array lower bound'));
+      uppers.push(asInteger(await this.evalExpr(dim.upper), 'array upper bound'));
     }
     return allocateArray(typeRef.elementType.name, lowers, uppers, span);
   }
 
-  private execIf(stmt: Extract<Statement, { kind: 'IfStatement' }>): void {
-    if (isTruthyBoolean(this.evalExpr(stmt.condition))) {
-      this.execBlock(stmt.consequent);
+  private async execIf(stmt: Extract<Statement, { kind: 'IfStatement' }>): Promise<void> {
+    if (isTruthyBoolean(await this.evalExpr(stmt.condition))) {
+      await this.execBlock(stmt.consequent);
       return;
     }
     for (const clause of stmt.elseIfClauses) {
-      if (isTruthyBoolean(this.evalExpr(clause.condition))) {
-        this.execBlock(clause.consequent);
+      if (isTruthyBoolean(await this.evalExpr(clause.condition))) {
+        await this.execBlock(clause.consequent);
         return;
       }
     }
-    if (stmt.alternate) this.execBlock(stmt.alternate);
+    if (stmt.alternate) await this.execBlock(stmt.alternate);
   }
 
-  private execCase(stmt: Extract<Statement, { kind: 'CaseStatement' }>): void {
-    const disc = this.evalExpr(stmt.discriminant);
+  private async execCase(stmt: Extract<Statement, { kind: 'CaseStatement' }>): Promise<void> {
+    const disc = await this.evalExpr(stmt.discriminant);
     for (const arm of stmt.arms) {
       if (arm.label.kind === 'Value') {
-        if (valuesEqual(disc, this.evalExpr(arm.label.value))) {
-          this.execBlock(arm.body);
+        if (valuesEqual(disc, await this.evalExpr(arm.label.value))) {
+          await this.execBlock(arm.body);
           return;
         }
       } else {
-        const low = asNumber(this.evalExpr(arm.label.low), 'CASE range');
-        const high = asNumber(this.evalExpr(arm.label.high), 'CASE range');
+        const low = asNumber(await this.evalExpr(arm.label.low), 'CASE range');
+        const high = asNumber(await this.evalExpr(arm.label.high), 'CASE range');
         const v = asNumber(disc, 'CASE discriminant');
         if (v >= low && v <= high) {
-          this.execBlock(arm.body);
+          await this.execBlock(arm.body);
           return;
         }
       }
     }
-    if (stmt.otherwise) this.execBlock(stmt.otherwise);
+    if (stmt.otherwise) await this.execBlock(stmt.otherwise);
   }
 
-  private execFor(stmt: Extract<Statement, { kind: 'ForStatement' }>): void {
-    const start = asInteger(this.evalExpr(stmt.start), 'FOR start');
-    const end = asInteger(this.evalExpr(stmt.end), 'FOR end');
+  private async execFor(stmt: Extract<Statement, { kind: 'ForStatement' }>): Promise<void> {
+    const start = asInteger(await this.evalExpr(stmt.start), 'FOR start');
+    const end = asInteger(await this.evalExpr(stmt.end), 'FOR end');
     const step = stmt.step
-      ? asInteger(this.evalExpr(stmt.step), 'FOR STEP')
+      ? asInteger(await this.evalExpr(stmt.step), 'FOR STEP')
       : 1;
     if (step === 0) {
       throw runtimeFail('R_FOR_STEP', 'FOR STEP must not be 0.', stmt.span);
@@ -410,28 +437,29 @@ export class Interpreter {
     const goingUp = step > 0;
     for (let i = start; goingUp ? i <= end : i >= end; ) {
       binding.value = integerValue(i);
-      this.execBlock(stmt.body);
+      await this.execBlock(stmt.body);
       const cur = asInteger(binding.value, 'FOR variable');
       i = cur + step;
       // Budget each iteration (empty FOR bodies still count).
       if (goingUp ? i <= end : i >= end) {
         this.tick(stmt.span);
+        await this.maybeYieldEventLoop(stmt.span);
       }
     }
   }
 
-  private readLine(): string {
-    const v = this.host.readInput();
+  private async readLine(): Promise<string> {
+    const v = await this.host.readInput();
     if (typeof v !== 'string') {
       throw runtimeFail(
-        'R_ASYNC_HOST',
-        'Async RuntimeHost.readInput is not supported yet; return a string synchronously.',
+        'R_INPUT',
+        'RuntimeHost.readInput must resolve to a string.',
       );
     }
     return v;
   }
 
-  private execInput(target: AssignTarget, span: SourceSpan): void {
+  private async execInput(target: AssignTarget, span: SourceSpan): Promise<void> {
     let typeHint: TypeNameKind = 'STRING';
     if (target.kind === 'Identifier') {
       const b = this.env().lookup(target.name);
@@ -461,14 +489,14 @@ export class Interpreter {
       }
       typeHint = b.value.element;
     }
-    this.assignTarget(target, parseInput(this.readLine(), typeHint, span), span);
+    await this.assignTarget(target, parseInput(await this.readLine(), typeHint, span), span);
   }
 
-  private assignTarget(
+  private async assignTarget(
     target: AssignTarget,
     value: RuntimeValue,
     span: SourceSpan,
-  ): void {
+  ): Promise<void> {
     if (target.kind === 'Identifier') {
       const b = this.env().lookup(target.name);
       if (!b) {
@@ -514,14 +542,15 @@ export class Interpreter {
       );
     }
     const arr = arrBinding.value;
-        const indices = target.indices.map((ix: Expression) =>
-          asInteger(this.evalExpr(ix), 'array index'),
-        );
+    const indices: number[] = [];
+    for (const ix of target.indices) {
+      indices.push(asInteger(await this.evalExpr(ix), 'array index'));
+    }
     const offset = arrayOffset(arr, indices, span);
     arr.data[offset] = coerceAssign(arr.element, value, span);
   }
 
-  private evalExpr(expr: Expression): RuntimeValue {
+  private async evalExpr(expr: Expression): Promise<RuntimeValue> {
     switch (expr.kind) {
       case 'IntegerLiteral':
         return integerValue(expr.value);
@@ -545,33 +574,33 @@ export class Interpreter {
         return b.value;
       }
       case 'GroupingExpression':
-        return this.evalExpr(expr.expression);
+        return await this.evalExpr(expr.expression);
       case 'UnaryExpression':
         return evalUnary(
           expr.operator,
-          this.evalExpr(expr.argument),
+          await this.evalExpr(expr.argument),
           expr.span,
         );
       case 'BinaryExpression':
         // Short-circuit AND/OR (Cambridge-style; avoids evaluating RHS side effects).
         if (expr.operator === 'AND') {
-          const left = this.evalExpr(expr.left);
+          const left = await this.evalExpr(expr.left);
           if (!isTruthyBoolean(left)) return booleanValue(false);
-          return booleanValue(isTruthyBoolean(this.evalExpr(expr.right)));
+          return booleanValue(isTruthyBoolean(await this.evalExpr(expr.right)));
         }
         if (expr.operator === 'OR') {
-          const left = this.evalExpr(expr.left);
+          const left = await this.evalExpr(expr.left);
           if (isTruthyBoolean(left)) return booleanValue(true);
-          return booleanValue(isTruthyBoolean(this.evalExpr(expr.right)));
+          return booleanValue(isTruthyBoolean(await this.evalExpr(expr.right)));
         }
         return evalBinary(
           expr.operator,
-          this.evalExpr(expr.left),
-          this.evalExpr(expr.right),
+          await this.evalExpr(expr.left),
+          await this.evalExpr(expr.right),
           expr.span,
         );
       case 'CallExpression':
-        return this.callRoutine(
+        return await this.callRoutine(
           expr.callee.name,
           expr.args,
           'function',
@@ -586,9 +615,10 @@ export class Interpreter {
             expr.span,
           );
         }
-        const indices = expr.indices.map((ix: Expression) =>
-          asInteger(this.evalExpr(ix), 'array index'),
-        );
+        const indices: number[] = [];
+        for (const ix of expr.indices) {
+          indices.push(asInteger(await this.evalExpr(ix), 'array index'));
+        }
         return b.value.data[arrayOffset(b.value, indices, expr.span)]!;
       }
       case 'EofExpression':
@@ -604,14 +634,15 @@ export class Interpreter {
     }
   }
 
-  private callRoutine(
+  private async callRoutine(
     name: string,
     argExprs: readonly Expression[],
     mode: 'procedure' | 'function',
     span: SourceSpan,
-  ): RuntimeValue {
+  ): Promise<RuntimeValue> {
     if (lookupBuiltin(name)) {
-      const args = argExprs.map((a) => this.evalExpr(a));
+      const args: RuntimeValue[] = [];
+      for (const a of argExprs) args.push(await this.evalExpr(a));
       const result = executeBuiltin(name, args, this.random, span);
       return mode === 'procedure' ? integerValue(0) : result;
     }
@@ -641,7 +672,8 @@ export class Interpreter {
       );
     }
 
-    const argValues = argExprs.map((a) => this.evalExpr(a));
+    const argValues: RuntimeValue[] = [];
+    for (const a of argExprs) argValues.push(await this.evalExpr(a));
     if (this.stack.depth() >= this.maxCallDepth) {
       throw runtimeFail(
         'R_STACK_OVERFLOW',
@@ -658,7 +690,7 @@ export class Interpreter {
     this.hooks?.onEnterFrame?.(frame);
 
     try {
-      this.execBlock(decl.body);
+      await this.execBlock(decl.body);
       this.hooks?.onExitFrame?.(frame);
       this.stack.pop();
       if (routine.kind === 'function') {
@@ -941,4 +973,13 @@ function parseInput(
       return _exhaustive;
     }
   }
+}
+
+function isAbortError(e: unknown): boolean {
+  return (
+    (typeof DOMException !== 'undefined' &&
+      e instanceof DOMException &&
+      e.name === 'AbortError') ||
+    (e instanceof Error && e.name === 'AbortError')
+  );
 }

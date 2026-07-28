@@ -6,13 +6,17 @@ PseudoPilot is a **modular monorepo**. Deployables live under `apps/` and `servi
 
 ```
                     ┌──► Interpreter  (@pseudopilot/interpreter)
-Lexer → Parser → AST ┤
-                    └──► Checker → IR → Translator  (@pseudopilot/translator)
+Lexer → Parser → AST ┤                      ▲
+                    └──► Checker → IR → Translator
          (@pseudopilot/language-core)   (@pseudopilot/checker)
+                                        (@pseudopilot/translator)
+
+apps/web RuntimeController ──► Interpreter (via IdeRuntimeHost)
+         (Run / Stop / INPUT)     Translator stays independent
 ```
 
 Semantic rules live only in `@pseudopilot/checker` (`C_*` diagnostics).  
-The interpreter executes the **validated AST** (not Python, not required to lower to IR).  
+The interpreter executes the **validated AST** asynchronously (awaits `RuntimeHost`).  
 The translator may add Python-target diagnostics (`T_*`) after checking.
 
 ## Package dependency rules

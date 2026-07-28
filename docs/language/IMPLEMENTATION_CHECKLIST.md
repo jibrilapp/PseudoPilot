@@ -167,12 +167,13 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | --- | --- |
 | Pseudocode ↔ Python translator | 🟡 | Control flow + routines + DECLARE/CONSTANT + check + **builtins/`&`**; no BYREF/files |
 | **Cambridge interpreter** | ✅ | AST execution via `@pseudopilot/interpreter` — see [`INTERPRETER.md`](./INTERPRETER.md) |
+| **Web IDE Run integration** | ✅ | `apps/web/lib/runtime` — Run/Stop/Restart, Console INPUT, Variables |
 | Official language specification docs | ✅ |
 | Complete EBNF document | ✅ |
 | Parser coverage checklist | ✅ |
 | **Semantics document** | ✅ | [`SEMANTICS.md`](./SEMANTICS.md) |
 | IDE Monaco binding to parser | ❌ |
-| Debugger UI (breakpoints / step) | ❌ | Hooks prepared in interpreter |
+| Debugger UI (breakpoints / step) | ❌ | Hooks prepared in interpreter + RuntimeController |
 | AI coach grounded on this dialect | ❌ |
 
 ---
@@ -190,4 +191,4 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 9. 🟡 Translator (V11 subset ↔ Python; Core incomplete — no BYREF/files)
 10. ❌ Extended TYPE / files / OOP / sandbox
 
-**Gate for “run in IDE” milestone:** wire `@pseudopilot/interpreter` + `RuntimeHost` into `apps/web` (separate from translation).
+**Gate for “run in IDE” milestone:** ✅ `RuntimeController` + Run/Stop/INPUT wired in `apps/web`.

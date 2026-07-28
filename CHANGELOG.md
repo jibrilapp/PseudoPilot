@@ -8,16 +8,20 @@ with the usual **0.x** caveat: breaking changes may land in minor bumps until 1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **IDE runtime review:** stable `useSyncExternalStore` snapshots; Stop/Restart bump session generation before abort (no stale `R_CANCELLED` / OUTPUT races); console soft-cap; INPUT cancel + restart regression tests
+
 ### Added
 
-- **`@pseudopilot/interpreter` `0.1.0`**: Cambridge AST interpreter (DECLARE/CONSTANT, control flow, routines, arrays, builtins, `&`, `RuntimeHost` I/O)
-- `docs/language/INTERPRETER.md` — execution model, call stack, debugger hooks, limitations
+- **Web IDE Run integration** (`apps/web/lib/runtime`): Run / Stop / Restart, Console INPUT/OUTPUT, Variables panel via `RuntimeController`
+- Interpreter **async RuntimeHost** + `AbortSignal` cancellation (`R_CANCELLED`)
+- `docs` / `apps/web/lib/runtime/README.md` for session lifecycle
 
 ### Changed
 
-- Architecture diagram: interpreter runs validated AST in parallel with translator IR (does not execute Python)
-- Implementation checklist **Run** column marked ✅ for Core features the interpreter supports
-- Interpreter review fixes: OUTPUT space join, loop step budgeting, AND/OR short-circuit, array bound-shape checks, sync host errors
+- `@pseudopilot/interpreter` `0.2.0` — `runPseudocode` / `interpret` are async
+- Architecture: IDE consumes interpreter through controller only (not React → interpreter)
 ## [0.10.0] — semantic checker
 
 ### Added

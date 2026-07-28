@@ -9,6 +9,7 @@ export type RunOptions = {
   readonly maxCallDepth?: number;
   readonly maxSteps?: number;
   readonly debugger?: InterpretOptions['debugger'];
+  readonly signal?: AbortSignal;
   /**
    * Run semantic checker before execute (default true).
    * Set false only for experiments; production should keep true.
@@ -23,9 +24,13 @@ export type RunResult = InterpretResult & {
 
 /**
  * Full pipeline: parse → (check) → interpret AST.
+ * Async so RuntimeHost may await browser INPUT.
  * Does not translate to Python.
  */
-export function runPseudocode(source: string, options: RunOptions): RunResult {
+export async function runPseudocode(
+  source: string,
+  options: RunOptions,
+): Promise<RunResult> {
   const parsed: ParseResult = parse(source);
   if (!parsed.ok) {
     return {
@@ -56,6 +61,24 @@ export function runPseudocode(source: string, options: RunOptions): RunResult {
     }
   }
 
+  if (options.signal?.aborted) {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'R_CANCELLED',
+          message: 'Execution stopped.',
+        },
+      ],
+      steps: 0,
+      callStack: [],
+      globals: [],
+      parseDiagnostics: parsed.diagnostics,
+      checkDiagnostics,
+    };
+  }
+
   const interpreter = new Interpreter({
     host: options.host,
     ...(options.random !== undefined ? { random: options.random } : {}),
@@ -64,8 +87,9 @@ export function runPseudocode(source: string, options: RunOptions): RunResult {
       : {}),
     ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
     ...(options.debugger !== undefined ? { debugger: options.debugger } : {}),
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
-  const result = interpreter.interpret(parsed.ast);
+  const result = await interpreter.interpret(parsed.ast);
   return {
     ...result,
     parseDiagnostics: parsed.diagnostics,
