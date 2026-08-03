@@ -46,6 +46,13 @@ export type SymbolInfo = {
   readonly span: SourceSpan;
   /** True when introduced implicitly by FOR (no prior DECLARE). */
   readonly implicit?: boolean;
+  /** True for Core builtins seeded into the global scope. */
+  readonly builtin?: boolean;
+  /**
+   * Owning scope name: `'global'` or the PROCEDURE/FUNCTION name.
+   * Used by the language service for hover / symbols / rename.
+   */
+  readonly containerName?: string;
 };
 
 /** Soft cap so live IDE translate cannot flood the UI / memory with diag objects. */
@@ -70,4 +77,9 @@ export type CheckResult = {
    * Prefer `lookupSymbol(globalSymbols, name)` for lookups.
    */
   readonly globalSymbols: ReadonlyMap<string, SymbolInfo>;
+  /**
+   * Every binding created during the check (globals, locals, params, builtins).
+   * Order is definition order. Language service consumes this — no second binder.
+   */
+  readonly symbols: readonly SymbolInfo[];
 };

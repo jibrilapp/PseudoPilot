@@ -1,115 +1,61 @@
-# IDE Runtime Integration
+# IDE Runtime (`apps/web/lib/runtime`)
 
-**App:** `apps/web`  
-**Controller:** `apps/web/lib/runtime`  
-**Debugger:** `apps/web/lib/debugger`  
-**Engine:** `@pseudopilot/interpreter` (Cambridge AST — **not** Python)
+Owns Run / Stop / Restart / Console / Variables for the student IDE.
 
----
+**Execution does not run on the UI thread.** `RuntimeController` sends commands to a
+[`WorkerController`](../worker/README.md); the Web Worker runs `runPseudocode`.
 
 ## Architecture
 
 ```
-IdeShell / Toolbar / Console / Variables / DebugSidebar
-              │ subscribe (useSyncExternalStore)
-              ▼
-        RuntimeController   ← session lifecycle, state machine
-              │
-     BreakpointStore + DebuggerSession
-              │
-        IdeRuntimeHost      ← OUTPUT → console; INPUT → Promise
-              │
-        runPseudocode()     ← parse → check → async interpret
-              │
-     @pseudopilot/interpreter
+React (useSyncExternalStore)
+        │
+        ▼
+RuntimeController          ← UI state, console, breakpoints (main thread)
+        │
+        ▼
+WorkerController           ← message bridge
+        │
+        ▼
+Web Worker (or in-process test port)
+        │
+        ▼
+WorkerSessionRunner
+  ├─ WorkerRuntimeHost     ← INPUT / OUTPUT / VFS
+  ├─ WorkerDebuggerBridge  ← DebuggerSession + pause gate
+  └─ runPseudocode         ← @pseudopilot/interpreter
 ```
 
-Translator remains independent (live Python pane). Run never executes translated Python.
+Translator remains independent (live translate pane only).
 
-React must never call the interpreter directly. `usePseudocodeRuntime` only reads a cached snapshot.
+## Why a worker before a sandbox?
 
-See also: [`../debugger/README.md`](../debugger/README.md).
+The worker isolates **CPU-heavy interpretation** and **async park** from React rendering
+so the IDE stays responsive (Stop, typing, scrolling) during tight loops. It is **not**
+a security boundary — the same-origin worker still shares the page's privileges.
+A future sandbox can reuse the same message protocol over a stricter host.
 
----
+## Ownership
 
-## Execution states
-
-| State | Meaning |
+| Concern | Thread |
 | --- | --- |
-| `idle` | No active session |
-| `running` | Interpreter advancing |
-| `paused` | Debugger gate held (breakpoint / step / Pause) |
-| `waitingForInput` | `INPUT` paused; console accepts a line |
-| `completed` | Finished successfully |
-| `runtimeError` | `R_*` diagnostic |
-| `semanticError` | Checker/parse `C_*` / `E_*` before or instead of run |
-| `cancelled` | Stop / AbortSignal |
+| React / snapshots / `useSyncExternalStore` | Main |
+| BreakpointStore (UI) | Main (synced to worker) |
+| `runPseudocode` / parse / check | Worker |
+| Debugger pause gate / step policy | Worker |
+| VirtualFileSystem | Worker (per run) |
+| Console rendering / INPUT draft | Main |
 
-Invalid transitions are rejected (`canTransition`); terminal teardown may force `cancelled` / error states.
+## Session generation
 
----
-
-## Session model
-
-- One `RuntimeController` singleton per IDE tab (`getRuntimeController`).
-- **Generation id:** every `run()` and every `stop()` / mid-run `restart()` **invalidates** the session by bumping `generation` *before* aborting. Late OUTPUT, INPUT callbacks, and `runPseudocode` results from the old generation are ignored — this prevents Stop/Restart races that would otherwise re-apply `R_CANCELLED` diagnostics or stale console lines.
-- `AbortController` is passed as `signal` into the interpreter (`R_CANCELLED`).
-- The interpreter yields to the **macrotask** queue every 256 steps so Stop can interrupt tight loops (microtask-only yields are insufficient).
-- Pending INPUT promises are rejected on Stop via `IdeRuntimeHost.cancelInput`.
-- Parked debugger gates are rejected on Stop via `DebuggerSession.cancel`.
-- Concurrent Run while busy is ignored (no overlapping sessions).
-- Console lines are soft-capped (`MAX_CONSOLE_LINES = 2000`) so infinite OUTPUT cannot unbounded-grow the store.
-
----
-
-## Snapshot / React binding
-
-`getSnapshot()` returns a **stable object reference** until the next `emit()`.
-
-`useSyncExternalStore` compares snapshots with `Object.is`. Returning a fresh object on every `getSnapshot()` call causes an infinite re-render loop — the controller always rebuilds the snapshot only inside `emit()`.
-
-`submitInput` reads the draft via a ref so the callback identity does not churn on every keystroke.
-
----
-
-## RuntimeHost (browser)
-
-```ts
-writeOutput(line) → console line (kind: out)
-readInput() → Promise<string>  // resolves on submitInput()
-```
-
-Designed for async from day one; the interpreter awaits host I/O.
-
-Overlapping `readInput()` rejects the previous waiter (Cambridge programs are single-threaded; a second wait would otherwise deadlock the UI).
-
----
-
-## Variables panel
-
-Snapshots come from interpreter bindings (`formatValue`), not the AST:
-
-- Globals from the global environment
-- Locals / parameters / constants from the current stack frame
-- Full refresh on debugger pause; throttled while running
-
----
-
-## Future debugger expansions
-
-1. Watch expressions evaluated in the current frame environment.
-2. Conditional breakpoints (`Breakpoint.condition`).
-3. Click call-stack frames to inspect non-top locals.
-4. Keep React out of the interpreter — extend `DebuggerSession` / controller only.
-
----
+Stop / Restart bump `generation` so late `output` / `cancelled` / pause events from the
+aborted session are ignored. `run()` returns a Promise settled when the worker reports a
+terminal event **or** when Stop settles early.
 
 ## Limitations
 
-- Client-local only (no sandbox / worker isolation yet)
-- Single concurrent run per IDE instance (page singleton)
-- Variable refresh is throttled while running (full on pause)
-- Text file I/O uses an in-tab virtual filesystem (never the OS disk); cleared each run
-- Aborted interpreters may burn CPU until the next macrotask yield (~256 steps)
-- Console auto-open effects in `IdeShell` can re-open panels the student closed while busy
-- Terminal states (`completed` / `cancelled` / errors) do not auto-return to `idle`
+- Client-local only (no security sandbox)
+- Single concurrent run per IDE instance
+- Variable snapshots sent on pause / finish only (not every step)
+- Terminal states do not auto-return to `idle`
+- Worker recreate on transport crash; VFS is ephemeral per run

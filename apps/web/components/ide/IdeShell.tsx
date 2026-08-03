@@ -198,8 +198,8 @@ export function IdeShell() {
             </div>
             <div
               className={cn(
-                'shrink-0 overflow-hidden border-t border-pp-line transition-[height,opacity] duration-200 ease-apple',
-                consoleOpen ? 'h-[168px] opacity-100 lg:h-[188px]' : 'h-0 border-t-0 opacity-0',
+                'shrink-0 overflow-hidden border-t border-pp-line bg-pp-shell/40 transition-[height,opacity] duration-200 ease-apple',
+                consoleOpen ? 'h-[180px] opacity-100 lg:h-[200px]' : 'h-0 border-t-0 opacity-0',
               )}
             >
               {consoleOpen && consoleNode}

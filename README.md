@@ -16,16 +16,19 @@ Bidirectional **Cambridge International Computer Science (9618) pseudocode ↔ P
 | --- | --- |
 | `@pseudopilot/language-core` | Lexer + parser + AST for a large Core subset (control flow, procedures, functions, DECLARE/arrays/files parsed) |
 | `@pseudopilot/checker` | Semantic checker: scopes, symbols, types, undeclared names, call arity/types |
+| `@pseudopilot/compiler-service` | Incremental compilation: document / AST / semantic caches, invalidation, dependency graph |
+| `@pseudopilot/language-service` | IDE features (hover, definition, refs, rename, completion, signatures) — reuses compiler-service; no execute/translate |
+| `@pseudopilot/conformance` | Cross-package Cambridge Core corpus, round-trips, stress, fuzz, benchmarks |
 | `@pseudopilot/interpreter` | **AST interpreter** — async host, AbortSignal, debugger hooks, **virtual text files** |
 | `@pseudopilot/translator` | Bidirectional translation via IR (includes text file I/O mapping) |
-| `apps/web` | Student IDE: Run / Debug / Console / Variables — interpreter (not Python); VFS for files |
+| `apps/web` | Student IDE: **Monaco** editor, Run / Debug / Console / Variables — interpreter in a **Web Worker**; VFS for files |
 | AI coach / remote OS sandbox | Not yet |
 
 **Interpreter supported subset:** assignment, I/O (host), expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, arrays (bounds-checked), builtins, `&`, text file I/O (VFS).
 
 **Translator supported subset (V12):** same Core surface for translation including text file I/O (no BYREF / DATE / OOP / RANDOM files).
 
-Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md)). IDE runtime: [`apps/web/lib/runtime/README.md`](./apps/web/lib/runtime/README.md). Debugger: [`apps/web/lib/debugger/README.md`](./apps/web/lib/debugger/README.md). Files: [`packages/interpreter/src/files/README.md`](./packages/interpreter/src/files/README.md).
+Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md), [`LANGUAGE_SERVICE.md`](./docs/language/LANGUAGE_SERVICE.md), [`INCREMENTAL_COMPILATION.md`](./docs/language/INCREMENTAL_COMPILATION.md)). Testing: [`docs/TESTING.md`](./docs/TESTING.md). IDE Monaco: [`docs/ide/MONACO.md`](./docs/ide/MONACO.md). IDE runtime: [`apps/web/lib/runtime/README.md`](./apps/web/lib/runtime/README.md). Execution worker: [`apps/web/lib/worker/README.md`](./apps/web/lib/worker/README.md). Debugger: [`apps/web/lib/debugger/README.md`](./apps/web/lib/debugger/README.md). Files: [`packages/interpreter/src/files/README.md`](./packages/interpreter/src/files/README.md).
 
 ---
 
@@ -68,14 +71,23 @@ apps/web  ──imports──►  @pseudopilot/translator  ──►  language-c
                 │              │
                 │         canonical IR (translation only)
                 │
-                └──imports──►  @pseudopilot/interpreter  ──►  language-core + checker
-                                    │
-                               RuntimeController + IdeRuntimeHost
-                                    │
-                               AST tree-walk (async I/O)
+                ├──imports──►  @pseudopilot/interpreter  ──►  language-core + checker
+                │                   │
+                │              RuntimeController + IdeRuntimeHost (via Web Worker)
+                │                   │
+                │              AST tree-walk (async I/O)
+                │
+                ├── Monaco Editor (CodeSurface)
+                │         │
+                └──imports──►  @pseudopilot/language-service  ──►  compiler-service
+                                    │                                  │
+                               hover / definition / refs         IncrementalCompiler
+                               (no execute, no translate)        (hash / AST / semantic caches)
+                                                                         │
+                                                                   language-core + checker
 ```
 
-**Boundary rule:** `language-core`, `checker`, `interpreter`, and `translator` must not import from `apps/*` or AI packages. Interpreter must **not** depend on translator. React components must **not** call the interpreter directly — use `RuntimeController`.
+**Boundary rule:** `language-core`, `checker`, `compiler-service`, `interpreter`, `translator`, and `language-service` must not import from `apps/*` or AI packages. Interpreter must **not** depend on translator. Language service must **not** depend on interpreter or translator. `compiler-service` must **not** depend on language-service (features attach via provider). React components must **not** call the interpreter directly — use `RuntimeController`.
 
 Scale notes for a future multi-tenant product: [`docs/architecture/scalability.md`](./docs/architecture/scalability.md).
 
@@ -105,7 +117,7 @@ CI runs `pnpm check` on every PR to `main` (see `.github/workflows/ci.yml`).
 ## What’s next (high level)
 
 1. Optional BYREF / DATE / Extended surface
-2. Sandboxed / worker execution for untrusted student programs
+2. Security sandbox / remote execution (reuse worker message protocol)
 3. Publishable package releases with changelog automation
 4. Broader Cambridge Extended / OOP coverage
 5. Monaco editor + richer debugger (watches, conditional breakpoints)

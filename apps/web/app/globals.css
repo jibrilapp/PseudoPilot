@@ -104,3 +104,32 @@ body {
     @apply text-[11px] font-semibold tracking-[0.04em] text-pp-faint;
   }
 }
+
+/* Monaco editor — breakpoint glyphs + execution highlight */
+.pp-bp-glyph {
+  background: #e11d48;
+  border-radius: 999px;
+  width: 10px !important;
+  height: 10px !important;
+  margin-left: 4px;
+  margin-top: 6px;
+}
+
+.pp-bp-glyph-disabled {
+  background: transparent;
+  border: 1.5px solid #fb7185;
+  border-radius: 999px;
+  width: 10px !important;
+  height: 10px !important;
+  margin-left: 4px;
+  margin-top: 6px;
+  box-sizing: border-box;
+}
+
+.pp-exec-line {
+  background: rgba(245, 158, 11, 0.14) !important;
+}
+
+.monaco-editor .margin-view-overlays .line-numbers {
+  cursor: pointer;
+}

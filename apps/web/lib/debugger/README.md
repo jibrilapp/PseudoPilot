@@ -2,6 +2,7 @@
 
 **Location:** `apps/web/lib/debugger`  
 **Engine:** `@pseudopilot/interpreter` via `DebuggerHooks`  
+**Execution:** Web Worker (`apps/web/lib/worker`) — pause gate runs **with** the interpreter  
 **UI consumer:** `RuntimeController` → React (`usePseudocodeRuntime`)
 
 The debugger debugs **Cambridge pseudocode AST** — never translated Python.
@@ -14,10 +15,12 @@ The debugger debugs **Cambridge pseudocode AST** — never translated Python.
 Toolbar / CodeSurface / DebugSidebar / Variables
               │ useSyncExternalStore
               ▼
-        RuntimeController
-              │ owns
+        RuntimeController (main)
+              │ WorkerCommand / WorkerEvent
               ▼
-     BreakpointStore  +  DebuggerSession
+        WorkerController → Web Worker
+              │
+     BreakpointStore (mirrored) + DebuggerSession
               │ builds DebuggerHooks
               ▼
         runPseudocode({ debugger, signal, host })
@@ -25,7 +28,8 @@ Toolbar / CodeSurface / DebugSidebar / Variables
         Interpreter.tick → await onBeforeStatement
 ```
 
-React never talks to the interpreter or owns breakpoint storage.
+React never talks to the interpreter. Breakpoint toggles live on the main thread and are
+synced to the worker via `setBreakpoints`.
 
 ---
 
@@ -51,11 +55,12 @@ Multiple breakpoints are supported. They persist across runs until cleared.
 | --- | --- |
 | Continue | Enabled breakpoint on `span.start.line` |
 | Step Into | Next statement tick |
-| Step Over | Next tick with `depth <= pauseDepth` |
-| Step Out | Next tick with `depth < pauseDepth` |
+| Step Over | Next tick with `depth <= pauseDepth` **or** enabled BP |
+| Step Out | Next tick with `depth < pauseDepth` **or** enabled BP |
 | Pause | Flag → next statement boundary |
 
-Suspend is an **async gate** inside `onBeforeStatement` (Promise). Legacy sync return `'pause'` still aborts with `R_DEBUG_PAUSE`.
+Suspend is an **async gate** inside `onBeforeStatement` (Promise). The worker posts a
+serialized `paused` event (location, call stack, variables) — no `StackFrame` crosses the boundary.
 
 ---
 
@@ -66,8 +71,6 @@ Mirrored via `onEnterFrame` / `onExitFrame`. On pause, UI receives top-first fra
 - name / kind
 - line (current span for top; `callSpan` for callers)
 - parameter arguments (`kind === 'parameter'`)
-
-Frame click-to-select is reserved for a future milestone.
 
 ---
 
@@ -83,18 +86,16 @@ Extends the runtime machine with **`paused`**:
 
 ## Future (not implemented)
 
-- Watch expressions (evaluate in current frame env)
-- Conditional breakpoints (`Breakpoint.condition`)
+- Watch expressions / conditional breakpoints
 - Click stack frame to inspect non-top locals
 - Expression-level stepping
-- Timeline / reverse debugging
+- Security sandbox (protocol-ready; see worker README)
 
 ---
 
 ## Limitations
 
-- Line breakpoints only (not column / statement-id)
-- Loop headers re-tick each iteration (usually desired)
-- No worker isolation — pause holds the interpreter Promise on the main thread
+- Line breakpoints only
+- Loop headers re-tick each iteration
 - Editor is custom `CodeSurface` (not Monaco)
-- Disabled debugger path still installs a thin hook for variable throttle when running
+- Variable snapshots only on pause / program end (not every running step)

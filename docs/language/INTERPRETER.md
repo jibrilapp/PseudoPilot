@@ -1,7 +1,8 @@
 # Cambridge Interpreter
 
 **Package:** `@pseudopilot/interpreter` `0.4.0`  
-**Status:** Core AST execution + async RuntimeHost + AbortSignal + **text-file VFS** + debugger hooks (IDE wired)
+**Status:** Core AST execution + async RuntimeHost + AbortSignal + **text-file VFS** + debugger hooks  
+**IDE:** Execution runs in a **Web Worker** (`apps/web/lib/worker`) — UI never calls `runPseudocode` on the main thread.
 
 ---
 
@@ -112,7 +113,7 @@ Already present:
 
 Legacy: returning `'pause'` **synchronously** still aborts with `R_DEBUG_PAUSE`. Prefer awaiting inside the hook.
 
-Not yet: watch expressions, conditional breakpoints, pause/resume without Promise gates, Monaco binding.
+Not yet: watch expressions, conditional breakpoints, pause/resume without Promise gates.
 
 Avoided anti-patterns: no source-less IR execution, no flattening spans away, no global mutable singleton interpreter.
 

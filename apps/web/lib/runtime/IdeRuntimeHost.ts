@@ -9,6 +9,9 @@ export type InputRequestHandlers = {
 };
 
 /**
+ * Legacy main-thread RuntimeHost (unit tests / historical).
+ * Production Run path uses {@link WorkerRuntimeHost} inside the execution worker.
+ *
  * Browser RuntimeHost: OUTPUT is sync into the controller;
  * INPUT returns a Promise resolved by {@link IdeRuntimeHost.submitInput}.
  * File I/O uses an in-tab {@link VirtualFileSystem} (never the OS disk).

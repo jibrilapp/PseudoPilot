@@ -13,6 +13,10 @@ PseudoPilot targets the **Cambridge International AS & A Level Computer Science 
 | [SEMANTICS.md](./SEMANTICS.md) | Semantic checker: scopes, types, diagnostics (`C_*`) |
 | [SPEC_REVIEW.md](./SPEC_REVIEW.md) | Production readiness review of this suite (errata + priorities) |
 | [TRANSLATION.md](./TRANSLATION.md) | Translation engine architecture and V10 mapping |
+| [LANGUAGE_SERVICE.md](./LANGUAGE_SERVICE.md) | IDE language service (hover, refs, rename, …) — no execute/translate |
+| [INCREMENTAL_COMPILATION.md](./INCREMENTAL_COMPILATION.md) | Document / AST / semantic caches + invalidation |
+
+Cross-cutting quality: [`../TESTING.md`](../TESTING.md) · corpus package `@pseudopilot/conformance`.
 
 ## Status legend
 

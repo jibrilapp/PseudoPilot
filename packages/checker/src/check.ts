@@ -59,6 +59,8 @@ type Ctx = {
    * Files are process-global in Cambridge; not scoped to procedures.
    */
   openFiles: Map<string, import('./file/check-files.js').FileOpenState>;
+  /** All successful bindings for the language service (no second binder). */
+  readonly symbols: import('./types.js').SymbolInfo[];
 };
 
 function diag(
@@ -121,8 +123,19 @@ function reportDup(ctx: Ctx, diagnostic: CheckerDiagnostic): void {
   });
 }
 
-function defineSymbol(ctx: Ctx, symbol: Parameters<Scope['define']>[0]): boolean {
-  return ctx.scope.define(symbol, (d) => reportDup(ctx, d));
+function defineSymbol(
+  ctx: Ctx,
+  symbol: Parameters<Scope['define']>[0],
+): boolean {
+  const ok = ctx.scope.define(symbol, (d) => reportDup(ctx, d));
+  if (ok) {
+    const withContainer =
+      symbol.containerName !== undefined
+        ? symbol
+        : { ...symbol, containerName: ctx.scope.name };
+    ctx.symbols.push(withContainer);
+  }
+  return ok;
 }
 
 /**
@@ -140,6 +153,7 @@ export function check(
   const maxDiagnostics =
     options?.maxDiagnostics ?? DEFAULT_MAX_CHECKER_DIAGNOSTICS;
   const diagnostics: CheckerDiagnostic[] = [];
+  const symbols: import('./types.js').SymbolInfo[] = [];
   const global = new Scope(null, 'global');
   const ctx: Ctx = {
     diagnostics,
@@ -149,6 +163,7 @@ export function check(
     functionReturn: null,
     inProcedure: false,
     openFiles: new Map(),
+    symbols,
   };
 
   // Seed Core builtins before user routines (soft-reserved names).
@@ -172,6 +187,7 @@ export function check(
     ok: !diagnostics.some((d) => d.severity === 'error'),
     diagnostics,
     globalSymbols: global.snapshot(),
+    symbols,
   };
 }
 
@@ -189,6 +205,7 @@ function injectBuiltins(ctx: Ctx): void {
         'function',
         { kind: 'function', params, returns },
         BUILTIN_SPAN,
+        { builtin: true, containerName: 'global' },
       ),
     );
   }
@@ -478,7 +495,7 @@ function checkFor(
         'variable',
         scalar('INTEGER'),
         stmt.span,
-        true,
+        { implicit: true },
       ),
     );
   }

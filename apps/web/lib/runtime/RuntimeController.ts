@@ -1,17 +1,17 @@
 import {
-  formatValue,
-  runPseudocode,
-  type StackFrame,
-} from '@pseudopilot/interpreter';
-import {
   BreakpointStore,
-  DebuggerSession,
   type Breakpoint,
   type CallStackFrameView,
   type PauseLocation,
   type StepMode,
 } from '@/lib/debugger';
-import { IdeRuntimeHost } from './IdeRuntimeHost';
+import {
+  WorkerController,
+  toWireBreakpoints,
+  type WorkerControllerOptions,
+  type WorkerEvent,
+  type WireVariable,
+} from '@/lib/worker';
 import {
   canTransition,
   type ExecutionState,
@@ -58,9 +58,14 @@ export type RunOptions = {
   readonly initialStepMode?: StepMode;
 };
 
+export type RuntimeControllerOptions = {
+  /** Worker transport options (tests force in-process). */
+  readonly worker?: WorkerControllerOptions;
+};
+
 /**
- * Owns interpreter + debugger sessions for the web IDE.
- * React components subscribe to snapshots; they never call the interpreter directly.
+ * Owns IDE runtime UI state. Execution runs in a dedicated Web Worker via
+ * {@link WorkerController} — the UI thread never calls `runPseudocode`.
  */
 export class RuntimeController {
   private state: ExecutionState = 'idle';
@@ -69,24 +74,37 @@ export class RuntimeController {
   private variables: RuntimeVariableRow[] = [];
   private frameName: string | null = null;
   private steps = 0;
+  /** Bumped to ignore stale worker events after Stop/Restart. */
   private generation = 0;
-  private abort: AbortController | null = null;
-  private host: IdeRuntimeHost | null = null;
+  /** sessionId posted to the worker for the in-flight run. */
+  private runSessionId = 0;
   private lastSource = '';
-  private varTick = 0;
   private readonly listeners = new Set<() => void>();
   private snapshot: RuntimeSnapshot = emptySnapshot();
 
   private readonly breakpoints = new BreakpointStore();
-  private debugSession: DebuggerSession | null = null;
   private pauseLocation: PauseLocation | null = null;
   private callStack: CallStackFrameView[] = [];
-  /** In-flight `run()` promise — Restart awaits this so interpreters never overlap. */
   private runPromise: Promise<void> | null = null;
+  private settleRun: (() => void) | null = null;
 
-  constructor() {
+  private readonly worker: WorkerController;
+
+  constructor(options: RuntimeControllerOptions = {}) {
+    this.worker = new WorkerController(
+      options.worker ?? { inProcess: typeof Worker === 'undefined' },
+    );
+    this.worker.ensureStarted({
+      onEvent: (event) => this.onWorkerEvent(event),
+    });
     this.breakpoints.subscribe(() => {
       this.emit();
+      if (this.isBusy() && this.runSessionId !== 0) {
+        this.worker.setBreakpoints(
+          this.runSessionId,
+          toWireBreakpoints(this.breakpoints.list()),
+        );
+      }
     });
   }
 
@@ -99,6 +117,16 @@ export class RuntimeController {
 
   getSnapshot(): RuntimeSnapshot {
     return this.snapshot;
+  }
+
+  /** Test / diagnostics: how many times the worker was recreated after crash. */
+  getWorkerCrashCount(): number {
+    return this.worker.getCrashCount();
+  }
+
+  /** Force a fresh worker instance (crash recovery / recreate). */
+  recreateWorker(): void {
+    this.worker.recreate();
   }
 
   isBusy(): boolean {
@@ -139,54 +167,50 @@ export class RuntimeController {
 
   stop(): void {
     if (!this.isBusy()) return;
-    this.debugSession?.cancel();
-    this.invalidateSession();
+    const sid = this.runSessionId;
+    this.generation += 1;
+    this.worker.stop(sid);
     this.pauseLocation = null;
     this.callStack = [];
     this.setState('cancelled');
     this.pushConsole('info', 'Execution stopped.');
+    this.finishRunPromise();
     this.emit();
   }
 
   pause(): void {
     if (this.state !== 'running') return;
-    this.debugSession?.requestPause();
+    this.worker.pause(this.runSessionId);
   }
 
   continue(): void {
-    if (this.state !== 'paused' || !this.debugSession) return;
+    if (this.state !== 'paused') return;
     this.setState('running');
     this.emit();
-    this.debugSession.continue();
+    this.worker.continue(this.runSessionId);
   }
 
   stepInto(): void {
-    if (this.state === 'paused' && this.debugSession) {
-      this.setState('running');
-      this.emit();
-      this.debugSession.stepInto();
-      return;
-    }
+    if (this.state !== 'paused') return;
+    this.setState('running');
+    this.emit();
+    this.worker.stepInto(this.runSessionId);
   }
 
   stepOver(): void {
-    if (this.state !== 'paused' || !this.debugSession) return;
+    if (this.state !== 'paused') return;
     this.setState('running');
     this.emit();
-    this.debugSession.stepOver();
+    this.worker.stepOver(this.runSessionId);
   }
 
   stepOut(): void {
-    if (this.state !== 'paused' || !this.debugSession) return;
+    if (this.state !== 'paused') return;
     this.setState('running');
     this.emit();
-    this.debugSession.stepOut();
+    this.worker.stepOut(this.runSessionId);
   }
 
-  /**
-   * Start (or resume-by-rerun) stepping from the first statement when idle.
-   * When already paused, delegates to {@link stepInto}.
-   */
   async stepIntoFromIdle(source: string): Promise<void> {
     if (this.state === 'paused') {
       this.stepInto();
@@ -197,21 +221,22 @@ export class RuntimeController {
   }
 
   submitInput(line: string): void {
-    if (this.state !== 'waitingForInput' || !this.host) return;
+    if (this.state !== 'waitingForInput') return;
     this.pushConsole('in', line);
     this.setState('running');
-    this.host.submitInput(line);
+    this.worker.input(this.runSessionId, line);
     this.emit();
   }
 
   async restart(source?: string): Promise<void> {
     const src = source ?? this.lastSource;
     if (this.isBusy()) {
-      this.debugSession?.cancel();
-      this.invalidateSession();
+      const sid = this.runSessionId;
+      this.generation += 1;
+      this.worker.stop(sid);
       this.setState('cancelled');
+      this.finishRunPromise();
     }
-    // Drain the previous interpreter so we never run two sessions at once.
     const previous = this.runPromise;
     if (previous) {
       await previous.catch(() => undefined);
@@ -243,260 +268,151 @@ export class RuntimeController {
     }
   }
 
-  private async executeRun(
+  private executeRun(
     source: string,
     options: RunOptions = {},
   ): Promise<void> {
     this.lastSource = source;
     this.generation += 1;
     const gen = this.generation;
+    this.runSessionId = gen;
 
     this.diagnostics = [];
     this.variables = [];
     this.frameName = null;
     this.steps = 0;
-    this.varTick = 0;
     this.pauseLocation = null;
     this.callStack = [];
     this.pushConsole('info', 'Running…');
+    this.setState('running');
+    this.emit();
 
-    const abort = new AbortController();
-    this.abort = abort;
+    return new Promise<void>((resolve) => {
+      this.settleRun = resolve;
+      this.worker.run({
+        sessionId: gen,
+        source,
+        breakpoints: toWireBreakpoints(this.breakpoints.list()),
+        initialStepMode: options.initialStepMode,
+      });
+    });
+  }
 
-    const session = new DebuggerSession(this.breakpoints, {
-      onPause: ({ location, callStack, frame }) => {
-        if (gen !== this.generation) return;
-        this.pauseLocation = location;
-        this.callStack = [...callStack];
-        this.steps = location.step;
-        this.refreshVariablesFromFrame(frame);
+  private onWorkerEvent(event: WorkerEvent): void {
+    if (event.type === 'ready' || event.type === 'pong') return;
+
+    if (event.type === 'workerError') {
+      if (event.sessionId === null) {
+        // Transport crash — recreate is handled by WorkerController.
+        return;
+      }
+      if (event.sessionId !== this.generation) return;
+      this.diagnostics = [
+        {
+          id: nextDiagId(),
+          severity: 'error',
+          code: 'R_WORKER',
+          message: event.message,
+        },
+      ];
+      this.setState('runtimeError');
+      this.finishRunPromise();
+      this.emit();
+      return;
+    }
+
+    if (!('sessionId' in event) || event.sessionId !== this.generation) {
+      return;
+    }
+
+    switch (event.type) {
+      case 'output':
+        this.pushConsole('out', event.line);
+        this.emit();
+        return;
+      case 'inputRequest':
+        this.setState('waitingForInput');
+        this.pushConsole('info', 'Waiting for INPUT…');
+        this.emit();
+        return;
+      case 'paused':
+        this.pauseLocation = event.location;
+        this.callStack = [...event.callStack];
+        this.steps = event.location.step;
+        this.variables = wireToRows(event.variables);
+        this.frameName =
+          event.location.frameKind === 'global' ? null : event.location.frameName;
         this.setState('paused');
         this.pushConsole(
           'info',
-          `Paused at line ${location.line} (${location.frameName}).`,
+          `Paused at line ${event.location.line} (${event.location.frameName}).`,
         );
         this.emit();
-      },
-      onResume: () => {
-        if (gen !== this.generation) return;
+        return;
+      case 'resumed':
         this.pauseLocation = null;
-        // State may already be `running` from continue/step; keep call stack until next pause.
         if (this.state === 'paused') {
           this.setState('running');
         }
         this.emit();
-      },
-    });
-    if (options.initialStepMode) {
-      session.setInitialMode(options.initialStepMode);
-    }
-    this.debugSession = session;
-    const debugHooks = session.createHooks();
-
-    const host = new IdeRuntimeHost(
-      (line) => {
-        if (gen !== this.generation) return;
-        this.pushConsole('out', line);
-        this.emit();
-      },
-      {
-        onWaiting: () => {
-          if (gen !== this.generation) return;
-          this.setState('waitingForInput');
-          this.pushConsole('info', 'Waiting for INPUT…');
-          this.emit();
-        },
-        onResolved: () => {
-          /* submitInput / cancelInput owns transitions */
-        },
-      },
-    );
-    this.host = host;
-    this.setState('running');
-    this.emit();
-
-    try {
-      const result = await runPseudocode(source, {
-        host,
-        signal: abort.signal,
-        debugger: {
-          onEnterFrame: debugHooks.onEnterFrame,
-          onExitFrame: debugHooks.onExitFrame,
-          onBeforeStatement: async (info) => {
-            if (gen !== this.generation) return 'continue';
-            this.steps = info.step;
-
-            const action = await debugHooks.onBeforeStatement?.(info);
-
-            if (gen !== this.generation) return 'continue';
-
-            // Throttled live vars while running (full refresh on pause).
-            if (this.state === 'running') {
-              this.varTick += 1;
-              const refresh =
-                info.frame.kind === 'global'
-                  ? this.varTick % 8 === 0
-                  : this.varTick % 4 === 0;
-              if (refresh) {
-                this.refreshVariablesFromFrame(info.frame);
-                this.emit();
-              }
-            }
-
-            return action;
-          },
-        },
-      });
-
-      if (gen !== this.generation) return;
-
-      this.steps = result.steps;
-      this.applyFinalSnapshots(result.globals, result.callStack);
-      this.pauseLocation = null;
-      this.callStack = [];
-
-      if (!result.ok) {
-        // Structured diagnostics are rendered by ConsolePanel; avoid duplicating
-        // the same messages as plain console error lines.
-        const views = result.diagnostics.map(mapDiagnostic);
-        this.diagnostics = views;
-        const code = result.diagnostics[0]?.code ?? '';
-        if (code.startsWith('C_') || code.startsWith('E_')) {
-          this.setState('semanticError');
-        } else if (code === 'R_CANCELLED') {
-          this.setState('cancelled');
-        } else {
-          this.setState('runtimeError');
-        }
-      } else if (abort.signal.aborted) {
-        this.setState('cancelled');
-      } else {
+        return;
+      case 'progress':
+        this.steps = event.steps;
+        // Do not emit every progress tick — avoids UI thrash. Snapshot updates
+        // on pause / terminal / OUTPUT are enough for responsiveness.
+        return;
+      case 'completed':
+        this.steps = event.steps;
+        this.variables = wireToRows(event.variables);
+        this.frameName = event.frameName;
+        this.pauseLocation = null;
+        this.callStack = [];
         this.setState('completed');
         this.pushConsole('info', 'Program finished.');
-      }
-    } catch (e) {
-      if (gen !== this.generation) return;
-      if (abort.signal.aborted || isAbortLike(e)) {
-        this.setState('cancelled');
-      } else {
-        const message =
-          e instanceof Error ? e.message : 'Unexpected runtime failure.';
-        this.diagnostics = [
-          {
-            id: nextDiagId(),
-            severity: 'error',
-            code: 'R_INTERNAL',
-            message,
-          },
-        ];
-        this.setState('runtimeError');
-      }
-    } finally {
-      if (gen === this.generation) {
-        this.debugSession = null;
-        this.teardownSession();
+        this.finishRunPromise();
         this.emit();
-      }
-    }
-  }
-
-  private invalidateSession(): void {
-    this.generation += 1;
-    this.host?.cancelInput();
-    this.abort?.abort();
-    this.debugSession = null;
-    this.teardownSession();
-  }
-
-  private refreshVariablesFromFrame(frame: StackFrame): void {
-    const rows: RuntimeVariableRow[] = [];
-    if (frame.kind === 'global') {
-      for (const b of frame.env.snapshot().values()) {
-        rows.push({
-          name: b.name,
-          type: b.typeName,
-          value: formatValue(b.value),
-          kind: b.kind,
-          scope: scopeOf(b.kind, 'global'),
-        });
-      }
-      this.frameName = null;
-    } else {
-      const parent = frame.env.parent;
-      if (parent) {
-        for (const b of parent.snapshot().values()) {
-          rows.push({
-            name: b.name,
-            type: b.typeName,
-            value: formatValue(b.value),
-            kind: b.kind,
-            scope: scopeOf(b.kind, 'global'),
-          });
+        return;
+      case 'semanticError':
+        this.diagnostics = event.diagnostics.map(mapWireDiag);
+        this.pauseLocation = null;
+        this.callStack = [];
+        this.setState('semanticError');
+        this.finishRunPromise();
+        this.emit();
+        return;
+      case 'runtimeError':
+        this.steps = event.steps;
+        this.diagnostics = event.diagnostics.map(mapWireDiag);
+        this.variables = wireToRows(event.variables);
+        this.frameName = event.frameName;
+        this.pauseLocation = null;
+        this.callStack = [];
+        this.setState('runtimeError');
+        this.finishRunPromise();
+        this.emit();
+        return;
+      case 'cancelled':
+        this.steps = event.steps;
+        this.pauseLocation = null;
+        this.callStack = [];
+        // Stop() may have already set cancelled + settled.
+        if (this.state !== 'cancelled') {
+          this.setState('cancelled');
         }
+        this.finishRunPromise();
+        this.emit();
+        return;
+      default: {
+        const _exhaustive: never = event;
+        return _exhaustive;
       }
-      for (const b of frame.env.snapshot().values()) {
-        rows.push({
-          name: b.name,
-          type: b.typeName,
-          value: formatValue(b.value),
-          kind: b.kind,
-          scope: scopeOf(b.kind, 'local'),
-        });
-      }
-      this.frameName = frame.name;
     }
-    this.variables = rows;
   }
 
-  private applyFinalSnapshots(
-    globals: readonly {
-      name: string;
-      kind: string;
-      typeName: string;
-      value: string;
-    }[],
-    callStack: readonly {
-      kind: string;
-      name: string;
-      variables: readonly {
-        name: string;
-        kind: string;
-        typeName: string;
-        value: string;
-      }[];
-    }[],
-  ): void {
-    const rows: RuntimeVariableRow[] = [];
-    for (const g of globals) {
-      rows.push({
-        name: g.name,
-        type: g.typeName,
-        value: g.value,
-        kind: g.kind,
-        scope: scopeOf(g.kind, 'global'),
-      });
-    }
-    const top = callStack[0];
-    if (top && top.kind !== 'global') {
-      this.frameName = top.name;
-      for (const v of top.variables) {
-        rows.push({
-          name: v.name,
-          type: v.typeName,
-          value: v.value,
-          kind: v.kind,
-          scope: scopeOf(v.kind, 'local'),
-        });
-      }
-    } else {
-      this.frameName = null;
-    }
-    this.variables = rows;
-  }
-
-  private teardownSession(): void {
-    this.host = null;
-    this.abort = null;
+  private finishRunPromise(): void {
+    const settle = this.settleRun;
+    this.settleRun = null;
+    settle?.();
   }
 
   private setState(next: ExecutionState): void {
@@ -519,10 +435,7 @@ export class RuntimeController {
   }
 
   private pushConsole(kind: RuntimeConsoleLine['kind'], text: string): void {
-    const next = [
-      ...this.consoleLines,
-      { id: nextLineId(), kind, text },
-    ];
+    const next = [...this.consoleLines, { id: nextLineId(), kind, text }];
     this.consoleLines =
       next.length > MAX_CONSOLE_LINES
         ? next.slice(next.length - MAX_CONSOLE_LINES)
@@ -549,22 +462,32 @@ export class RuntimeController {
     this.rebuildSnapshot();
     for (const l of this.listeners) l();
   }
+
+  /** Dispose worker when resetting the singleton. */
+  dispose(): void {
+    if (this.isBusy()) {
+      this.stop();
+    }
+    this.worker.terminate();
+  }
 }
 
-function scopeOf(
-  kind: string,
-  fallback: 'global' | 'local',
-): RuntimeVariableRow['scope'] {
-  if (kind === 'constant') return 'constant';
-  if (kind === 'parameter') return 'parameter';
-  return fallback;
+function wireToRows(vars: readonly WireVariable[]): RuntimeVariableRow[] {
+  return vars.map((v) => ({
+    name: v.name,
+    type: v.type,
+    value: v.value,
+    kind: v.kind,
+    scope: v.scope,
+  }));
 }
 
-function mapDiagnostic(d: {
+function mapWireDiag(d: {
   severity: 'error' | 'warning';
   code: string;
   message: string;
-  span?: { start: { line: number; column: number } };
+  line?: number;
+  column?: number;
   help?: string;
 }): RuntimeDiagnosticView {
   const base: RuntimeDiagnosticView = {
@@ -573,20 +496,11 @@ function mapDiagnostic(d: {
     code: d.code,
     message: d.message,
   };
-  const withSpan =
-    d.span !== undefined
-      ? { ...base, line: d.span.start.line, column: d.span.start.column }
+  const withLoc =
+    d.line !== undefined
+      ? { ...base, line: d.line, column: d.column }
       : base;
-  return d.help !== undefined ? { ...withSpan, help: d.help } : withSpan;
-}
-
-function isAbortLike(e: unknown): boolean {
-  return (
-    (typeof DOMException !== 'undefined' &&
-      e instanceof DOMException &&
-      e.name === 'AbortError') ||
-    (e instanceof Error && e.name === 'AbortError')
-  );
+  return d.help !== undefined ? { ...withLoc, help: d.help } : withLoc;
 }
 
 let shared: RuntimeController | null = null;
@@ -599,8 +513,8 @@ export function getRuntimeController(): RuntimeController {
 /** Test helper — reset singleton between tests. */
 export function resetRuntimeControllerForTests(): RuntimeController {
   if (shared) {
-    shared.stop();
+    shared.dispose();
   }
-  shared = new RuntimeController();
+  shared = new RuntimeController({ worker: { inProcess: true } });
   return shared;
 }

@@ -8,6 +8,11 @@ with the usual **0.x** caveat: breaking changes may land in minor bumps until 1.
 
 ## [Unreleased]
 
+### Added (execution worker)
+
+- **Web Worker execution** (`apps/web/lib/worker`): `WorkerController`, structured protocol, `WorkerRuntimeHost`, `WorkerDebuggerBridge`
+- UI thread never calls `runPseudocode`; in-process port for Vitest
+
 ### Fixed (RC audit)
 
 - Checker: isolate `openFiles` when analysing PROCEDURE/FUNCTION bodies (no false `C_FILE_*` at top level)

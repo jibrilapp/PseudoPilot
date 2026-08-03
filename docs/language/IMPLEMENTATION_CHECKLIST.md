@@ -169,12 +169,16 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | **Cambridge interpreter** | ✅ | AST execution via `@pseudopilot/interpreter` — see [`INTERPRETER.md`](./INTERPRETER.md) |
 | **Web IDE Run integration** | ✅ | `apps/web/lib/runtime` — Run/Stop/Restart, Console INPUT, Variables |
 | **Web IDE Debugger** | ✅ | `apps/web/lib/debugger` — breakpoints, pause/continue, step into/over/out |
+| **Language service** | ✅ | `@pseudopilot/language-service` — see [`LANGUAGE_SERVICE.md`](./LANGUAGE_SERVICE.md) |
+| **Incremental compilation** | ✅ | `@pseudopilot/compiler-service` — see [`INCREMENTAL_COMPILATION.md`](./INCREMENTAL_COMPILATION.md) |
+| **Conformance / reliability suite** | ✅ | `@pseudopilot/conformance` — see [`../TESTING.md`](../TESTING.md) |
 | Official language specification docs | ✅ |
 | Complete EBNF document | ✅ |
 | Parser coverage checklist | ✅ |
 | **Semantics document** | ✅ | [`SEMANTICS.md`](./SEMANTICS.md) |
-| IDE Monaco binding to parser | ❌ |
+| IDE Monaco / CodeSurface binding to language service | ✅ | Monaco + LS providers — see [`../ide/MONACO.md`](../ide/MONACO.md) |
 | Debugger UI (breakpoints / step) | ✅ | See [`apps/web/lib/debugger/README.md`](../../apps/web/lib/debugger/README.md) |
+| LSP server process | ❌ | Protocol types aligned; adapter TBD |
 | AI coach grounded on this dialect | ❌ |
 
 ---
@@ -190,7 +194,16 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 7. ✅ Semantic checker (scopes, types, calls, builtins) — see [`SEMANTICS.md`](./SEMANTICS.md)
 8. ✅ Interpreter (Core AST execution) — see [`INTERPRETER.md`](./INTERPRETER.md)
 9. 🟡 Translator (V12 subset ↔ Python; Core incomplete — no BYREF)
-10. ❌ Extended TYPE / RANDOM files / OOP / OS sandbox
+10. ✅ Language service (IDE intelligence) — see [`LANGUAGE_SERVICE.md`](./LANGUAGE_SERVICE.md)
+11. ✅ Incremental compilation / document cache — see [`INCREMENTAL_COMPILATION.md`](./INCREMENTAL_COMPILATION.md)
+12. ✅ Conformance & reliability suite — see [`../TESTING.md`](../TESTING.md)
+13. ✅ Monaco IDE editor — see [`../ide/MONACO.md`](../ide/MONACO.md)
+14. ❌ Extended TYPE / RANDOM files / OOP / OS sandbox
 
 **Gate for “run in IDE” milestone:** ✅ `RuntimeController` + Run/Stop/INPUT wired in `apps/web`.  
+**Gate for “worker execution” milestone:** ✅ Web Worker + message protocol (`apps/web/lib/worker`) — UI thread does not execute pseudocode.
 **Gate for “debugger” milestone:** ✅ `DebuggerSession` + breakpoints / stepping wired in `apps/web`.
+**Gate for “language service” milestone:** ✅ `@pseudopilot/language-service` (hover / definition / refs / rename / completion / signature help).
+**Gate for “Monaco IDE” milestone:** ✅ Monaco editor + LS providers + debugger decorations (`docs/ide/MONACO.md`).
+**Gate for “incremental compilation” milestone:** ✅ `@pseudopilot/compiler-service` staged caches (hash / AST / semantics / invalidation).
+**Gate for “conformance suite” milestone:** ✅ `@pseudopilot/conformance` corpus + round-trip / stress / fuzz / benches (`docs/TESTING.md`).

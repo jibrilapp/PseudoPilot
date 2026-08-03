@@ -20,7 +20,7 @@ describe('RuntimeController', () => {
   let controller: RuntimeController;
 
   beforeEach(() => {
-    controller = new RuntimeController();
+    controller = new RuntimeController({ worker: { inProcess: true } });
   });
 
   it('runs OUTPUT programs and updates console', async () => {

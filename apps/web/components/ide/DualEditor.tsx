@@ -121,14 +121,16 @@ function EditorColumn({
         emphasis ? 'bg-pp-editor' : 'bg-[#fbfbfc]',
       )}
     >
-      <div className="flex h-8 items-center justify-between gap-2 px-3.5">
+      <div className="flex h-8 items-center justify-between gap-2 border-b border-pp-line/80 bg-pp-shell/30 px-3.5">
         <h3 className="text-[12px] font-medium tracking-[-0.01em] text-pp-muted">{title}</h3>
         <div className="flex min-w-0 items-center gap-2">
           {badge && (
             <span
               className={cn(
-                'truncate text-[10px] font-medium tracking-[-0.01em]',
-                badge === 'Live' ? 'text-emerald-600/80' : 'text-amber-700/80',
+                'truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-[-0.01em]',
+                badge === 'Live'
+                  ? 'bg-emerald-500/10 text-emerald-700/90'
+                  : 'bg-amber-500/10 text-amber-800/90',
               )}
             >
               {badge}

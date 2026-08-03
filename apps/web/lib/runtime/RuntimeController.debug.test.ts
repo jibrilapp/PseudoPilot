@@ -16,7 +16,7 @@ describe('RuntimeController debugger', () => {
   let controller: RuntimeController;
 
   beforeEach(() => {
-    controller = new RuntimeController();
+    controller = new RuntimeController({ worker: { inProcess: true } });
   });
 
   it('hits a line breakpoint and continues', async () => {

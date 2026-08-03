@@ -13,9 +13,13 @@
     "clean": "rm -rf .next .turbo"
   },
   "dependencies": {
+    "@monaco-editor/react": "4.7.0",
+    "@pseudopilot/compiler-service": "workspace:*",
     "@pseudopilot/interpreter": "workspace:*",
+    "@pseudopilot/language-service": "workspace:*",
     "@pseudopilot/translator": "workspace:*",
     "clsx": "^2.1.1",
+    "monaco-editor": "0.52.2",
     "next": "^15.1.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

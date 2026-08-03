@@ -88,12 +88,22 @@ export function makeSymbol(
   kind: SymbolKind,
   type: PpType,
   span: SourceSpan,
-  implicit = false,
+  options?: {
+    readonly implicit?: boolean;
+    readonly builtin?: boolean;
+    readonly containerName?: string;
+  },
 ): SymbolInfo {
-  if (implicit) {
-    return { name, kind, type, span, implicit: true };
-  }
-  return { name, kind, type, span };
+  const base: SymbolInfo = { name, kind, type, span };
+  if (!options) return base;
+  return {
+    ...base,
+    ...(options.implicit ? { implicit: true } : {}),
+    ...(options.builtin ? { builtin: true } : {}),
+    ...(options.containerName !== undefined
+      ? { containerName: options.containerName }
+      : {}),
+  };
 }
 
 /** Case-insensitive lookup into a {@link Scope.snapshot} map. */

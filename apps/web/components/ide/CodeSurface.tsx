@@ -1,13 +1,30 @@
 'use client';
 
-import { useMemo } from 'react';
-import { cn } from '@/lib/cn';
+import { useCallback, useEffect, useRef } from 'react';
+import Editor, { type OnMount } from '@monaco-editor/react';
+import type * as Monaco from 'monaco-editor';
 import type { Breakpoint } from '@/lib/debugger';
+import {
+  getIdeLanguageService,
+  IDE_DOCUMENT_URI,
+} from '@/lib/languageService';
+import {
+  ensurePseudocodeLanguage,
+  acquireLanguageProviders,
+  mergeEditorDecorations,
+  diagnosticsToMarkers,
+  MONACO_FONT,
+  LS_DIAGNOSTICS_DEBOUNCE_MS,
+  PSEUDOCODE_LANGUAGE_ID,
+  PYTHON_LANGUAGE_ID,
+  createGenerationDebouncer,
+  nextDocumentVersion,
+} from '@/lib/monaco';
+import { cn } from '@/lib/cn';
 
 type CodeSurfaceProps = {
   code: string;
   language: 'pseudocode' | 'python';
-  /** When set, the surface is an editable textarea (pseudocode). */
   editable?: boolean;
   onChange?: (value: string) => void;
   'aria-label'?: string;
@@ -18,11 +35,12 @@ type CodeSurfaceProps = {
 };
 
 /**
- * Code surface: read-only highlighted view, or editable monospace textarea.
- * Highlighting is visual-only for read-only mode; editable mode prioritizes typing.
+ * Monaco-backed code surface.
+ * Pseudocode pane: editable + LS providers + breakpoints + exec highlight.
+ * Python pane: read-only syntax highlighting.
  *
- * Editable mode uses one scroll container for gutter + text so breakpoints and
- * the active-line highlight stay aligned when the program is taller than the pane.
+ * Language Service document text is updated synchronously on edits so hover /
+ * completion / rename never see a stale buffer. Marker paints are debounced.
  */
 export function CodeSurface({
   code,
@@ -34,247 +52,225 @@ export function CodeSurface({
   breakpoints = [],
   onToggleBreakpoint,
 }: CodeSurfaceProps) {
-  const lines = useMemo(() => {
-    const normalized = code.replace(/\n$/, '');
-    return normalized.length === 0 ? [''] : normalized.split('\n');
-  }, [code]);
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
+  const decoRef = useRef<string[]>([]);
+  const providersRef = useRef<{ dispose(): void } | null>(null);
+  const mouseDisposeRef = useRef<Monaco.IDisposable | null>(null);
+  const versionRef = useRef(0);
+  const suppressChangeRef = useRef(false);
+  const onToggleBreakpointRef = useRef(onToggleBreakpoint);
+  onToggleBreakpointRef.current = onToggleBreakpoint;
 
-  const lineCount = Math.max(lines.length, 1);
-  const bpByLine = useMemo(() => {
-    const map = new Map<number, Breakpoint>();
-    for (const bp of breakpoints) map.set(bp.line, bp);
-    return map;
-  }, [breakpoints]);
+  const markerDebounceRef = useRef(
+    createGenerationDebouncer(LS_DIAGNOSTICS_DEBOUNCE_MS),
+  );
 
-  if (editable) {
-    return (
-      <div className="relative min-h-0 flex-1 overflow-auto">
-        <div className="relative flex min-h-full font-mono text-[13px] leading-[1.7]">
-          <div
-            aria-hidden
-            className="sticky left-0 z-[1] flex shrink-0 select-none flex-col self-start border-r border-pp-line bg-pp-editor text-right text-[12px] leading-[1.7] text-pp-faint tabular-nums"
-          >
-            {Array.from({ length: lineCount }, (_, i) => {
-              const line = i + 1;
-              const bp = bpByLine.get(line);
-              const isActive = activeLine === line;
-              return (
-                <div
-                  key={line}
-                  className={cn(
-                    'flex h-[1.7em] items-center gap-1 px-1.5',
-                    isActive && 'bg-amber-400/25',
-                  )}
-                >
-                  <button
-                    type="button"
-                    title={
-                      bp
-                        ? bp.enabled
-                          ? 'Disable breakpoint'
-                          : 'Remove breakpoint'
-                        : 'Add breakpoint'
-                    }
-                    aria-label={`Toggle breakpoint on line ${line}`}
-                    className="grid h-4 w-4 place-items-center rounded-full"
-                    onClick={() => onToggleBreakpoint?.(line)}
-                  >
-                    <span
-                      className={cn(
-                        'h-2 w-2 rounded-full',
-                        bp?.enabled && 'bg-rose-500',
-                        bp && !bp.enabled && 'bg-rose-300/70 ring-1 ring-rose-400/50',
-                        !bp && 'bg-transparent hover:bg-rose-400/40',
-                      )}
-                    />
-                  </button>
-                  <span className="min-w-[1.5rem]">{line}</span>
-                </div>
-              );
-            })}
-          </div>
-          <div className="relative min-w-0 flex-1">
-            {activeLine != null && activeLine >= 1 && activeLine <= lineCount && (
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-x-0 bg-amber-400/15"
-                style={{
-                  top: `calc(${activeLine - 1} * 1.7em + 0.5rem)`,
-                  height: '1.7em',
-                }}
-              />
-            )}
-            <textarea
-              aria-label={ariaLabel ?? 'Pseudocode editor'}
-              spellCheck={false}
-              value={code}
-              rows={lineCount}
-              onChange={(e) => onChange?.(e.target.value)}
-              className={cn(
-                'relative m-0 w-full resize-none overflow-hidden border-0 bg-transparent',
-                'px-4 py-2 text-pp-ink outline-none focus:ring-0',
-                'caret-pp-accent',
-              )}
-            />
-          </div>
-        </div>
-      </div>
+  const langId =
+    language === 'pseudocode' ? PSEUDOCODE_LANGUAGE_ID : PYTHON_LANGUAGE_ID;
+
+  const applyMarkers = useCallback(() => {
+    if (language !== 'pseudocode') return;
+    const monaco = monacoRef.current;
+    const editor = editorRef.current;
+    if (!monaco || !editor) return;
+    const model = editor.getModel();
+    if (!model) return;
+    const ls = getIdeLanguageService();
+    const markers = diagnosticsToMarkers(ls.diagnostics(IDE_DOCUMENT_URI));
+    monaco.editor.setModelMarkers(model, 'pseudopilot', markers);
+  }, [language]);
+
+  /** Sync LS buffer immediately (providers read this). Does not paint markers. */
+  const syncLanguageService = useCallback(
+    (source: string) => {
+      if (language !== 'pseudocode') return;
+      const ls = getIdeLanguageService();
+      versionRef.current = nextDocumentVersion(
+        ls,
+        IDE_DOCUMENT_URI,
+        versionRef.current,
+      );
+      ls.updateDocument(IDE_DOCUMENT_URI, source, versionRef.current);
+    },
+    [language],
+  );
+
+  const scheduleMarkers = useCallback(() => {
+    markerDebounceRef.current.schedule(() => {
+      applyMarkers();
+    });
+  }, [applyMarkers]);
+
+  const applyDecorations = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor || language !== 'pseudocode') return;
+    const next = mergeEditorDecorations(breakpoints, activeLine);
+    decoRef.current = editor.deltaDecorations(
+      decoRef.current,
+      next.map((d) => ({
+        range: d.range,
+        options: d.options,
+      })),
     );
-  }
+  }, [breakpoints, activeLine, language]);
+
+  const clearEditorChrome = useCallback(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    try {
+      if (editor) {
+        decoRef.current = editor.deltaDecorations(decoRef.current, []);
+      }
+      const model = editor?.getModel();
+      if (monaco && model) {
+        monaco.editor.setModelMarkers(model, 'pseudopilot', []);
+      }
+    } catch {
+      decoRef.current = [];
+    }
+  }, []);
+
+  // Sync external value (translation / restart) without fighting keystrokes.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const model = editor.getModel();
+    if (!model) return;
+    if (model.getValue() === code) return;
+    suppressChangeRef.current = true;
+    editor.setValue(code);
+    suppressChangeRef.current = false;
+    if (language === 'pseudocode') {
+      syncLanguageService(code);
+      scheduleMarkers();
+    }
+  }, [code, language, syncLanguageService, scheduleMarkers]);
+
+  useEffect(() => {
+    applyDecorations();
+  }, [applyDecorations]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || activeLine == null || language !== 'pseudocode') return;
+    editor.revealLineInCenter(activeLine);
+  }, [activeLine, language]);
+
+  useEffect(() => {
+    return () => {
+      markerDebounceRef.current.cancel();
+      mouseDisposeRef.current?.dispose();
+      mouseDisposeRef.current = null;
+      providersRef.current?.dispose();
+      providersRef.current = null;
+      clearEditorChrome();
+    };
+  }, [clearEditorChrome]);
+
+  const handleMount: OnMount = (editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+    ensurePseudocodeLanguage(monaco);
+    monaco.editor.setTheme('pseudopilot-light');
+
+    if (language === 'pseudocode') {
+      const ls = getIdeLanguageService();
+      versionRef.current = nextDocumentVersion(
+        ls,
+        IDE_DOCUMENT_URI,
+        versionRef.current,
+      );
+      ls.openDocument(IDE_DOCUMENT_URI, code, versionRef.current);
+
+      providersRef.current?.dispose();
+      providersRef.current = acquireLanguageProviders(
+        monaco,
+        ls,
+        IDE_DOCUMENT_URI,
+      );
+      applyMarkers();
+
+      mouseDisposeRef.current?.dispose();
+      mouseDisposeRef.current = editor.onMouseDown((e) => {
+        if (
+          e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+          e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
+        ) {
+          const line = e.target.position?.lineNumber;
+          if (line != null) {
+            onToggleBreakpointRef.current?.(line);
+          }
+        }
+      });
+    }
+
+    applyDecorations();
+  };
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
-      <div className="flex min-w-max font-mono text-[13px] leading-[1.7]">
-        <div
-          aria-hidden
-          className="sticky left-0 select-none whitespace-pre border-r border-pp-line bg-transparent px-3.5 py-2 text-right text-[12px] leading-[1.7] text-pp-faint tabular-nums"
-        >
-          {lines.map((_, i) => i + 1).join('\n')}
-        </div>
-        <pre className="m-0 flex-1 whitespace-pre px-4 py-2 text-pp-ink">
-          {lines.map((line, i) => (
-            <div key={i} className="rounded-sm hover:bg-black/[0.025]">
-              <HighlightedLine line={line} language={language} />
-            </div>
-          ))}
-        </pre>
-      </div>
+    <div
+      className={cn('relative min-h-0 flex-1', !editable && 'opacity-[0.98]')}
+      data-testid={
+        editable ? 'code-surface-editable' : 'code-surface-readonly'
+      }
+      aria-label={ariaLabel}
+    >
+      <Editor
+        height="100%"
+        language={langId}
+        theme="pseudopilot-light"
+        value={code}
+        path={
+          language === 'pseudocode'
+            ? 'file:///src/main.pseudo'
+            : 'file:///src/main.py'
+        }
+        onMount={handleMount}
+        onChange={(value) => {
+          if (suppressChangeRef.current) return;
+          const next = value ?? '';
+          onChange?.(next);
+          if (language === 'pseudocode') {
+            syncLanguageService(next);
+            scheduleMarkers();
+          }
+        }}
+        options={{
+          readOnly: !editable,
+          fontSize: MONACO_FONT.fontSize,
+          lineHeight: MONACO_FONT.lineHeight,
+          fontFamily: MONACO_FONT.fontFamily,
+          fontLigatures: true,
+          minimap: { enabled: language === 'pseudocode' },
+          lineNumbers: 'on',
+          glyphMargin: language === 'pseudocode',
+          folding: true,
+          automaticLayout: true,
+          scrollBeyondLastLine: false,
+          wordWrap: 'on',
+          renderLineHighlight: 'line',
+          matchBrackets: 'always',
+          autoIndent: 'full',
+          tabSize: 2,
+          insertSpaces: true,
+          multiCursorModifier: 'alt',
+          find: { addExtraSpaceOnTop: false },
+          scrollbar: {
+            verticalScrollbarSize: 10,
+            horizontalScrollbarSize: 10,
+          },
+          padding: { top: 8, bottom: 8 },
+          overviewRulerBorder: false,
+          fixedOverflowWidgets: true,
+          ariaLabel: ariaLabel,
+        }}
+        loading={
+          <div className="flex h-full items-center justify-center text-[12px] text-pp-muted">
+            Loading editor…
+          </div>
+        }
+      />
     </div>
   );
-}
-
-function HighlightedLine({
-  line,
-  language,
-}: {
-  line: string;
-  language: 'pseudocode' | 'python';
-}) {
-  // Cap work per line to avoid main-thread jank / pathological regex cost.
-  const MAX_HIGHLIGHT_CHARS = 4_000;
-  if (line.length > MAX_HIGHLIGHT_CHARS) {
-    return <span>{line}</span>;
-  }
-  if (!line.trim()) return <span>&nbsp;</span>;
-
-  const keywords =
-    language === 'pseudocode'
-      ? [
-          'DECLARE',
-          'CONSTANT',
-          'PROCEDURE',
-          'ENDPROCEDURE',
-          'FUNCTION',
-          'ENDFUNCTION',
-          'RETURNS',
-          'RETURN',
-          'FOR',
-          'TO',
-          'NEXT',
-          'STEP',
-          'CASE',
-          'OF',
-          'OTHERWISE',
-          'ENDCASE',
-          'CALL',
-          'OUTPUT',
-          'INPUT',
-          'IF',
-          'THEN',
-          'ELSE',
-          'ENDIF',
-          'WHILE',
-          'ENDWHILE',
-          'REPEAT',
-          'UNTIL',
-          'DO',
-          'INTEGER',
-          'STRING',
-          'REAL',
-          'BOOLEAN',
-          'CHAR',
-          'ARRAY',
-          'TRUE',
-          'FALSE',
-          'AND',
-          'OR',
-          'NOT',
-          'DIV',
-          'MOD',
-        ]
-      : [
-          'def',
-          'return',
-          'for',
-          'in',
-          'range',
-          'print',
-          'None',
-          'True',
-          'False',
-          'class',
-          'if',
-          'else',
-          'elif',
-          'while',
-          'import',
-          'from',
-          'as',
-          'input',
-        ];
-
-  const parts = tokenize(line, keywords, language);
-  return (
-    <>
-      {parts.map((part, i) => (
-        <span key={i} className={cn(part.className)}>
-          {part.text}
-        </span>
-      ))}
-    </>
-  );
-}
-
-function tokenize(
-  line: string,
-  keywords: string[],
-  language: 'pseudocode' | 'python',
-): { text: string; className?: string }[] {
-  const tokens: { text: string; className?: string }[] = [];
-  const stringRe =
-    language === 'python'
-      ? /("([^"\\]|\\.)*"|'([^'\\]|\\.)*')/
-      : /("([^"\\]|\\.)*"|'([^'\\]|\\.)*')/;
-  const commentRe = language === 'python' ? /#.*$/ : /\/\/.*$/;
-
-  let rest = line;
-  const commentMatch = rest.match(commentRe);
-  let comment = '';
-  if (commentMatch && commentMatch.index !== undefined) {
-    comment = rest.slice(commentMatch.index);
-    rest = rest.slice(0, commentMatch.index);
-  }
-
-  const regex = new RegExp(
-    `(${stringRe.source})|(\\b(?:${keywords.join('|')})\\b)|(\\d+)|(←)|(→)|(:)`,
-    'g',
-  );
-  let last = 0;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(rest)) !== null) {
-    if (match.index > last) {
-      tokens.push({ text: rest.slice(last, match.index) });
-    }
-    const [full, str, , , kw, num, assign, arrow, colon] = match;
-    if (str) tokens.push({ text: full, className: 'text-pp-string' });
-    else if (kw) tokens.push({ text: full, className: 'font-medium text-pp-keyword' });
-    else if (num) tokens.push({ text: full, className: 'text-pp-number' });
-    else if (assign || arrow) tokens.push({ text: full, className: 'text-pp-accent' });
-    else if (colon) tokens.push({ text: full, className: 'text-pp-faint' });
-    else tokens.push({ text: full });
-    last = match.index + full.length;
-  }
-  if (last < rest.length) tokens.push({ text: rest.slice(last) });
-  if (comment) tokens.push({ text: comment, className: 'italic text-pp-comment' });
-  return tokens.length ? tokens : [{ text: line }];
 }
