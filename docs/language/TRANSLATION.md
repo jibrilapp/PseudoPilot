@@ -1,8 +1,8 @@
 # Translation Engine — Architecture (V1)
 
 **Package:** `@pseudopilot/translator`  
-**Dialect version:** Core subset V12 (V11 + **text file I/O**)  
-**Status:** Builtins + `&` milestone complete — signatures in `language-core`, Python emit in `translator/builtins/emit.ts`, check + bidirectional translate. Semantic checker runs after parse, before IR lowering.
+**Dialect version:** Core subset V13 (V12 + **TYPE … ENDTYPE records**)  
+**Status:** Record types lower to Python `@dataclass`. See [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md).
 
 ---
 

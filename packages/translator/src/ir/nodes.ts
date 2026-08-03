@@ -27,6 +27,7 @@ export type IrStatement =
   | IrForStatement
   | IrDeclareStatement
   | IrConstantStatement
+  | IrTypeDeclaration
   | IrProcedureDeclaration
   | IrFunctionDeclaration
   | IrCallStatement
@@ -42,8 +43,8 @@ type WithTrivia = {
   readonly trailingTrivia: IrTrivia[];
 };
 
-/** Identifier or array element (Scores[1]). */
-export type IrAssignTarget = IrIdentifier | IrIndexExpression;
+/** Identifier, array element (Scores[1]), or record field (S.Name, Rows[i].Name). */
+export type IrAssignTarget = IrIdentifier | IrIndexExpression | IrMemberExpression;
 
 /** x ← value / x = value */
 export type IrAssignment = WithTrivia & {
@@ -142,14 +143,26 @@ export type IrScalarType = {
   readonly name: IrTypeName;
 };
 
+/**
+ * Reference to a user-defined TYPE … ENDTYPE record (display casing preserved;
+ * comparison is case-insensitive upstream in the checker).
+ */
+export type IrNamedType = {
+  readonly kind: 'IrNamedType';
+  readonly name: string;
+};
+
+/** Scalar builtin or user-defined record type (ARRAY element / param / RETURNS). */
+export type IrSimpleType = IrScalarType | IrNamedType;
+
 /** ARRAY[l:u, …] OF elementType */
 export type IrArrayType = {
   readonly kind: 'IrArrayType';
   readonly dimensions: IrArrayDimension[];
-  readonly elementType: IrTypeName;
+  readonly elementType: IrSimpleType;
 };
 
-export type IrTypeReference = IrScalarType | IrArrayType;
+export type IrTypeReference = IrScalarType | IrNamedType | IrArrayType;
 
 /**
  * DECLARE Name[, Name]* : Type
@@ -171,10 +184,26 @@ export type IrConstantStatement = WithTrivia & {
   readonly value: IrExpression;
 };
 
+/** DECLARE Field[, Field]* : Type line inside a TYPE … ENDTYPE body. */
+export type IrTypeField = {
+  readonly kind: 'IrTypeField';
+  readonly names: string[];
+  readonly typeRef: IrTypeReference;
+};
+
+/**
+ * TYPE Name … ENDTYPE — maps to a Python `@dataclass`.
+ */
+export type IrTypeDeclaration = WithTrivia & {
+  readonly kind: 'IrTypeDeclaration';
+  readonly name: string;
+  readonly fields: IrTypeField[];
+};
+
 export type IrParameter = {
   readonly kind: 'IrParameter';
   readonly name: string;
-  readonly typeName: IrTypeName;
+  readonly typeName: IrSimpleType;
 };
 
 /** PROCEDURE … ENDPROCEDURE — maps to Python def (no return annotation). */
@@ -190,7 +219,7 @@ export type IrFunctionDeclaration = WithTrivia & {
   readonly kind: 'IrFunctionDeclaration';
   readonly name: string;
   readonly parameters: IrParameter[];
-  readonly returnType: IrTypeName;
+  readonly returnType: IrSimpleType;
   readonly body: IrStatement[];
 };
 
@@ -247,11 +276,22 @@ export type IrExpression =
   | IrBooleanLiteral
   | IrIdentifier
   | IrIndexExpression
+  | IrMemberExpression
   | IrCallExpression
   | IrUnaryExpression
   | IrBinaryExpression
   | IrGroupingExpression
-  | IrEofExpression;
+  | IrEofExpression
+  | IrDeepCopyExpression;
+
+/**
+ * Explicit deep copy for Cambridge by-value record/array semantics in Python.
+ * Printed as `copy.deepcopy(value)`.
+ */
+export type IrDeepCopyExpression = {
+  readonly kind: 'IrDeepCopyExpression';
+  readonly value: IrExpression;
+};
 
 /** EOF(path) — Cambridge end-of-file test. */
 export type IrEofExpression = {
@@ -290,11 +330,21 @@ export type IrIdentifier = {
   readonly name: string;
 };
 
-/** Name[i, j] — Cambridge 1-based indices preserved as written. */
+/**
+ * Name[i, j] — Cambridge 1-based indices preserved as written.
+ * `array` may itself be a member/index expression (e.g. `Students[i].Marks[1]`).
+ */
 export type IrIndexExpression = {
   readonly kind: 'IrIndexExpression';
-  readonly array: IrIdentifier;
+  readonly array: IrExpression;
   readonly indices: IrExpression[];
+};
+
+/** Field access: `S.Name`, `S.Home.City`, `Students[i].Name`. */
+export type IrMemberExpression = {
+  readonly kind: 'IrMemberExpression';
+  readonly object: IrExpression;
+  readonly property: string;
 };
 
 /** F(args) — function call expression (not CALL statement). */

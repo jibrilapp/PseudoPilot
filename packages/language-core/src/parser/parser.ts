@@ -27,8 +27,11 @@ import type {
   RepeatStatement,
   ReturnStatement,
   Statement,
+  TypeDeclaration,
   TypeName,
   TypeNameKind,
+  NamedType,
+  SimpleType,
   TypeReference,
   WhileStatement,
   WriteFileStatement,
@@ -91,6 +94,7 @@ export class Parser {
     if (token.kind === TokenKind.Repeat) return this.parseRepeat();
     if (token.kind === TokenKind.For) return this.parseFor();
     if (token.kind === TokenKind.Declare) return this.parseDeclare();
+    if (token.kind === TokenKind.Type) return this.parseTypeDeclaration();
     if (token.kind === TokenKind.Constant) return this.parseConstant();
     if (token.kind === TokenKind.Call) return this.parseCallStatement();
     if (token.kind === TokenKind.Return) return this.parseReturn();
@@ -308,6 +312,97 @@ export class Parser {
   }
 
   /**
+   * TYPE Name
+   *   DECLARE … 
+   * ENDTYPE
+   *
+   * Enum / pointer / set forms (`TYPE Name = …`) are not supported yet.
+   */
+  private parseTypeDeclaration(): TypeDeclaration | null {
+    if (this.bodyContext !== 'program') {
+      pushError(
+        this.diagnostics,
+        'TYPE declarations are only allowed at program level.',
+        this.cursor.peek(),
+        'E_NESTED_TYPE',
+      );
+      this.cursor.advance();
+      return null;
+    }
+
+    const startToken = this.cursor.advance(); // TYPE
+    const name = this.expressions().parseIdentifier();
+    if (!name) {
+      // Recover: skip until ENDTYPE so field DECLAREs are not hoisted.
+      while (
+        !this.cursor.check(TokenKind.Endtype) &&
+        !this.cursor.check(TokenKind.Eof)
+      ) {
+        this.cursor.advance();
+      }
+      this.cursor.match(TokenKind.Endtype);
+      return null;
+    }
+
+    if (this.cursor.match(TokenKind.Equal)) {
+      pushError(
+        this.diagnostics,
+        'Enum, pointer, and SET TYPE forms are not supported yet (use TYPE Name … ENDTYPE records).',
+        this.cursor.previous(),
+        'E_UNSUPPORTED_TYPE_FORM',
+      );
+      // Recover: skip until ENDTYPE or EOF.
+      while (
+        !this.cursor.check(TokenKind.Endtype) &&
+        !this.cursor.check(TokenKind.Eof)
+      ) {
+        this.cursor.advance();
+      }
+      this.cursor.match(TokenKind.Endtype);
+      return null;
+    }
+
+    this.skipNewlines();
+    const fields: DeclareStatement[] = [];
+    while (
+      !this.cursor.check(TokenKind.Endtype) &&
+      !this.cursor.check(TokenKind.Eof)
+    ) {
+      if (!this.cursor.check(TokenKind.Declare)) {
+        pushError(
+          this.diagnostics,
+          "Expected 'DECLARE' field or 'ENDTYPE' in TYPE body.",
+          this.cursor.peek(),
+          'E_TYPE_BODY',
+        );
+        this.cursor.advance();
+        this.skipNewlines();
+        continue;
+      }
+      const field = this.parseDeclare();
+      if (field) fields.push(field);
+      this.skipNewlines();
+    }
+
+    if (!this.cursor.match(TokenKind.Endtype)) {
+      pushError(
+        this.diagnostics,
+        "Expected 'ENDTYPE'.",
+        this.cursor.peek(),
+        'E_TYPE_END',
+      );
+      return null;
+    }
+
+    return {
+      kind: 'TypeDeclaration',
+      name,
+      fields,
+      span: span(startToken.span.start, this.cursor.previous().span.end),
+    };
+  }
+
+  /**
    * CONSTANT Name = <literal>
    * Accepts optional unary +/- before numeric literals.
    */
@@ -488,22 +583,30 @@ export class Parser {
     };
   }
 
-  private parseTypeName(): TypeName | null {
+  private parseTypeName(): SimpleType | null {
     const token = this.cursor.peek();
-    if (!isTypeToken(token.kind)) {
-      pushError(
-        this.diagnostics,
-        'Expected a type name (INTEGER, REAL, STRING, BOOLEAN, or CHAR).',
-        token,
-      );
-      return null;
+    if (isTypeToken(token.kind)) {
+      this.cursor.advance();
+      return {
+        kind: 'TypeName',
+        name: token.lexeme.toUpperCase() as TypeNameKind,
+        span: token.span,
+      };
     }
-    this.cursor.advance();
-    return {
-      kind: 'TypeName',
-      name: token.lexeme.toUpperCase() as TypeNameKind,
-      span: token.span,
-    };
+    if (token.kind === TokenKind.Identifier) {
+      this.cursor.advance();
+      return {
+        kind: 'NamedType',
+        name: token.lexeme,
+        span: token.span,
+      };
+    }
+    pushError(
+      this.diagnostics,
+      'Expected a type name (INTEGER, REAL, STRING, BOOLEAN, CHAR, or a TYPE name).',
+      token,
+    );
+    return null;
   }
 
   private parseOpenFile(): OpenFileStatement | null {
@@ -1284,6 +1387,7 @@ function isUnexpectedStructuralKeyword(kind: TokenKind): boolean {
     kind === TokenKind.Endcase ||
     kind === TokenKind.Endprocedure ||
     kind === TokenKind.Endfunction ||
+    kind === TokenKind.Endtype ||
     kind === TokenKind.Returns
   );
 }
@@ -1321,7 +1425,9 @@ function exprKey(expr: Expression): string {
     case 'GroupingExpression':
       return `(${exprKey(expr.expression)})`;
     case 'IndexExpression':
-      return `${expr.array.name}[${expr.indices.map(exprKey).join(', ')}]`;
+      return `${exprKey(expr.array)}[${expr.indices.map(exprKey).join(', ')}]`;
+    case 'MemberExpression':
+      return `${exprKey(expr.object)}.${expr.property.name}`;
     case 'CallExpression':
       return `${expr.callee.name}(${expr.args.map(exprKey).join(', ')})`;
     case 'EofExpression':

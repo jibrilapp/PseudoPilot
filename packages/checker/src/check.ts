@@ -23,8 +23,9 @@ import {
   isIndexType,
   isNumeric,
   literalType,
+  lookupRecordField,
+  resolveSimpleType,
   scalar,
-  typeFromTypeRef,
   unaryResultType,
 } from './type-system.js';
 import type {
@@ -39,6 +40,10 @@ import {
   checkEofExpression,
   checkFileStatement,
 } from './file/check-files.js';
+import {
+  registerTypeDeclarations,
+  resolveUserTypeRef,
+} from './records.js';
 
 const BUILTIN_SPAN = {
   start: { offset: 0, line: 1, column: 1 },
@@ -61,6 +66,8 @@ type Ctx = {
   openFiles: Map<string, import('./file/check-files.js').FileOpenState>;
   /** All successful bindings for the language service (no second binder). */
   readonly symbols: import('./types.js').SymbolInfo[];
+  /** TYPE … ENDTYPE registry (case-folded keys). */
+  readonly typeTable: Map<string, PpType>;
 };
 
 function diag(
@@ -141,6 +148,7 @@ function defineSymbol(
 /**
  * Semantic check of a Cambridge AST program.
  *
+ * Pass 0: register TYPE … ENDTYPE into the type table.
  * Pass 1: hoist global PROCEDURE / FUNCTION signatures.
  * Pass 2: check statements in order (DECLARE/CONSTANT bind when seen).
  *
@@ -155,6 +163,7 @@ export function check(
   const diagnostics: CheckerDiagnostic[] = [];
   const symbols: import('./types.js').SymbolInfo[] = [];
   const global = new Scope(null, 'global');
+  const typeTable = new Map<string, PpType>();
   const ctx: Ctx = {
     diagnostics,
     maxDiagnostics: Math.max(1, maxDiagnostics),
@@ -164,10 +173,28 @@ export function check(
     inProcedure: false,
     openFiles: new Map(),
     symbols,
+    typeTable,
   };
 
   // Seed Core builtins before user routines (soft-reserved names).
   injectBuiltins(ctx);
+
+  // Pass 0 — TYPE … ENDTYPE (before routines so params/returns can use them).
+  registerTypeDeclarations(
+    {
+      typeTable: ctx.typeTable,
+      diag: (partial) => diag(ctx, partial),
+      defineSymbol: (symbol) => defineSymbol(ctx, symbol),
+      recordFieldSymbol: (symbol) => {
+        const withContainer =
+          symbol.containerName !== undefined
+            ? symbol
+            : { ...symbol, containerName: ctx.scope.name };
+        ctx.symbols.push(withContainer);
+      },
+    },
+    program,
+  );
 
   // Pass 1 — routine signatures (enables CALL before definition).
   for (const stmt of program.body) {
@@ -203,7 +230,7 @@ function injectBuiltins(ctx: Ctx): void {
       makeSymbol(
         b.name,
         'function',
-        { kind: 'function', params, returns },
+        { kind: 'function', params, returns: scalar(returns) },
         BUILTIN_SPAN,
         { builtin: true, containerName: 'global' },
       ),
@@ -221,26 +248,36 @@ function hoistRoutine(
   stmt: ProcedureDeclaration | FunctionDeclaration,
   kind: 'procedure' | 'function',
 ): void {
-  const params = stmt.parameters.map((p) => typeFromTypeRef(p.typeName));
+  const params = stmt.parameters.map((p) =>
+    resolveUserTypeRef(p.typeName, ctx.typeTable, (partial) => diag(ctx, partial)),
+  );
   const type: PpType =
     kind === 'procedure'
       ? { kind: 'procedure', params }
       : {
           kind: 'function',
           params,
-          returns: (stmt as FunctionDeclaration).returnType.name,
+          returns: resolveSimpleType(
+            (stmt as FunctionDeclaration).returnType,
+            ctx.typeTable,
+          ),
         };
-
-  // Parameter duplicate detection happens when binding the routine body
-  // (avoids duplicate C_DUP_PARAMETER diagnostics).
 
   defineSymbol(ctx, makeSymbol(stmt.name.name, kind, type, stmt.name.span));
 }
 
 function checkStatement(ctx: Ctx, stmt: Statement): void {
   switch (stmt.kind) {
+    case 'TypeDeclaration':
+      // Registered in pass 0; still validate ARRAY bounds on fields.
+      for (const field of stmt.fields) {
+        checkTypeRefBounds(ctx, field.typeRef);
+      }
+      return;
     case 'DeclareStatement': {
-      const type = typeFromTypeRef(stmt.typeRef);
+      const type = resolveUserTypeRef(stmt.typeRef, ctx.typeTable, (partial) =>
+        diag(ctx, partial),
+      );
       checkTypeRefBounds(ctx, stmt.typeRef);
       const seen = new Set<string>();
       for (const id of stmt.names) {
@@ -547,7 +584,7 @@ function checkRoutineBody(
   ctx.inProcedure = kind === 'procedure';
   ctx.functionReturn =
     kind === 'function' && stmt.kind === 'FunctionDeclaration'
-      ? scalar(stmt.returnType.name)
+      ? resolveSimpleType(stmt.returnType, ctx.typeTable)
       : null;
 
   try {
@@ -634,7 +671,9 @@ function bindParameter(ctx: Ctx, p: Parameter): void {
     makeSymbol(
       p.name.name,
       'parameter',
-      typeFromTypeRef(p.typeName),
+      resolveUserTypeRef(p.typeName, ctx.typeTable, (partial) =>
+        diag(ctx, partial),
+      ),
       p.name.span,
     ),
   );
@@ -747,7 +786,7 @@ function checkCall(
     }
   }
 
-  if (sig.kind === 'function') return scalar(sig.returns);
+  if (sig.kind === 'function') return sig.returns;
   return errorType();
 }
 
@@ -843,41 +882,53 @@ function checkAssignableTarget(
       });
       return errorType();
     }
+    if (sym.kind === 'type' || sym.kind === 'field') {
+      diag(ctx, {
+        code: 'C_ASSIGN_TO_TYPE',
+        message: `Cannot ${what} to TYPE/field name '${target.name}'.`,
+        span,
+      });
+      return errorType();
+    }
     return sym.type;
   }
 
+  if (target.kind === 'MemberExpression') {
+    return inferMemberAccess(ctx, target, /*asAssign*/ true, what);
+  }
+
   // Index expression
-  const arr = ctx.scope.lookup(target.array.name);
-  if (!arr) {
-    diag(ctx, {
-      code: 'C_UNDECL_ARRAY',
-      message: `Undeclared array '${target.array.name}'.`,
-      span: target.array.span,
-      help: `Add DECLARE ${target.array.name} : ARRAY[...] OF <TYPE>.`,
-    });
+  if (target.array.kind === 'Identifier') {
+    const arr = ctx.scope.lookup(target.array.name);
+    if (!arr) {
+      diag(ctx, {
+        code: 'C_UNDECL_ARRAY',
+        message: `Undeclared array '${target.array.name}'.`,
+        span: target.array.span,
+        help: `Add DECLARE ${target.array.name} : ARRAY[...] OF <TYPE>.`,
+      });
+      for (const idx of target.indices) inferExpr(ctx, idx);
+      return errorType();
+    }
+  }
+  const baseType = inferExpr(ctx, target.array);
+  if (baseType.kind === 'error') {
     for (const idx of target.indices) inferExpr(ctx, idx);
     return errorType();
   }
-  if (arr.kind === 'constant') {
-    diag(ctx, {
-      code: 'C_ASSIGN_TO_CONSTANT',
-      message: `Cannot ${what} to CONSTANT '${target.array.name}'.`,
-      span,
-    });
-  }
-  if (arr.type.kind !== 'array') {
+  if (baseType.kind !== 'array') {
     diag(ctx, {
       code: 'C_NOT_ARRAY',
-      message: `'${target.array.name}' is not an ARRAY.`,
+      message: `Value of type ${formatType(baseType)} is not an ARRAY.`,
       span: target.array.span,
     });
     for (const idx of target.indices) inferExpr(ctx, idx);
     return errorType();
   }
-  if (target.indices.length !== arr.type.dimensions) {
+  if (target.indices.length !== baseType.dimensions) {
     diag(ctx, {
       code: 'C_ARRAY_RANK',
-      message: `Array '${target.array.name}' has ${arr.type.dimensions} dimension(s) but ${target.indices.length} index(es) were given.`,
+      message: `Array has ${baseType.dimensions} dimension(s) but ${target.indices.length} index(es) were given.`,
       span: target.span,
     });
   }
@@ -891,7 +942,42 @@ function checkAssignableTarget(
       });
     }
   }
-  return scalar(arr.type.element);
+  return baseType.element;
+}
+
+function inferMemberAccess(
+  ctx: Ctx,
+  expr: Extract<Expression, { kind: 'MemberExpression' }> | Extract<
+    AssignTarget,
+    { kind: 'MemberExpression' }
+  >,
+  asAssign: boolean,
+  what: string,
+): PpType {
+  const objType = inferExpr(ctx, expr.object);
+  if (objType.kind === 'error') return errorType();
+  if (objType.kind !== 'record') {
+    diag(ctx, {
+      code: 'C_NOT_RECORD',
+      message: asAssign
+        ? `Cannot ${what} field on non-record type ${formatType(objType)}.`
+        : `Cannot access field on non-record type ${formatType(objType)}.`,
+      span: expr.object.span,
+      help: 'Field access requires a TYPE … ENDTYPE instance.',
+    });
+    return errorType();
+  }
+  const field = lookupRecordField(objType, expr.property.name);
+  if (!field) {
+    diag(ctx, {
+      code: 'C_UNKNOWN_FIELD',
+      message: `Unknown field '${expr.property.name}' on TYPE '${objType.name}'.`,
+      span: expr.property.span,
+      help: 'Field names are case-insensitive.',
+    });
+    return errorType();
+  }
+  return field.type;
 }
 
 function checkAssignment(
@@ -950,10 +1036,14 @@ function comparableTypes(left: PpType, right: PpType): boolean {
   if (left.kind === 'scalar' && right.kind === 'scalar') {
     return left.name === right.name;
   }
-  if (left.kind === 'array' && right.kind === 'array') {
-    return left.element === right.element && left.dimensions === right.dimensions;
-  }
+  // Whole ARRAY / RECORD values are not comparable (Cambridge compares
+  // elements / fields). Keeping them here would silence diagnostics while the
+  // interpreter treats every RECORD/ARRAY equality as false.
   return false;
+}
+
+function isCompositeType(t: PpType): boolean {
+  return t.kind === 'array' || t.kind === 'record';
 }
 
 function isStringy(t: PpType): boolean {
@@ -996,33 +1086,58 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
         });
         return errorType();
       }
+      if (sym.kind === 'type') {
+        diag(ctx, {
+          code: 'C_TYPE_AS_VALUE',
+          message: `TYPE '${expr.name}' cannot be used as a value.`,
+          span: expr.span,
+          help: `DECLARE a variable of type ${expr.name} first.`,
+        });
+        return errorType();
+      }
+      if (sym.kind === 'field') {
+        diag(ctx, {
+          code: 'C_FIELD_AS_VALUE',
+          message: `Field '${expr.name}' must be accessed on a record (e.g. S.${expr.name}).`,
+          span: expr.span,
+        });
+        return errorType();
+      }
       return sym.type;
     }
+    case 'MemberExpression':
+      return inferMemberAccess(ctx, expr, false, 'access');
     case 'IndexExpression': {
-      // Reuse assignable target logic without assign-to-const for reads.
-      const arr = ctx.scope.lookup(expr.array.name);
-      if (!arr) {
-        diag(ctx, {
-          code: 'C_UNDECL_ARRAY',
-          message: `Undeclared array '${expr.array.name}'.`,
-          span: expr.array.span,
-        });
+      if (expr.array.kind === 'Identifier') {
+        const arr = ctx.scope.lookup(expr.array.name);
+        if (!arr) {
+          diag(ctx, {
+            code: 'C_UNDECL_ARRAY',
+            message: `Undeclared array '${expr.array.name}'.`,
+            span: expr.array.span,
+          });
+          for (const idx of expr.indices) inferExpr(ctx, idx);
+          return errorType();
+        }
+      }
+      const baseType = inferExpr(ctx, expr.array);
+      if (baseType.kind === 'error') {
         for (const idx of expr.indices) inferExpr(ctx, idx);
         return errorType();
       }
-      if (arr.type.kind !== 'array') {
+      if (baseType.kind !== 'array') {
         diag(ctx, {
           code: 'C_NOT_ARRAY',
-          message: `'${expr.array.name}' is not an ARRAY.`,
+          message: `Value of type ${formatType(baseType)} is not an ARRAY.`,
           span: expr.array.span,
         });
         for (const idx of expr.indices) inferExpr(ctx, idx);
         return errorType();
       }
-      if (expr.indices.length !== arr.type.dimensions) {
+      if (expr.indices.length !== baseType.dimensions) {
         diag(ctx, {
           code: 'C_ARRAY_RANK',
-          message: `Array '${expr.array.name}' has ${arr.type.dimensions} dimension(s) but ${expr.indices.length} index(es) were given.`,
+          message: `Array has ${baseType.dimensions} dimension(s) but ${expr.indices.length} index(es) were given.`,
           span: expr.span,
         });
       }
@@ -1036,7 +1151,7 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
           });
         }
       }
-      return scalar(arr.type.element);
+      return baseType.element;
     }
     case 'CallExpression':
       return checkCall(ctx, expr.callee.name, expr.args, expr.callee.span, 'call-expr');
@@ -1129,15 +1244,23 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
           expr.operator === '>' ||
           expr.operator === '>=') &&
         left.kind !== 'error' &&
-        right.kind !== 'error' &&
-        !comparableTypes(left, right)
+        right.kind !== 'error'
       ) {
-        diag(ctx, {
-          severity: 'warning',
-          code: 'C_COMPARE_TYPE',
-          message: `Comparing ${formatType(left)} with ${formatType(right)} may be invalid.`,
-          span: expr.span,
-        });
+        if (isCompositeType(left) || isCompositeType(right)) {
+          diag(ctx, {
+            code: 'C_COMPARE_TYPE',
+            message: `Cannot compare ${formatType(left)} with ${formatType(right)}; compare fields or elements instead.`,
+            span: expr.span,
+            help: 'Cambridge equality applies to scalar values, not whole ARRAY or TYPE values.',
+          });
+        } else if (!comparableTypes(left, right)) {
+          diag(ctx, {
+            severity: 'warning',
+            code: 'C_COMPARE_TYPE',
+            message: `Comparing ${formatType(left)} with ${formatType(right)} may be invalid.`,
+            span: expr.span,
+          });
+        }
       }
       const result = binaryResultType(expr.operator, left, right);
       if (

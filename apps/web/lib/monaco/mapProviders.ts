@@ -135,6 +135,10 @@ function symbolKindToMonaco(kind: DocumentSymbol['kind']): number {
       return 13; // Constant
     case 'parameter':
       return 12;
+    case 'type':
+      return 4; // Class
+    case 'field':
+      return 7; // Field
     default:
       return 12;
   }

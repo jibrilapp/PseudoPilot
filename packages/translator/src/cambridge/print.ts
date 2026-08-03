@@ -2,7 +2,10 @@ import type {
   IrAssignTarget,
   IrBinaryExpression,
   IrExpression,
+  IrIndexExpression,
+  IrMemberExpression,
   IrProgram,
+  IrSimpleType,
   IrStatement,
   IrTypeReference,
   IrUnaryExpression,
@@ -26,10 +29,31 @@ import type { AssignmentArrow } from '../types.js';
 /** Cambridge Guide typically uses ~3 spaces; we use 4 for clear nesting. */
 const INDENT = '    ';
 
+/** Higher than any binary/unary operator — forces parens around compound bases. */
+const POSTFIX_PRECEDENCE = 100;
+
+function printIndex(expr: IrIndexExpression): string {
+  const idxs = expr.indices.map((i) => printExpr(i, 0)).join(', ');
+  return `${printExpr(expr.array, POSTFIX_PRECEDENCE)}[${idxs}]`;
+}
+
+function printMember(expr: IrMemberExpression): string {
+  return `${printExpr(expr.object, POSTFIX_PRECEDENCE)}.${expr.property}`;
+}
+
 function printTarget(target: IrAssignTarget): string {
-  if (target.kind === 'IrIdentifier') return target.name;
-  const idxs = target.indices.map((i) => printExpr(i, 0)).join(', ');
-  return `${target.array.name}[${idxs}]`;
+  switch (target.kind) {
+    case 'IrIdentifier':
+      return target.name;
+    case 'IrIndexExpression':
+      return printIndex(target);
+    case 'IrMemberExpression':
+      return printMember(target);
+    default: {
+      const _exhaustive: never = target;
+      return _exhaustive;
+    }
+  }
 }
 
 function printExpr(expr: IrExpression, parentPrec: number): string {
@@ -47,7 +71,12 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
     case 'IrIdentifier':
       return expr.name;
     case 'IrIndexExpression':
-      return printTarget(expr);
+      return printIndex(expr);
+    case 'IrMemberExpression':
+      return printMember(expr);
+    case 'IrDeepCopyExpression':
+      // Cambridge has no copy operator — identity for reverse print.
+      return printExpr(expr.value, parentPrec);
     case 'IrCallExpression':
       return `${expr.callee}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
     case 'IrEofExpression':
@@ -83,12 +112,18 @@ function printBinary(expr: IrBinaryExpression, parentPrec: number): string {
   return prec < parentPrec ? `(${core})` : core;
 }
 
+function printSimpleType(typeRef: IrSimpleType): string {
+  return typeRef.name;
+}
+
 function printTypeRef(typeRef: IrTypeReference): string {
-  if (typeRef.kind === 'IrScalarType') return typeRef.name;
+  if (typeRef.kind === 'IrScalarType' || typeRef.kind === 'IrNamedType') {
+    return typeRef.name;
+  }
   const dims = typeRef.dimensions
     .map((d) => `${printExpr(d.lower, 0)}:${printExpr(d.upper, 0)}`)
     .join(', ');
-  return `ARRAY[${dims}] OF ${typeRef.elementType}`;
+  return `ARRAY[${dims}] OF ${printSimpleType(typeRef.elementType)}`;
 }
 
 function pad(level: number): string {
@@ -198,7 +233,7 @@ function printStatement(
     }
     case 'IrProcedureDeclaration': {
       const params = stmt.parameters
-        .map((param) => `${param.name} : ${param.typeName}`)
+        .map((param) => `${param.name} : ${printSimpleType(param.typeName)}`)
         .join(', ');
       lines.push(`${p}PROCEDURE ${stmt.name}(${params})`);
       lines.push(...printBlock(stmt.body, arrow, level + 1));
@@ -207,13 +242,23 @@ function printStatement(
     }
     case 'IrFunctionDeclaration': {
       const params = stmt.parameters
-        .map((param) => `${param.name} : ${param.typeName}`)
+        .map((param) => `${param.name} : ${printSimpleType(param.typeName)}`)
         .join(', ');
       lines.push(
-        `${p}FUNCTION ${stmt.name}(${params}) RETURNS ${stmt.returnType}`,
+        `${p}FUNCTION ${stmt.name}(${params}) RETURNS ${printSimpleType(stmt.returnType)}`,
       );
       lines.push(...printBlock(stmt.body, arrow, level + 1));
       lines.push(`${p}ENDFUNCTION`);
+      break;
+    }
+    case 'IrTypeDeclaration': {
+      lines.push(`${p}TYPE ${stmt.name}`);
+      for (const field of stmt.fields) {
+        lines.push(
+          `${p}    DECLARE ${field.names.join(', ')} : ${printTypeRef(field.typeRef)}`,
+        );
+      }
+      lines.push(`${p}ENDTYPE`);
       break;
     }
     case 'IrCallStatement': {
@@ -262,6 +307,7 @@ function printStatement(
     stmt.kind !== 'IrConstantStatement' &&
     stmt.kind !== 'IrProcedureDeclaration' &&
     stmt.kind !== 'IrFunctionDeclaration' &&
+    stmt.kind !== 'IrTypeDeclaration' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('//')
   ) {

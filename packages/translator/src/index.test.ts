@@ -2149,3 +2149,283 @@ OUTPUT S & "x"
     expect(back.code).not.toContain('&');
   });
 });
+
+describe('TYPE / ENDTYPE records', () => {
+  it('translates a simple record TYPE to a Python dataclass', () => {
+    const result = translatePseudocodeToPython(`TYPE Student
+  DECLARE Name : STRING
+  DECLARE Age : INTEGER
+ENDTYPE
+DECLARE S : Student
+S.Name ← "Alice"
+S.Age ← 16
+OUTPUT S.Name
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toBe(
+      [
+        'from dataclasses import dataclass',
+        '',
+        '@dataclass',
+        'class Student:',
+        '    Name: str = ""',
+        '    Age: int = 0',
+        'S: Student = Student()',
+        'S.Name = "Alice"',
+        'S.Age = 16',
+        'print(S.Name)',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('deep-copies record assignment and procedure args (Cambridge by-value)', () => {
+    const result = translatePseudocodeToPython(`
+TYPE Student
+  DECLARE Age : INTEGER
+ENDTYPE
+DECLARE A, B : Student
+PROCEDURE Birthday(S : Student)
+  S.Age ← S.Age + 1
+ENDPROCEDURE
+A.Age ← 10
+B ← A
+B.Age ← 9
+CALL Birthday(A)
+OUTPUT A.Age
+OUTPUT B.Age
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('import copy');
+    expect(result.code).toContain('B = copy.deepcopy(A)');
+    expect(result.code).toContain('Birthday(copy.deepcopy(A))');
+  });
+
+  it('normalizes field casing to the TYPE declaration', () => {
+    const result = translatePseudocodeToPython(`
+TYPE Student
+  DECLARE Name : STRING
+ENDTYPE
+DECLARE S : Student
+S.name ← "Bob"
+OUTPUT S.Name
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('S.Name = "Bob"');
+    expect(result.code).not.toMatch(/S\.name\s*=/);
+  });
+
+  it('gives every dataclass field a Cambridge-matching default', () => {
+    const result = translatePseudocodeToPython(`
+TYPE Widget
+  DECLARE Label : STRING
+  DECLARE Code : CHAR
+  DECLARE Quantity : INTEGER
+  DECLARE Price : REAL
+  DECLARE InStock : BOOLEAN
+ENDTYPE
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('Label: str = ""');
+    expect(result.code).toContain("Code: str = ' '  # CHAR");
+    expect(result.code).toContain('Quantity: int = 0');
+    expect(result.code).toContain('Price: float = 0.0');
+    expect(result.code).toContain('InStock: bool = False');
+  });
+
+  it('translates nested records with default_factory', () => {
+    const result = translatePseudocodeToPython(`
+TYPE Address
+  DECLARE City : STRING
+ENDTYPE
+TYPE Student
+  DECLARE Name : STRING
+  DECLARE Home : Address
+ENDTYPE
+DECLARE S : Student
+S.Home.City ← "Cambridge"
+OUTPUT S.Home.City
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('from dataclasses import dataclass, field');
+    expect(result.code).toContain('class Address:');
+    expect(result.code).toContain('class Student:');
+    expect(result.code).toContain('Home: Address = field(default_factory=Address)');
+    expect(result.code).toContain('S: Student = Student()');
+    expect(result.code).toContain('S.Home.City = "Cambridge"');
+    expect(result.code).toContain('print(S.Home.City)');
+  });
+
+  it('translates ARRAY OF <record> fields and DECLAREs with real initializers', () => {
+    const result = translatePseudocodeToPython(`
+TYPE Student
+  DECLARE Name : STRING
+  DECLARE Marks : ARRAY[1:3] OF INTEGER
+ENDTYPE
+DECLARE Class : ARRAY[1:2] OF Student
+Class[1].Name ← "Alice"
+Class[1].Marks[2] ← 90
+OUTPUT Class[1].Name
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain(
+      'Marks: list[int] = field(default_factory=lambda: [0 for _ in range(1, 3 + 1)])  # ARRAY[1:3]',
+    );
+    expect(result.code).toContain(
+      'Class: list[Student] = [Student() for _ in range(1, 2 + 1)]  # ARRAY[1:2]',
+    );
+    expect(result.code).toContain('Class[1].Name = "Alice"');
+    expect(result.code).toContain('Class[1].Marks[2] = 90');
+  });
+
+  it('translates record-typed PROCEDURE parameters and FUNCTION return types', () => {
+    const result = translatePseudocodeToPython(`
+TYPE Student
+  DECLARE Name : STRING
+ENDTYPE
+
+PROCEDURE ShowStudent(S : Student)
+  OUTPUT S.Name
+ENDPROCEDURE
+
+FUNCTION MakeStudent(N : STRING) RETURNS Student
+  DECLARE Result : Student
+  Result.Name ← N
+  RETURN Result
+ENDFUNCTION
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('def ShowStudent(S: Student):');
+    expect(result.code).toContain('def MakeStudent(N: str) -> Student:');
+    expect(result.code).toContain('Result: Student = Student()');
+  });
+
+  it('runs a full program (checker enabled) end to end', () => {
+    const result = translateCam(`
+TYPE Student
+  DECLARE Name : STRING
+  DECLARE Age : INTEGER
+ENDTYPE
+DECLARE S : Student
+S.Name ← "Alice"
+S.Age ← 16
+OUTPUT S.Name
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+  });
+
+  it('round-trips a simple record TYPE through Cambridge print', () => {
+    const src = `
+TYPE Student
+  DECLARE Name : STRING
+  DECLARE Age : INTEGER
+ENDTYPE
+DECLARE S : Student
+S.Name ← "Alice"
+S.Age ← 16
+OUTPUT S.Name
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toBe(
+      [
+        'TYPE Student',
+        '    DECLARE Name : STRING',
+        '    DECLARE Age : INTEGER',
+        'ENDTYPE',
+        'DECLARE S : Student',
+        'S.Name ← "Alice"',
+        'S.Age ← 16',
+        'OUTPUT S.Name',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('round-trips nested record field/array access (Cambridge print)', () => {
+    const src = `
+TYPE Address
+  DECLARE City : STRING
+ENDTYPE
+TYPE Student
+  DECLARE Name : STRING
+  DECLARE Home : Address
+ENDTYPE
+DECLARE Class : ARRAY[1:2] OF Student
+Class[1].Home.City ← "Cambridge"
+OUTPUT Class[1].Home.City
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('TYPE Address');
+    expect(norm(back.code)).toContain('DECLARE City : STRING');
+    expect(norm(back.code)).toContain('TYPE Student');
+    expect(norm(back.code)).toContain('DECLARE Home : Address');
+    expect(norm(back.code)).toContain('Class[1].Home.City ← "Cambridge"');
+    expect(norm(back.code)).toContain('OUTPUT Class[1].Home.City');
+  });
+
+  it('round-trips PROCEDURE/FUNCTION with record parameter and return types', () => {
+    const src = `
+TYPE Student
+  DECLARE Name : STRING
+ENDTYPE
+
+PROCEDURE ShowStudent(S : Student)
+  OUTPUT S.Name
+ENDPROCEDURE
+
+FUNCTION MakeStudent(N : STRING) RETURNS Student
+  DECLARE Result : Student
+  Result.Name ← N
+  RETURN Result
+ENDFUNCTION
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('PROCEDURE ShowStudent(S : Student)');
+    expect(norm(back.code)).toContain('FUNCTION MakeStudent(N : STRING) RETURNS Student');
+    expect(norm(back.code)).toContain('DECLARE Result : Student');
+    expect(norm(back.code)).toContain('RETURN Result');
+  });
+
+  it('round-trips TYPE fields that are ARRAY OF scalar', () => {
+    const src = `
+TYPE Student
+  DECLARE Name : STRING
+  DECLARE Marks : ARRAY[1:3] OF INTEGER
+ENDTYPE
+DECLARE S : Student
+S.Marks[1] ← 90
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('DECLARE Marks : ARRAY[1:3] OF INTEGER');
+    expect(norm(back.code)).toContain('S.Marks[1] ← 90');
+  });
+
+  it('best-effort reverse: list dataclass field without ARRAY comment still recovers a TYPE field', () => {
+    const py = `
+from dataclasses import dataclass, field
+
+@dataclass
+class Student:
+    Name: str = ""
+    Marks: list[int] = field(default_factory=lambda: [0, 0, 0])  # ARRAY[1:3]
+`;
+    const back = translatePythonToPseudocode(py);
+    expect(back.ok).toBe(true);
+    expect(back.code).toContain('TYPE Student');
+    expect(back.code).toContain('DECLARE Name : STRING');
+    expect(back.code).toContain('DECLARE Marks : ARRAY[1:3] OF INTEGER');
+  });
+});

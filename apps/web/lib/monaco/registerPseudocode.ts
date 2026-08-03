@@ -10,6 +10,8 @@ let registered = false;
 const KEYWORDS = [
   'DECLARE',
   'CONSTANT',
+  'TYPE',
+  'ENDTYPE',
   'IF',
   'THEN',
   'ELSE',
@@ -77,14 +79,14 @@ export function ensurePseudocodeLanguage(monaco: typeof Monaco): void {
     ],
     indentationRules: {
       increaseIndentPattern:
-        /^\s*(IF|ELSE|ELSEIF|WHILE|FOR|REPEAT|CASE|PROCEDURE|FUNCTION|OTHERWISE)\b/i,
+        /^\s*(IF|ELSE|ELSEIF|WHILE|FOR|REPEAT|CASE|PROCEDURE|FUNCTION|TYPE|OTHERWISE)\b/i,
       decreaseIndentPattern:
-        /^\s*(ENDIF|ENDWHILE|NEXT|UNTIL|ENDCASE|ENDPROCEDURE|ENDFUNCTION|ELSE|ELSEIF|OTHERWISE)\b/i,
+        /^\s*(ENDIF|ENDWHILE|NEXT|UNTIL|ENDCASE|ENDPROCEDURE|ENDFUNCTION|ENDTYPE|ELSE|ELSEIF|OTHERWISE)\b/i,
     },
     folding: {
       markers: {
-        start: /^\s*(IF|WHILE|FOR|REPEAT|CASE|PROCEDURE|FUNCTION)\b/i,
-        end: /^\s*(ENDIF|ENDWHILE|NEXT|UNTIL|ENDCASE|ENDPROCEDURE|ENDFUNCTION)\b/i,
+        start: /^\s*(IF|WHILE|FOR|REPEAT|CASE|PROCEDURE|FUNCTION|TYPE)\b/i,
+        end: /^\s*(ENDIF|ENDWHILE|NEXT|UNTIL|ENDCASE|ENDPROCEDURE|ENDFUNCTION|ENDTYPE)\b/i,
       },
     },
   });

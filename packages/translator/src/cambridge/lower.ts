@@ -2,6 +2,7 @@ import type {
   AssignTarget,
   Expression,
   Program,
+  SimpleType,
   Statement,
   TypeReference,
 } from '@pseudopilot/language-core';
@@ -15,7 +16,9 @@ import {
   type IrElseIfClause,
   type IrExpression,
   type IrProgram,
+  type IrSimpleType,
   type IrStatement,
+  type IrTypeField,
   type IrTypeReference,
 } from '../ir/nodes.js';
 import { cambridgeBinaryToIr, cambridgeUnaryToIr } from '../rules/operators.js';
@@ -33,9 +36,16 @@ export type LowerResult = {
 
 type BindingKind = 'var' | 'const';
 
+/** Cambridge composite shapes for by-value Python emit + field casing. */
+type ValueShape =
+  | { readonly kind: 'scalar' }
+  | { readonly kind: 'record'; readonly typeKey: string }
+  | { readonly kind: 'array'; readonly element: ValueShape };
+
 type ScopeBinding = {
   readonly kind: BindingKind;
   readonly canonical: string;
+  readonly shape: ValueShape;
 };
 
 type ScopeFrame = {
@@ -45,6 +55,12 @@ type ScopeFrame = {
 type LowerCtx = {
   readonly diagnostics: TranslateDiagnostic[];
   readonly scopes: ScopeFrame[];
+  /** typeKey → (fieldKey → declared field casing) */
+  readonly recordFields: Map<string, Map<string, string>>;
+  /** typeKey → (fieldKey → field value shape) for nested copy/casing */
+  readonly recordFieldShapes: Map<string, Map<string, ValueShape>>;
+  /** routineKey → parameter shapes (for by-value arg copies) */
+  readonly routineParams: Map<string, readonly ValueShape[]>;
 };
 
 /** Cambridge identifiers are case-insensitive — match checker binding. */
@@ -79,18 +95,91 @@ function registerBinding(
   ctx: LowerCtx,
   name: string,
   kind: BindingKind,
+  shape: ValueShape = { kind: 'scalar' },
 ): string {
   const key = bindingKey(name);
   const frame = ctx.scopes[ctx.scopes.length - 1]!;
   const existing = frame.bindings.get(key);
   if (existing) return existing.canonical;
-  frame.bindings.set(key, { kind, canonical: name });
+  frame.bindings.set(key, { kind, canonical: name, shape });
   return name;
 }
 
 /** Register a name (routine) without treating it as assignable storage. */
 function registerName(ctx: LowerCtx, name: string): string {
-  return registerBinding(ctx, name, 'var');
+  return registerBinding(ctx, name, 'var', { kind: 'scalar' });
+}
+
+function lookupShape(ctx: LowerCtx, name: string): ValueShape {
+  const key = bindingKey(name);
+  for (let i = ctx.scopes.length - 1; i >= 0; i--) {
+    const found = ctx.scopes[i]!.bindings.get(key);
+    if (found) return found.shape;
+  }
+  return { kind: 'scalar' };
+}
+
+function isCompositeShape(shape: ValueShape): boolean {
+  return shape.kind === 'record' || shape.kind === 'array';
+}
+
+function shapeFromTypeRef(typeRef: TypeReference): ValueShape {
+  if (typeRef.kind === 'TypeName') return { kind: 'scalar' };
+  if (typeRef.kind === 'NamedType') {
+    return { kind: 'record', typeKey: bindingKey(typeRef.name) };
+  }
+  return {
+    kind: 'array',
+    element: shapeFromSimpleType(typeRef.elementType),
+  };
+}
+
+function shapeFromSimpleType(t: SimpleType): ValueShape {
+  if (t.kind === 'TypeName') return { kind: 'scalar' };
+  return { kind: 'record', typeKey: bindingKey(t.name) };
+}
+
+function exprShape(ctx: LowerCtx, expr: Expression): ValueShape {
+  switch (expr.kind) {
+    case 'Identifier':
+      return lookupShape(ctx, expr.name);
+    case 'MemberExpression': {
+      const obj = exprShape(ctx, expr.object);
+      if (obj.kind !== 'record') return { kind: 'scalar' };
+      // Field shape from TYPE table is not stored on IR; look up via recorded fields
+      // only for casing. For copy decisions, treat unknown fields as scalar unless
+      // the field name maps to a known nested record via type table — we store
+      // field→shape in recordFieldShapes.
+      const nested = ctx.recordFieldShapes
+        .get(obj.typeKey)
+        ?.get(bindingKey(expr.property.name));
+      return nested ?? { kind: 'scalar' };
+    }
+    case 'IndexExpression': {
+      const arr = exprShape(ctx, expr.array);
+      if (arr.kind !== 'array') return { kind: 'scalar' };
+      return arr.element;
+    }
+    case 'CallExpression': {
+      // Function return shapes aren't tracked for all cases; assignment still
+      // deep-copies when the *target* is composite.
+      return { kind: 'scalar' };
+    }
+    case 'GroupingExpression':
+      return exprShape(ctx, expr.expression);
+    default:
+      return { kind: 'scalar' };
+  }
+}
+
+function maybeDeepCopy(
+  ctx: LowerCtx,
+  value: IrExpression,
+  shape: ValueShape,
+): IrExpression {
+  void ctx;
+  if (!isCompositeShape(shape)) return value;
+  return { kind: 'IrDeepCopyExpression', value };
 }
 
 function bindName(
@@ -99,6 +188,7 @@ function bindName(
   kind: BindingKind,
   span: Statement['span'],
   what: 'DECLARE' | 'CONSTANT',
+  shape: ValueShape = { kind: 'scalar' },
 ): string | null {
   // Language duplicate / type rules live in `@pseudopilot/checker`.
   // Lower only enforces Python-target name constraints.
@@ -119,7 +209,7 @@ function bindName(
       span,
     });
   }
-  return registerBinding(ctx, name, kind);
+  return registerBinding(ctx, name, kind, shape);
 }
 
 function lookupBinding(ctx: LowerCtx, name: string): BindingKind | undefined {
@@ -131,13 +221,27 @@ function lookupBinding(ctx: LowerCtx, name: string): BindingKind | undefined {
   return undefined;
 }
 
+/** Find the root identifier of a target/expression chain (Scores[1].Name → Scores). */
+function rootIdentifierName(expr: Expression): string | null {
+  switch (expr.kind) {
+    case 'Identifier':
+      return expr.name;
+    case 'IndexExpression':
+      return rootIdentifierName(expr.array);
+    case 'MemberExpression':
+      return rootIdentifierName(expr.object);
+    default:
+      return null;
+  }
+}
+
 /** Skip emitting when target is a CONSTANT (checker already diagnosed). */
 function checkAssignToConstant(
   ctx: LowerCtx,
   target: AssignTarget,
 ): boolean {
-  const name = target.kind === 'Identifier' ? target.name : target.array.name;
-  return lookupBinding(ctx, name) !== 'const';
+  const name = rootIdentifierName(target);
+  return name === null || lookupBinding(ctx, name) !== 'const';
 }
 
 function checkForVariableNotConstant(ctx: LowerCtx, variable: string): boolean {
@@ -148,20 +252,35 @@ function lowerTarget(
   target: AssignTarget,
   ctx: LowerCtx,
 ): IrAssignTarget | null {
-  if (target.kind === 'Identifier') {
-    return { kind: 'IrIdentifier', name: resolveName(ctx, target.name) };
+  const lowered = lowerExpression(target, ctx);
+  if (!lowered) return null;
+  // AssignTarget is a subset of Expression (Identifier | IndexExpression | MemberExpression);
+  // lowerExpression preserves that shape for these three kinds.
+  return lowered as IrAssignTarget;
+}
+
+function resolveFieldName(
+  ctx: LowerCtx,
+  object: Expression,
+  property: string,
+): string {
+  const shape = exprShape(ctx, object);
+  if (shape.kind === 'record') {
+    const canonical = ctx.recordFields
+      .get(shape.typeKey)
+      ?.get(bindingKey(property));
+    if (canonical) return canonical;
   }
-  const indices: IrExpression[] = [];
-  for (const idx of target.indices) {
-    const lowered = lowerExpression(idx, ctx);
-    if (!lowered) return null;
-    indices.push(lowered);
+  // Fall back: unique field name across all TYPEs.
+  let found: string | undefined;
+  for (const fields of ctx.recordFields.values()) {
+    const c = fields.get(bindingKey(property));
+    if (c) {
+      if (found && found !== c) return property;
+      found = c;
+    }
   }
-  return {
-    kind: 'IrIndexExpression',
-    array: { kind: 'IrIdentifier', name: resolveName(ctx, target.array.name) },
-    indices,
-  };
+  return found ?? property;
 }
 
 function lowerExpression(
@@ -183,19 +302,24 @@ function lowerExpression(
     case 'Identifier':
       return { kind: 'IrIdentifier', name: resolveName(ctx, expr.name) };
     case 'IndexExpression': {
+      const array = lowerExpression(expr.array, ctx);
+      if (!array) return null;
       const indices: IrExpression[] = [];
       for (const idx of expr.indices) {
         const lowered = lowerExpression(idx, ctx);
         if (!lowered) return null;
         indices.push(lowered);
       }
+      return { kind: 'IrIndexExpression', array, indices };
+    }
+    case 'MemberExpression': {
+      const object = lowerExpression(expr.object, ctx);
+      if (!object) return null;
+      const property = resolveFieldName(ctx, expr.object, expr.property.name);
       return {
-        kind: 'IrIndexExpression',
-        array: {
-          kind: 'IrIdentifier',
-          name: resolveName(ctx, expr.array.name),
-        },
-        indices,
+        kind: 'IrMemberExpression',
+        object,
+        property,
       };
     }
     case 'UnaryExpression': {
@@ -233,15 +357,20 @@ function lowerExpression(
         });
         return null;
       }
+      const callee = resolveName(ctx, expr.callee.name);
+      const paramShapes = ctx.routineParams.get(bindingKey(callee)) ?? [];
       const args: IrExpression[] = [];
-      for (const arg of expr.args) {
-        const lowered = lowerExpression(arg, ctx);
+      for (let i = 0; i < expr.args.length; i++) {
+        const arg = expr.args[i]!;
+        let lowered = lowerExpression(arg, ctx);
         if (!lowered) return null;
+        const shape = paramShapes[i] ?? exprShape(ctx, arg);
+        lowered = maybeDeepCopy(ctx, lowered, shape);
         args.push(lowered);
       }
       return {
         kind: 'IrCallExpression',
-        callee: resolveName(ctx, expr.callee.name),
+        callee,
         args,
       };
     }
@@ -272,12 +401,19 @@ function lowerBlock(
   return out;
 }
 
+function lowerSimpleType(typeRef: SimpleType): IrSimpleType {
+  if (typeRef.kind === 'TypeName') {
+    return { kind: 'IrScalarType', name: typeRef.name };
+  }
+  return { kind: 'IrNamedType', name: typeRef.name };
+}
+
 function lowerTypeRef(
   typeRef: TypeReference,
   ctx: LowerCtx,
 ): IrTypeReference | null {
-  if (typeRef.kind === 'TypeName') {
-    return { kind: 'IrScalarType', name: typeRef.name };
+  if (typeRef.kind === 'TypeName' || typeRef.kind === 'NamedType') {
+    return lowerSimpleType(typeRef);
   }
   const dimensions: IrArrayDimension[] = [];
   for (const dim of typeRef.dimensions) {
@@ -289,7 +425,7 @@ function lowerTypeRef(
   return {
     kind: 'IrArrayType',
     dimensions,
-    elementType: typeRef.elementType.name,
+    elementType: lowerSimpleType(typeRef.elementType),
   };
 }
 
@@ -341,8 +477,13 @@ function lowerStatement(
     case 'AssignmentStatement': {
       if (!checkAssignToConstant(ctx, stmt.target)) return null;
       const target = lowerTarget(stmt.target, ctx);
-      const value = lowerExpression(stmt.value, ctx);
+      let value = lowerExpression(stmt.value, ctx);
       if (!target || !value) return null;
+      const valueShape = exprShape(ctx, stmt.value);
+      // Cambridge by-value: deep-copy composite RHS on store (records/arrays).
+      if (isCompositeShape(valueShape) && value.kind !== 'IrDeepCopyExpression') {
+        value = { kind: 'IrDeepCopyExpression', value };
+      }
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
@@ -493,10 +634,17 @@ function lowerStatement(
     case 'DeclareStatement': {
       const typeRef = lowerTypeRef(stmt.typeRef, ctx);
       if (!typeRef) return null;
+      const shape = shapeFromTypeRef(stmt.typeRef);
       const names: string[] = [];
       for (const id of stmt.names) {
-        // Duplicate DECLARE names are diagnosed by `@pseudopilot/checker`.
-        const canonical = bindName(ctx, id.name, 'var', id.span, 'DECLARE');
+        const canonical = bindName(
+          ctx,
+          id.name,
+          'var',
+          id.span,
+          'DECLARE',
+          shape,
+        );
         if (canonical === null) continue;
         if (!names.includes(canonical)) names.push(canonical);
       }
@@ -507,6 +655,35 @@ function lowerStatement(
           kind: 'IrDeclareStatement' as const,
           names,
           typeRef,
+        }),
+      };
+    }
+    case 'TypeDeclaration': {
+      const typeKey = bindingKey(stmt.name.name);
+      const fieldNames = new Map<string, string>();
+      const fieldShapes = new Map<string, ValueShape>();
+      const fields: IrTypeField[] = [];
+      for (const fieldDecl of stmt.fields) {
+        const typeRef = lowerTypeRef(fieldDecl.typeRef, ctx);
+        if (!typeRef) return null;
+        const fshape = shapeFromTypeRef(fieldDecl.typeRef);
+        const names: string[] = [];
+        for (const id of fieldDecl.names) {
+          const fk = bindingKey(id.name);
+          if (!fieldNames.has(fk)) fieldNames.set(fk, id.name);
+          fieldShapes.set(fk, fshape);
+          names.push(fieldNames.get(fk)!);
+        }
+        fields.push({ kind: 'IrTypeField', names, typeRef });
+      }
+      ctx.recordFields.set(typeKey, fieldNames);
+      ctx.recordFieldShapes.set(typeKey, fieldShapes);
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrTypeDeclaration' as const,
+          name: stmt.name.name,
+          fields,
         }),
       };
     }
@@ -543,16 +720,20 @@ function lowerStatement(
       }
       const procName = registerName(ctx, stmt.name.name);
       pushScope(ctx);
+      const paramShapes: ValueShape[] = [];
       const parameters = stmt.parameters.map((p) => {
+        const shape = shapeFromSimpleType(p.typeName);
+        paramShapes.push(shape);
         const pname =
-          bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE') ??
+          bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape) ??
           p.name.name;
         return {
           kind: 'IrParameter' as const,
           name: pname,
-          typeName: p.typeName.name,
+          typeName: lowerSimpleType(p.typeName),
         };
       });
+      ctx.routineParams.set(bindingKey(procName), paramShapes);
       const body = lowerBlock(stmt.body, ctx);
       popScope(ctx);
       return {
@@ -578,16 +759,20 @@ function lowerStatement(
       }
       const fnName = registerName(ctx, stmt.name.name);
       pushScope(ctx);
+      const paramShapes: ValueShape[] = [];
       const parameters = stmt.parameters.map((p) => {
+        const shape = shapeFromSimpleType(p.typeName);
+        paramShapes.push(shape);
         const pname =
-          bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE') ??
+          bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape) ??
           p.name.name;
         return {
           kind: 'IrParameter' as const,
           name: pname,
-          typeName: p.typeName.name,
+          typeName: lowerSimpleType(p.typeName),
         };
       });
+      ctx.routineParams.set(bindingKey(fnName), paramShapes);
       const body = lowerBlock(stmt.body, ctx);
       popScope(ctx);
       // Missing RETURN / unreachable-after-RETURN: `@pseudopilot/checker` (`C_*`).
@@ -597,7 +782,7 @@ function lowerStatement(
           kind: 'IrFunctionDeclaration' as const,
           name: fnName,
           parameters,
-          returnType: stmt.returnType.name,
+          returnType: lowerSimpleType(stmt.returnType),
           body,
         }),
       };
@@ -614,10 +799,14 @@ function lowerStatement(
         return null;
       }
       const callee = resolveName(ctx, calleeRaw);
+      const paramShapes = ctx.routineParams.get(bindingKey(callee)) ?? [];
       const args: IrExpression[] = [];
-      for (const arg of stmt.args) {
-        const lowered = lowerExpression(arg, ctx);
+      for (let i = 0; i < stmt.args.length; i++) {
+        const arg = stmt.args[i]!;
+        let lowered = lowerExpression(arg, ctx);
         if (!lowered) return null;
+        const shape = paramShapes[i] ?? exprShape(ctx, arg);
+        lowered = maybeDeepCopy(ctx, lowered, shape);
         args.push(lowered);
       }
       return {
@@ -630,8 +819,9 @@ function lowerStatement(
       };
     }
     case 'ReturnStatement': {
-      const value = lowerExpression(stmt.value, ctx);
+      let value = lowerExpression(stmt.value, ctx);
       if (!value) return null;
+      value = maybeDeepCopy(ctx, value, exprShape(ctx, stmt.value));
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
@@ -710,6 +900,9 @@ export function lowerCambridgeProgram(
   const ctx: LowerCtx = {
     diagnostics,
     scopes: [{ bindings: new Map() }],
+    recordFields: new Map(),
+    recordFieldShapes: new Map(),
+    routineParams: new Map(),
   };
 
   // Hoist routine names so CALL-before-def still emits first-declaration casing.

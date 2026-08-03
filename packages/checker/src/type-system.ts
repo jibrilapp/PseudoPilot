@@ -1,11 +1,16 @@
 import type {
   ArrayType,
   Expression,
+  NamedType,
+  SimpleType,
   TypeName,
   TypeNameKind,
   TypeReference,
 } from '@pseudopilot/language-core';
-import type { PpType, ScalarTypeName } from './types.js';
+import type { PpType, RecordFieldInfo, ScalarTypeName } from './types.js';
+import { identKey } from './scope.js';
+
+export type TypeTable = ReadonlyMap<string, PpType>;
 
 export function scalar(name: ScalarTypeName): PpType {
   return { kind: 'scalar', name };
@@ -15,30 +20,76 @@ export function errorType(): PpType {
   return { kind: 'error' };
 }
 
+export function recordType(
+  name: string,
+  fields: readonly RecordFieldInfo[],
+): PpType {
+  return { kind: 'record', name, fields };
+}
+
+export function lookupRecordField(
+  record: Extract<PpType, { kind: 'record' }>,
+  fieldName: string,
+): RecordFieldInfo | undefined {
+  const key = identKey(fieldName);
+  return record.fields.find((f) => identKey(f.name) === key);
+}
+
 export function typeFromTypeName(t: TypeName): PpType {
   return scalar(t.name);
 }
 
-export function typeFromTypeRef(ref: TypeReference): PpType {
+/**
+ * Resolve a type reference against the TYPE table.
+ * Unknown named types become `error` (caller should already have diagnosed).
+ */
+export function resolveTypeRef(ref: TypeReference, types: TypeTable): PpType {
   if (ref.kind === 'TypeName') return typeFromTypeName(ref);
+  if (ref.kind === 'NamedType') {
+    const found = types.get(identKey(ref.name));
+    if (!found) return errorType();
+    return found;
+  }
+  const element = resolveSimpleType(ref.elementType, types);
   return {
     kind: 'array',
-    element: ref.elementType.name,
+    element,
     dimensions: ref.dimensions.length,
   };
 }
 
-export function typeNameOf(ref: TypeReference): TypeNameKind {
+export function resolveSimpleType(t: SimpleType, types: TypeTable): PpType {
+  if (t.kind === 'TypeName') return typeFromTypeName(t);
+  return resolveTypeRef(t, types);
+}
+
+/** @deprecated Prefer {@link resolveTypeRef} with a type table. */
+export function typeFromTypeRef(ref: TypeReference): PpType {
+  if (ref.kind === 'TypeName') return typeFromTypeName(ref);
+  if (ref.kind === 'NamedType') return errorType();
+  if (ref.elementType.kind === 'NamedType') {
+    return {
+      kind: 'array',
+      element: errorType(),
+      dimensions: ref.dimensions.length,
+    };
+  }
+  return {
+    kind: 'array',
+    element: scalar(ref.elementType.name),
+    dimensions: ref.dimensions.length,
+  };
+}
+
+export function typeNameOf(ref: TypeReference): TypeNameKind | string {
   if (ref.kind === 'TypeName') return ref.name;
+  if (ref.kind === 'NamedType') return ref.name;
+  if (ref.elementType.kind === 'TypeName') return ref.elementType.name;
   return ref.elementType.name;
 }
 
-export function arrayType(ref: ArrayType): PpType {
-  return {
-    kind: 'array',
-    element: ref.elementType.name,
-    dimensions: ref.dimensions.length,
-  };
+export function arrayType(ref: ArrayType, types: TypeTable): PpType {
+  return resolveTypeRef(ref, types);
 }
 
 /** Format a type for diagnostic messages. */
@@ -48,14 +99,48 @@ export function formatType(t: PpType): string {
       return t.name;
     case 'array': {
       const stars = Array.from({ length: t.dimensions }, () => '*').join(', ');
-      return `ARRAY[${stars}] OF ${t.element}`;
+      return `ARRAY[${stars}] OF ${formatType(t.element)}`;
     }
+    case 'record':
+      return t.name;
     case 'procedure':
       return `PROCEDURE(${t.params.map(formatType).join(', ')})`;
     case 'function':
-      return `FUNCTION(${t.params.map(formatType).join(', ')}) RETURNS ${t.returns}`;
+      return `FUNCTION(${t.params.map(formatType).join(', ')}) RETURNS ${formatType(t.returns)}`;
     case 'error':
       return '<error>';
+  }
+}
+
+export function typesEqual(a: PpType, b: PpType): boolean {
+  if (a.kind === 'error' || b.kind === 'error') return true;
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case 'scalar':
+      return b.kind === 'scalar' && a.name === b.name;
+    case 'array':
+      return (
+        b.kind === 'array' &&
+        a.dimensions === b.dimensions &&
+        typesEqual(a.element, b.element)
+      );
+    case 'record':
+      return b.kind === 'record' && identKey(a.name) === identKey(b.name);
+    case 'procedure':
+      return (
+        b.kind === 'procedure' &&
+        a.params.length === b.params.length &&
+        a.params.every((p, i) => typesEqual(p, b.params[i]!))
+      );
+    case 'function':
+      return (
+        b.kind === 'function' &&
+        typesEqual(a.returns, b.returns) &&
+        a.params.length === b.params.length &&
+        a.params.every((p, i) => typesEqual(p, b.params[i]!))
+      );
+    default:
+      return false;
   }
 }
 
@@ -69,6 +154,7 @@ export function formatType(t: PpType): string {
  * - REAL → INTEGER
  * - CHAR ↔ STRING (distinct)
  * - arrays only when element type and dimensionality match
+ * - records only when same TYPE name (case-insensitive)
  */
 export function isAssignable(to: PpType, from: PpType): boolean {
   if (to.kind === 'error' || from.kind === 'error') return true;
@@ -78,7 +164,12 @@ export function isAssignable(to: PpType, from: PpType): boolean {
     return false;
   }
   if (to.kind === 'array' && from.kind === 'array') {
-    return to.element === from.element && to.dimensions === from.dimensions;
+    return (
+      to.dimensions === from.dimensions && typesEqual(to.element, from.element)
+    );
+  }
+  if (to.kind === 'record' && from.kind === 'record') {
+    return identKey(to.name) === identKey(from.name);
   }
   return false;
 }
@@ -163,7 +254,6 @@ export function binaryResultType(
       }
       return scalar('INTEGER');
     }
-    // STRING concatenation via + is not Cambridge (& is); reject softly
     return errorType();
   }
   return errorType();
@@ -180,4 +270,18 @@ export function unaryResultType(op: string, arg: PpType): PpType {
     return isNumeric(arg) ? arg : errorType();
   }
   return errorType();
+}
+
+/** Collect record type names reachable from `t` (for cycle detection). */
+export function recordDeps(t: PpType, out: Set<string>): void {
+  if (t.kind === 'record') {
+    out.add(identKey(t.name));
+    for (const f of t.fields) recordDeps(f.type, out);
+  } else if (t.kind === 'array') {
+    recordDeps(t.element, out);
+  }
+}
+
+export function namedTypeRef(name: string, span: NamedType['span']): NamedType {
+  return { kind: 'NamedType', name, span };
 }

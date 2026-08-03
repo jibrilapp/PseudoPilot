@@ -8,7 +8,9 @@ import {
   type IrExpression,
   type IrParameter,
   type IrProgram,
+  type IrSimpleType,
   type IrStatement,
+  type IrTypeField,
   type IrTypeName,
   type IrUnaryOp,
 } from '../ir/nodes.js';
@@ -57,6 +59,7 @@ function isTrueLiteral(expr: IrExpression): boolean {
 class PyParser {
   private readonly tokens: PyToken[];
   private i = 0;
+  private source = '';
   readonly diagnostics: TranslateDiagnostic[] = [];
 
   constructor(
@@ -78,6 +81,7 @@ class PyParser {
   }
 
   parseProgram(source: string, preserveTrivia: boolean): IrProgram {
+    this.source = source;
     const paired: { stmt: IrStatement; span: StmtSpan }[] = [];
     this.skipNewlines();
     while (!this.check(PyTokenKind.Eof)) {
@@ -130,10 +134,10 @@ class PyParser {
     allowDef = false,
     allowReturn = false,
   ): ParsedStatement | null {
-    // Ignore `import random` (and similar) emitted for RAND.
+    // Ignore `import random` / `from dataclasses import dataclass, field` (and similar).
     if (
       this.check(PyTokenKind.Identifier) &&
-      this.peek().lexeme === 'import'
+      (this.peek().lexeme === 'import' || this.peek().lexeme === 'from')
     ) {
       while (
         !this.check(PyTokenKind.Newline) &&
@@ -143,6 +147,16 @@ class PyParser {
         this.advance();
       }
       return null;
+    }
+    if (this.check(PyTokenKind.At)) {
+      if (!allowDef) {
+        this.error(
+          "Nested '@dataclass' is not supported (Cambridge TYPE cannot be nested).",
+          this.peek(),
+        );
+        return null;
+      }
+      return this.parseDecoratedClass();
     }
     if (this.check(PyTokenKind.If)) {
       return this.parseIf(allowBreak, allowReturn);
@@ -209,90 +223,103 @@ class PyParser {
         return this.parseAnnotatedDeclare(nameTok);
       }
 
-      let target: IrAssignTarget = {
-        kind: 'IrIdentifier',
-        name: nameTok.lexeme,
-      };
+      // Build a postfix chain of `[idx]` / `.field` — target for assignment,
+      // or (when it ends in `.method(args)`) a statement-level method call
+      // (f.close() / f.write(...) / S.Home.City ← … / Students[i].Marks[1] ← …).
+      let target: IrExpression = { kind: 'IrIdentifier', name: nameTok.lexeme };
       let endTok = nameTok;
+      // Consecutive `[i][j]` (no intervening `.field`) merge into one Cambridge
+      // multi-dimensional index `grid[i, j]`; a `.field` in between starts a
+      // fresh index expression (`Students[i].Marks[1]`).
+      let lastWasBracket = false;
 
-      if (this.match(PyTokenKind.LBracket)) {
-        const indices: IrExpression[] = [];
-        do {
+      chain: while (true) {
+        if (this.match(PyTokenKind.LBracket)) {
           const idx = this.parseExpression();
           if (!idx) return null;
-          indices.push(idx);
-          this.expect(PyTokenKind.RBracket);
-        } while (this.match(PyTokenKind.LBracket));
-        target = {
-          kind: 'IrIndexExpression',
-          array: { kind: 'IrIdentifier', name: nameTok.lexeme },
-          indices,
-        };
-        endTok = this.previous();
+          if (!this.match(PyTokenKind.RBracket)) {
+            this.error("Expected ']' after index.", this.peek());
+            return null;
+          }
+          target =
+            target.kind === 'IrIndexExpression' && lastWasBracket
+              ? { kind: 'IrIndexExpression', array: target.array, indices: [...target.indices, idx] }
+              : { kind: 'IrIndexExpression', array: target, indices: [idx] };
+          endTok = this.previous();
+          lastWasBracket = true;
+          continue;
+        }
+        if (this.check(PyTokenKind.Dot)) {
+          lastWasBracket = false;
+          this.advance(); // .
+          if (!this.check(PyTokenKind.Identifier)) {
+            this.error('Expected field or method name after ".".', this.peek());
+            return null;
+          }
+          const propTok = this.advance();
+
+          if (this.match(PyTokenKind.LParen)) {
+            const method = propTok.lexeme;
+            const args: IrExpression[] = [];
+            if (!this.check(PyTokenKind.RParen)) {
+              const first = this.parseExpression();
+              if (!first) return null;
+              args.push(first);
+              while (this.match(PyTokenKind.Comma)) {
+                const arg = this.parseExpression();
+                if (!arg) return null;
+                args.push(arg);
+              }
+            }
+            if (!this.match(PyTokenKind.RParen)) {
+              this.error("Expected ')' after method arguments.", this.peek());
+              return null;
+            }
+            endTok = this.previous();
+            if (method === 'close' && args.length === 0) {
+              target = { kind: 'IrCallExpression', callee: 'close', args: [target] };
+            } else if (method === 'write' && args.length === 1) {
+              target = {
+                kind: 'IrCallExpression',
+                callee: 'write',
+                args: [target, args[0]!],
+              };
+            } else {
+              this.error(
+                `Unsupported statement-level method '.${method}()'.`,
+                this.previous(),
+              );
+              return null;
+            }
+            continue;
+          }
+
+          // Not a call — plain field access.
+          target = { kind: 'IrMemberExpression', object: target, property: propTok.lexeme };
+          endTok = propTok;
+          continue;
+        }
+        break chain;
       }
 
-      // Statement-level method call: f.close() / f.write(...) / _pp_files[p].write(...)
-      if (
-        this.check(PyTokenKind.Dot) &&
-        (target.kind === 'IrIdentifier' || target.kind === 'IrIndexExpression')
-      ) {
-        let expr: IrExpression =
-          target.kind === 'IrIdentifier'
-            ? { kind: 'IrIdentifier', name: nameTok.lexeme }
-            : target;
-        // Reuse primary attribute loop by peeking through a mini-parse:
-        // manually consume Dot chain for write/close only at statement level.
-        while (this.match(PyTokenKind.Dot)) {
-          if (!this.match(PyTokenKind.Identifier)) {
-            this.error('Expected method name after ".".', this.peek());
-            return null;
-          }
-          const method = this.previous().lexeme;
-          if (!this.match(PyTokenKind.LParen)) {
-            this.error('Expected "(" after method name.', this.peek());
-            return null;
-          }
-          const args: IrExpression[] = [];
-          if (!this.check(PyTokenKind.RParen)) {
-            const first = this.parseExpression();
-            if (!first) return null;
-            args.push(first);
-            while (this.match(PyTokenKind.Comma)) {
-              const arg = this.parseExpression();
-              if (!arg) return null;
-              args.push(arg);
-            }
-          }
-          if (!this.match(PyTokenKind.RParen)) {
-            this.error("Expected ')' after method arguments.", this.peek());
-            return null;
-          }
-          endTok = this.previous();
-          if (method === 'close' && args.length === 0) {
-            expr = { kind: 'IrCallExpression', callee: 'close', args: [expr] };
-          } else if (method === 'write' && args.length === 1) {
-            expr = {
-              kind: 'IrCallExpression',
-              callee: 'write',
-              args: [expr, args[0]!],
-            };
-          } else {
-            this.error(
-              `Unsupported statement-level method '.${method}()'.`,
-              this.previous(),
-            );
-            return null;
-          }
-        }
+      if (target.kind === 'IrCallExpression') {
         return {
           span: tokenSpan(nameTok, endTok),
           stmt: withEmptyTrivia({
             kind: 'IrCallStatement' as const,
-            callee:
-              expr.kind === 'IrCallExpression' ? expr.callee : nameTok.lexeme,
-            args: expr.kind === 'IrCallExpression' ? expr.args : [],
+            callee: target.callee,
+            args: target.args,
           }),
         };
+      }
+
+      if (
+        target.kind !== 'IrIdentifier' &&
+        target.kind !== 'IrIndexExpression' &&
+        target.kind !== 'IrMemberExpression'
+      ) {
+        this.error('Unsupported assignment target.', this.peek());
+        return null;
       }
 
       if (!this.match(PyTokenKind.Equal)) {
@@ -383,28 +410,38 @@ class PyParser {
     }
     const typeTok = this.advance();
 
-    // list[T]
+    // list[T]  (T is a builtin scalar or a user TYPE / record name)
     if (typeTok.lexeme === 'list' && this.match(PyTokenKind.LBracket)) {
       if (!this.check(PyTokenKind.Identifier)) {
         this.error('Expected element type inside list[…].', this.peek());
         return null;
       }
       const elemTok = this.advance();
-      const elem = pythonTypeToIr(elemTok.lexeme);
-      if (!elem) {
-        this.error(
-          'Unsupported list element type (use int, float, str, bool).',
-          elemTok,
-        );
-        return null;
-      }
+      const scalarElem = pythonTypeToIr(elemTok.lexeme);
+      const elementType: IrSimpleType = scalarElem
+        ? { kind: 'IrScalarType', name: scalarElem }
+        : { kind: 'IrNamedType', name: elemTok.lexeme };
       this.expect(PyTokenKind.RBracket);
       if (this.check(PyTokenKind.Equal)) {
-        this.error(
-          'Annotated list declare must not include "= …" (PseudoPilot emits annotation-only DECLARE).',
-          this.peek(),
-        );
-        return null;
+        if (scalarElem) {
+          this.error(
+            'Annotated list declare must not include "= …" (PseudoPilot emits annotation-only DECLARE for scalar ARRAY).',
+            this.peek(),
+          );
+          return null;
+        }
+        // ARRAY OF <record>: PseudoPilot emits a real list-comprehension
+        // initializer. List comprehensions aren't in this expression subset,
+        // so skip it — bounds are recovered from the `# ARRAY[…]` trailing
+        // comment, same as other arrays.
+        this.advance(); // =
+        while (
+          !this.check(PyTokenKind.Newline) &&
+          !this.check(PyTokenKind.Eof) &&
+          !this.check(PyTokenKind.Dedent)
+        ) {
+          this.advance();
+        }
       }
       // Placeholder 1:1 bounds; refined from `# ARRAY[…]` trailing comment.
       return {
@@ -421,7 +458,7 @@ class PyParser {
                 upper: { kind: 'IrIntegerLiteral' as const, value: 1 },
               },
             ],
-            elementType: elem,
+            elementType,
           },
         }),
       };
@@ -429,11 +466,21 @@ class PyParser {
 
     const mapped = pythonTypeToIr(typeTok.lexeme);
     if (!mapped) {
-      this.error(
-        'Unsupported type annotation (use int, float, str, bool, or list[…]).',
-        typeTok,
-      );
-      return null;
+      // Not a builtin scalar — treat as a reference to a user TYPE (record).
+      // PseudoPilot emits `Name: Record = Record()`; the initializer is a
+      // plain call expression so the normal expression parser handles it.
+      if (this.match(PyTokenKind.Equal)) {
+        const init = this.parseExpression();
+        if (!init) return null;
+      }
+      return {
+        span: tokenSpan(nameTok, this.previous()),
+        stmt: withEmptyTrivia({
+          kind: 'IrDeclareStatement' as const,
+          names: [nameTok.lexeme],
+          typeRef: { kind: 'IrNamedType' as const, name: typeTok.lexeme },
+        }),
+      };
     }
     if (this.check(PyTokenKind.Equal)) {
       this.error(
@@ -518,7 +565,8 @@ class PyParser {
     }
 
     // `def Foo() -> int:` → FUNCTION; bare `def Foo():` → PROCEDURE.
-    let returnType: IrTypeName | null = null;
+    // Return type may be a builtin scalar or a user TYPE (record) name.
+    let returnType: IrSimpleType | null = null;
     if (this.check(PyTokenKind.Minus)) {
       this.advance();
       if (!this.match(PyTokenKind.Gt)) {
@@ -529,15 +577,7 @@ class PyParser {
         this.error('Expected return type after "->".', this.peek());
         return null;
       }
-      const mapped = pythonTypeToIr(this.advance().lexeme);
-      if (!mapped) {
-        this.error(
-          'Unsupported return type annotation (use int, float, str, bool).',
-          this.previous(),
-        );
-        return null;
-      }
-      returnType = mapped;
+      returnType = pythonAnnotationToSimpleType(this.advance().lexeme);
     }
 
     this.expect(PyTokenKind.Colon);
@@ -583,6 +623,229 @@ class PyParser {
     };
   }
 
+  /**
+   * Best-effort reverse of `@dataclass class Name: …` → IrTypeDeclaration.
+   * Recognizes the shapes PseudoPilot itself emits:
+   *   Field: int|float|str|bool = <literal>
+   *   Field: RecordType = field(default_factory=RecordType)
+   *   Field: list[T] = field(default_factory=lambda: …)  # ARRAY[l:u, …]
+   * Anything else is skipped with a warning rather than failing the whole
+   * translation.
+   */
+  private parseDecoratedClass(): ParsedStatement | null {
+    const atTok = this.expect(PyTokenKind.At)!;
+    if (!this.check(PyTokenKind.Identifier) || this.peek().lexeme !== 'dataclass') {
+      this.error(
+        "Unsupported decorator (translator only supports '@dataclass').",
+        this.peek(),
+      );
+      while (
+        !this.check(PyTokenKind.Newline) &&
+        !this.check(PyTokenKind.Eof) &&
+        !this.check(PyTokenKind.Dedent)
+      ) {
+        this.advance();
+      }
+      return null;
+    }
+    this.advance(); // dataclass
+    this.skipDecoratorCallArgs();
+    this.skipNewlines();
+
+    if (!this.check(PyTokenKind.Identifier) || this.peek().lexeme !== 'class') {
+      this.error("Expected 'class' after '@dataclass'.", this.peek());
+      return null;
+    }
+    this.advance(); // class
+    if (!this.check(PyTokenKind.Identifier)) {
+      this.error('Expected class name after "class".', this.peek());
+      return null;
+    }
+    const name = this.advance().lexeme;
+    this.skipDecoratorCallArgs(); // optional (Base) inheritance clause
+    if (!this.expect(PyTokenKind.Colon)) return null;
+    this.skipNewlines();
+
+    const { fields, ok } = this.parseDataclassBody();
+    if (!ok) {
+      this.diagnostics.push({
+        severity: 'warning',
+        code: 'T_DATACLASS_FIELD_UNSUPPORTED',
+        message: `TYPE '${name}' has one or more fields that could not be reverse-translated (e.g. ARRAY-of-record defaults); review the generated TYPE body.`,
+        span: tokenSpan(atTok),
+      });
+    }
+
+    return {
+      span: tokenSpan(atTok, this.previous()),
+      stmt: withEmptyTrivia({
+        kind: 'IrTypeDeclaration' as const,
+        name,
+        fields,
+      }),
+    };
+  }
+
+  /** Skip a balanced `(...)` group if present (decorator args / base class list). */
+  private skipDecoratorCallArgs(): void {
+    if (!this.match(PyTokenKind.LParen)) return;
+    let depth = 1;
+    while (depth > 0 && !this.check(PyTokenKind.Eof)) {
+      if (this.check(PyTokenKind.LParen)) depth += 1;
+      else if (this.check(PyTokenKind.RParen)) depth -= 1;
+      this.advance();
+    }
+  }
+
+  private parseDataclassBody(): { fields: IrTypeField[]; ok: boolean } {
+    if (!this.match(PyTokenKind.Indent)) {
+      this.error('Expected indented class body.', this.peek());
+      return { fields: [], ok: false };
+    }
+
+    const fields: IrTypeField[] = [];
+    let ok = true;
+
+    while (!this.check(PyTokenKind.Dedent) && !this.check(PyTokenKind.Eof)) {
+      this.skipNewlines();
+      if (this.check(PyTokenKind.Dedent) || this.check(PyTokenKind.Eof)) break;
+
+      if (this.check(PyTokenKind.Pass)) {
+        this.advance();
+        this.skipNewlines();
+        continue;
+      }
+
+      const field = this.parseDataclassField();
+      if (field) {
+        fields.push(field);
+      } else {
+        ok = false;
+      }
+      // Resync to end of line regardless, so one bad field doesn't derail the rest.
+      while (
+        !this.check(PyTokenKind.Newline) &&
+        !this.check(PyTokenKind.Dedent) &&
+        !this.check(PyTokenKind.Eof)
+      ) {
+        this.advance();
+      }
+      this.skipNewlines();
+    }
+
+    this.expect(PyTokenKind.Dedent);
+    return { fields, ok };
+  }
+
+  private parseDataclassField(): IrTypeField | null {
+    if (!this.check(PyTokenKind.Identifier)) return null;
+    const nameTok = this.advance();
+    if (!this.match(PyTokenKind.Colon)) return null;
+    if (!this.check(PyTokenKind.Identifier)) return null;
+    const typeTok = this.advance();
+
+    // `Field: list[T] = field(default_factory=lambda: …)  # ARRAY[l:u]`
+    // (PseudoPilot emit). Skip the initializer; recover bounds from the
+    // trailing `# ARRAY[…]` comment on the same source line.
+    if (typeTok.lexeme === 'list') {
+      if (!this.match(PyTokenKind.LBracket)) return null;
+      if (!this.check(PyTokenKind.Identifier)) return null;
+      const elemTok = this.advance();
+      const scalarElem = pythonTypeToIr(elemTok.lexeme);
+      const elementType: IrSimpleType = scalarElem
+        ? { kind: 'IrScalarType', name: scalarElem }
+        : { kind: 'IrNamedType', name: elemTok.lexeme };
+      if (!this.match(PyTokenKind.RBracket)) return null;
+      if (this.match(PyTokenKind.Equal)) {
+        while (
+          !this.check(PyTokenKind.Newline) &&
+          !this.check(PyTokenKind.Dedent) &&
+          !this.check(PyTokenKind.Eof)
+        ) {
+          this.advance();
+        }
+      }
+      const dims = this.arrayBoundsFromSourceLine(nameTok.offset) ?? [
+        {
+          lower: { kind: 'IrIntegerLiteral' as const, value: 1 },
+          upper: { kind: 'IrIntegerLiteral' as const, value: 1 },
+        },
+      ];
+      return {
+        kind: 'IrTypeField',
+        names: [nameTok.lexeme],
+        typeRef: {
+          kind: 'IrArrayType',
+          elementType,
+          dimensions: dims.map((d) => ({
+            kind: 'IrArrayDimension' as const,
+            lower: d.lower,
+            upper: d.upper,
+          })),
+        },
+      };
+    }
+
+    if (!this.match(PyTokenKind.Equal)) return null;
+
+    if (this.check(PyTokenKind.Identifier) && this.peek().lexeme === 'field') {
+      const recordName = this.tryParseDefaultFactoryIdentifier();
+      if (recordName === null) return null;
+      return {
+        kind: 'IrTypeField',
+        names: [nameTok.lexeme],
+        typeRef: { kind: 'IrNamedType', name: recordName },
+      };
+    }
+
+    const mapped = pythonTypeToIr(typeTok.lexeme);
+    if (!mapped) return null;
+    const value = this.parseExpression();
+    if (!value) return null;
+    return {
+      kind: 'IrTypeField',
+      names: [nameTok.lexeme],
+      typeRef: { kind: 'IrScalarType', name: mapped },
+    };
+  }
+
+  /** Read `# ARRAY[…]` from the source line containing `offset`. */
+  private arrayBoundsFromSourceLine(
+    offset: number,
+  ): { lower: IrExpression; upper: IrExpression }[] | null {
+    if (!this.source) return null;
+    let lineStart = offset;
+    while (lineStart > 0 && this.source[lineStart - 1] !== '\n') lineStart -= 1;
+    let lineEnd = offset;
+    while (lineEnd < this.source.length && this.source[lineEnd] !== '\n') {
+      lineEnd += 1;
+    }
+    const line = this.source.slice(lineStart, lineEnd);
+    const hash = line.lastIndexOf('#');
+    if (hash < 0) return null;
+    return parseArrayBoundsComment(line.slice(hash + 1).trim());
+  }
+
+  /** Strictly matches `field(default_factory=Identifier)`; returns the identifier or null. */
+  private tryParseDefaultFactoryIdentifier(): string | null {
+    const start = this.i;
+    this.advance(); // 'field'
+    if (
+      this.match(PyTokenKind.LParen) &&
+      this.check(PyTokenKind.Identifier) &&
+      this.peek().lexeme === 'default_factory' &&
+      (this.advance(), this.match(PyTokenKind.Equal)) &&
+      this.check(PyTokenKind.Identifier)
+    ) {
+      const ident = this.advance().lexeme;
+      if (this.match(PyTokenKind.RParen)) {
+        return ident;
+      }
+    }
+    this.i = start;
+    return null;
+  }
+
   private parseReturn(): ParsedStatement | null {
     const retTok = this.expect(PyTokenKind.Return)!;
     const value = this.parseExpression();
@@ -617,21 +880,14 @@ class PyParser {
     }
     seen.add(name);
 
-    let typeName: IrTypeName = 'INTEGER';
+    // Parameter type may be a builtin scalar or a user TYPE (record) name.
+    let typeName: IrSimpleType = { kind: 'IrScalarType', name: 'INTEGER' };
     if (this.match(PyTokenKind.Colon)) {
       if (!this.check(PyTokenKind.Identifier)) {
         this.error('Expected type name after ":".', this.peek());
         return null;
       }
-      const mapped = pythonTypeToIr(this.advance().lexeme);
-      if (!mapped) {
-        this.error(
-          'Unsupported parameter type annotation (use int, float, str, bool).',
-          this.previous(),
-        );
-        return null;
-      }
-      typeName = mapped;
+      typeName = pythonAnnotationToSimpleType(this.advance().lexeme);
     } else {
       this.diagnostics.push({
         severity: 'warning',
@@ -1295,70 +1551,86 @@ class PyParser {
 
       let expr: IrExpression = { kind: 'IrIdentifier', name };
 
-      // Attribute: x.lower() / x.upper() / file.readline() / file.write() / file.close()
-      while (this.match(PyTokenKind.Dot)) {
-        if (!this.match(PyTokenKind.Identifier)) {
-          this.error('Expected attribute name after ".".', this.peek());
-          return null;
-        }
-        const method = this.previous().lexeme;
-        if (!this.match(PyTokenKind.LParen)) {
-          this.error('Expected "(" after method name.', this.peek());
-          return null;
-        }
-        const args: IrExpression[] = [];
-        if (!this.check(PyTokenKind.RParen)) {
-          const first = this.parseExpression();
-          if (!first) return null;
-          args.push(first);
-          while (this.match(PyTokenKind.Comma)) {
-            const arg = this.parseExpression();
-            if (!arg) return null;
-            args.push(arg);
+      // Interleaved postfix chain: attribute access/calls (`.field`,
+      // `.lower()`, `.readline()`, …) and index/slice (`[i]`, `[a:b]`) may
+      // appear in any order, e.g. `Students[i].Marks[1]`, `S.Home.City`.
+      while (true) {
+        if (this.check(PyTokenKind.Dot)) {
+          this.advance(); // .
+          if (!this.match(PyTokenKind.Identifier)) {
+            this.error('Expected attribute name after ".".', this.peek());
+            return null;
           }
+          const method = this.previous().lexeme;
+          if (!this.match(PyTokenKind.LParen)) {
+            // Plain field access (record member), not a method call.
+            expr = { kind: 'IrMemberExpression', object: expr, property: method };
+            continue;
+          }
+          const args: IrExpression[] = [];
+          if (!this.check(PyTokenKind.RParen)) {
+            const first = this.parseExpression();
+            if (!first) return null;
+            args.push(first);
+            while (this.match(PyTokenKind.Comma)) {
+              const arg = this.parseExpression();
+              if (!arg) return null;
+              args.push(arg);
+            }
+          }
+          if (!this.match(PyTokenKind.RParen)) {
+            this.error("Expected ')' after method arguments.", this.peek());
+            return null;
+          }
+          if (method === 'lower' && args.length === 0) {
+            expr = { kind: 'IrCallExpression', callee: 'LCASE', args: [expr] };
+          } else if (method === 'upper' && args.length === 0) {
+            expr = { kind: 'IrCallExpression', callee: 'UCASE', args: [expr] };
+          } else if (
+            expr.kind === 'IrIdentifier' &&
+            expr.name === 'copy' &&
+            method === 'deepcopy' &&
+            args.length === 1
+          ) {
+            // Forward emit uses copy.deepcopy for Cambridge by-value record/array
+            // copies; reverse unwraps to a plain expression (assignment is by value).
+            expr = args[0]!;
+          } else if (
+            expr.kind === 'IrIdentifier' &&
+            expr.name === 'random' &&
+            method === 'random' &&
+            args.length === 0
+          ) {
+            expr = { kind: 'IrCallExpression', callee: 'RAND', args: [] };
+          } else if (method === 'readline' && args.length === 0) {
+            expr = { kind: 'IrCallExpression', callee: 'readline', args: [expr] };
+          } else if (method === 'rstrip') {
+            expr = {
+              kind: 'IrCallExpression',
+              callee: 'rstrip',
+              args: [expr, ...args],
+            };
+          } else if (method === 'write' && args.length === 1) {
+            expr = {
+              kind: 'IrCallExpression',
+              callee: 'write',
+              args: [expr, args[0]!],
+            };
+          } else if (method === 'close' && args.length === 0) {
+            expr = { kind: 'IrCallExpression', callee: 'close', args: [expr] };
+          } else {
+            this.error(`Unsupported method '.${method}()'.`, this.previous());
+            return null;
+          }
+          continue;
         }
-        if (!this.match(PyTokenKind.RParen)) {
-          this.error("Expected ')' after method arguments.", this.peek());
-          return null;
+        if (this.match(PyTokenKind.LBracket)) {
+          const sliced = this.parseIndexOrSlice(expr);
+          if (!sliced) return null;
+          expr = sliced;
+          continue;
         }
-        if (method === 'lower' && args.length === 0) {
-          expr = { kind: 'IrCallExpression', callee: 'LCASE', args: [expr] };
-        } else if (method === 'upper' && args.length === 0) {
-          expr = { kind: 'IrCallExpression', callee: 'UCASE', args: [expr] };
-        } else if (
-          expr.kind === 'IrIdentifier' &&
-          expr.name === 'random' &&
-          method === 'random' &&
-          args.length === 0
-        ) {
-          expr = { kind: 'IrCallExpression', callee: 'RAND', args: [] };
-        } else if (method === 'readline' && args.length === 0) {
-          expr = { kind: 'IrCallExpression', callee: 'readline', args: [expr] };
-        } else if (method === 'rstrip') {
-          expr = {
-            kind: 'IrCallExpression',
-            callee: 'rstrip',
-            args: [expr, ...args],
-          };
-        } else if (method === 'write' && args.length === 1) {
-          expr = {
-            kind: 'IrCallExpression',
-            callee: 'write',
-            args: [expr, args[0]!],
-          };
-        } else if (method === 'close' && args.length === 0) {
-          expr = { kind: 'IrCallExpression', callee: 'close', args: [expr] };
-        } else {
-          this.error(`Unsupported method '.${method}()'.`, this.previous());
-          return null;
-        }
-      }
-
-      // Index / slice: Name[i] or Name[:n] / Name[-n:] / Name[a:b]
-      while (this.match(PyTokenKind.LBracket)) {
-        const sliced = this.parseIndexOrSlice(expr);
-        if (!sliced) return null;
-        expr = sliced;
+        break;
       }
       return expr;
     }
@@ -1440,13 +1712,9 @@ class PyParser {
       this.error("Expected ']' after index.", this.peek());
       return null;
     }
-    if (base.kind === 'IrIdentifier') {
-      return {
-        kind: 'IrIndexExpression',
-        array: base,
-        indices: [first],
-      };
-    }
+    // Consecutive `[i][j]` on the same base merge into one Cambridge
+    // multi-dimensional index (`grid[i, j]`); indexing after `.field` or a
+    // call starts a fresh index expression (`Students[i].Marks[1]`).
     if (base.kind === 'IrIndexExpression') {
       return {
         kind: 'IrIndexExpression',
@@ -1454,8 +1722,7 @@ class PyParser {
         indices: [...base.indices, first],
       };
     }
-    this.error('Array indexing is only supported on identifiers.', this.previous());
-    return null;
+    return { kind: 'IrIndexExpression', array: base, indices: [first] };
   }
 
   private isUnsupportedBlockKeyword(): boolean {
@@ -1522,6 +1789,14 @@ function pythonTypeToIr(name: string): IrTypeName | null {
     default:
       return null;
   }
+}
+
+/** Builtin scalar annotation → IrScalarType; anything else → a user TYPE reference. */
+function pythonAnnotationToSimpleType(name: string): IrSimpleType {
+  const scalar = pythonTypeToIr(name);
+  return scalar
+    ? { kind: 'IrScalarType', name: scalar }
+    : { kind: 'IrNamedType', name };
 }
 
 function isLiteralExpr(expr: IrExpression): boolean {

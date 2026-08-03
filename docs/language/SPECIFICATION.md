@@ -51,8 +51,8 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | `DATE` | Type name | ❌ | |
 | `ARRAY` | Array type constructor | ✅ | |
 | `OF` | Part of `ARRAY[…] OF Type` and `CASE OF` | ✅ | |
-| `TYPE` | User-defined type | ❌ | Extended |
-| `ENDTYPE` | End of composite type | ❌ | Extended |
+| `TYPE` | User-defined record type | ✅ records | Extended (enum/pointer/set ❌) |
+| `ENDTYPE` | End of composite type | ✅ records | Extended |
 | `SET` | Set type | ❌ | Extended |
 | `DEFINE` | Set instance | ❌ | Extended |
 
@@ -237,7 +237,7 @@ Exponentiation is **not** a Cambridge arithmetic operator in the guide. The care
 
 | Operator | Meaning | Parser |
 | --- | --- | --- |
-| `.` | Record / object field or method | ❌ |
+| `.` | Record field access | ✅ |
 | `^` | Pointer type / dereference (context-dependent) | ❌ |
 
 ### 2.7 Precedence and associativity
@@ -281,7 +281,7 @@ See §6. Fixed-length, homogeneous elements, consecutive integer indices.
 | --- | --- | --- |
 | Enumerated `TYPE Name = (A, B, C)` | Named enum values | ❌ |
 | Pointer `TYPE Name = ^BaseType` | Address of BaseType | ❌ |
-| Record `TYPE Name` … `ENDTYPE` | Composite fields | ❌ |
+| Record `TYPE Name` … `ENDTYPE` | Composite fields | ✅ |
 | Set `TYPE Name = SET OF T` + `DEFINE` | Set values | ❌ |
 
 ### 3.4 Class types (Extended / OOP)
@@ -572,7 +572,7 @@ An expression is one of:
 | Grouping | `(a + b) * c` | ✅ |
 | Call | `Max(a, b)`, `LENGTH(s)` | ✅ |
 | Index | `Grid[i, j]` | ✅ |
-| Member | `Pupil.LastName` | ❌ |
+| Member | `Pupil.LastName` | ✅ |
 | Pointer | `MyPtr^`, `^Var` | ❌ |
 | Concat | `a & b` | ✅ |
 | EOF | `EOF(path)` | ✅ |

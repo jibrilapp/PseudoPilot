@@ -48,6 +48,7 @@ export enum PyTokenKind {
   Comma = 'Comma',
   Colon = 'Colon',
   Dot = 'Dot',
+  At = 'At',
 }
 
 export type PyToken = {
@@ -324,6 +325,11 @@ export function lexPython(source: string): PyLexResult {
     if (ch === '.') {
       advance();
       emit(PyTokenKind.Dot, '.', start);
+      continue;
+    }
+    if (ch === '@') {
+      advance();
+      emit(PyTokenKind.At, '@', start);
       continue;
     }
 

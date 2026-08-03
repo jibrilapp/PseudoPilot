@@ -155,7 +155,8 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| Enum / pointer / record / set `TYPE` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Enum / pointer / set `TYPE` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Record `TYPE` … `ENDTYPE` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Random files SEEK/GET/PUT | ❌ | ❌ | ❌ | ❌ | ❌ |
 | OOP CLASS / INHERITS / NEW | ❌ | ❌ | ❌ | ❌ | ❌ |
 
@@ -198,7 +199,8 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 11. ✅ Incremental compilation / document cache — see [`INCREMENTAL_COMPILATION.md`](./INCREMENTAL_COMPILATION.md)
 12. ✅ Conformance & reliability suite — see [`../TESTING.md`](../TESTING.md)
 13. ✅ Monaco IDE editor — see [`../ide/MONACO.md`](../ide/MONACO.md)
-14. ❌ Extended TYPE / RANDOM files / OOP / OS sandbox
+14. ✅ Record TYPE … ENDTYPE — see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md)
+15. ❌ Extended enum/pointer/SET TYPE / RANDOM files / OOP / OS sandbox
 
 **Gate for “run in IDE” milestone:** ✅ `RuntimeController` + Run/Stop/INPUT wired in `apps/web`.  
 **Gate for “worker execution” milestone:** ✅ Web Worker + message protocol (`apps/web/lib/worker`) — UI thread does not execute pseudocode.
@@ -207,3 +209,4 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 **Gate for “Monaco IDE” milestone:** ✅ Monaco editor + LS providers + debugger decorations (`docs/ide/MONACO.md`).
 **Gate for “incremental compilation” milestone:** ✅ `@pseudopilot/compiler-service` staged caches (hash / AST / semantics / invalidation).
 **Gate for “conformance suite” milestone:** ✅ `@pseudopilot/conformance` corpus + round-trip / stress / fuzz / benches (`docs/TESTING.md`).
+**Gate for “TYPE / ENDTYPE records” milestone:** ✅ see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md).

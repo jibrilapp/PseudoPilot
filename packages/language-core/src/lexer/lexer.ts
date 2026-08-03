@@ -332,6 +332,14 @@ export function lex(source: string): LexResult {
       continue;
     }
 
+    // Member access `.` (after number lexing so `.5` remains a real literal)
+    if (ch === '.') {
+      const start = currentPos();
+      advance();
+      emit(TokenKind.Dot, start, '.');
+      continue;
+    }
+
     // Identifier / keyword
     if (isIdentStart(ch)) {
       const start = currentPos();

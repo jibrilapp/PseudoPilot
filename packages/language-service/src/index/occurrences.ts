@@ -9,8 +9,14 @@ import type {
   Program,
   Statement,
   SourceSpan,
+  TypeReference,
 } from '@pseudopilot/language-core';
-import { identKey, type SymbolInfo } from '@pseudopilot/checker';
+import {
+  identKey,
+  lookupRecordField,
+  type PpType,
+  type SymbolInfo,
+} from '@pseudopilot/checker';
 
 export type OccurrenceKind = 'declaration' | 'reference' | 'write';
 
@@ -137,9 +143,14 @@ function addRef(
 function walkStatement(ctx: BinderCtx, stmt: Statement): void {
   switch (stmt.kind) {
     case 'DeclareStatement':
-      // Declarations already recorded from checker symbols.
+      walkTypeRef(ctx, stmt.typeRef);
       return;
     case 'ConstantStatement':
+      return;
+    case 'TypeDeclaration':
+      for (const field of stmt.fields) {
+        walkTypeRef(ctx, field.typeRef);
+      }
       return;
     case 'AssignmentStatement':
       walkAssignTarget(ctx, stmt.target, 'write');
@@ -217,6 +228,12 @@ function walkStatement(ctx: BinderCtx, stmt: Statement): void {
           }
         }
       }
+      for (const p of stmt.parameters) {
+        walkTypeRef(ctx, p.typeName);
+      }
+      if (stmt.kind === 'FunctionDeclaration') {
+        walkTypeRef(ctx, stmt.returnType);
+      }
       for (const s of stmt.body) walkStatement(ctx, s);
       ctx.containerName = prev;
       ctx.locals = prevLocals;
@@ -252,8 +269,107 @@ function walkAssignTarget(
     addRef(ctx, target.name, target.span, kind);
     return;
   }
-  addRef(ctx, target.array.name, target.array.span, kind);
+  if (target.kind === 'MemberExpression') {
+    walkExpr(ctx, target.object);
+    addFieldRef(ctx, target.object, target.property.name, target.property.span, kind);
+    return;
+  }
+  walkExpr(ctx, target.array);
   for (const idx of target.indices) walkExpr(ctx, idx);
+}
+
+function addFieldRef(
+  ctx: BinderCtx,
+  object: Expression,
+  name: string,
+  span: SourceSpan,
+  kind: OccurrenceKind,
+): void {
+  const objType = resolveExprType(ctx, object);
+  let symbol: SymbolInfo | null = null;
+  if (objType?.kind === 'record') {
+    const field = lookupRecordField(objType, name);
+    if (field) {
+      const key = identKey(name);
+      const typeKey = identKey(objType.name);
+      symbol =
+        (ctx.allByKey.get(key) ?? []).find(
+          (s) =>
+            s.kind === 'field' &&
+            identKey(s.containerName ?? '') === typeKey,
+        ) ?? null;
+    }
+  }
+  const container = symbol?.containerName ?? ctx.containerName;
+  const symbolKey = symbol
+    ? symbolKeyOf(symbol)
+    : `${container}::${identKey(name)}::field`;
+  ctx.out.push({
+    name,
+    span,
+    kind,
+    symbolKey,
+    containerName: ctx.containerName,
+    symbol,
+  });
+}
+
+/** Best-effort static type of an expression for field binding (no second checker). */
+function resolveExprType(ctx: BinderCtx, expr: Expression): PpType | null {
+  switch (expr.kind) {
+    case 'Identifier': {
+      const sym = resolve(ctx, expr.name);
+      return sym?.type ?? null;
+    }
+    case 'MemberExpression': {
+      const obj = resolveExprType(ctx, expr.object);
+      if (obj?.kind !== 'record') return null;
+      return lookupRecordField(obj, expr.property.name)?.type ?? null;
+    }
+    case 'IndexExpression': {
+      const arr = resolveExprType(ctx, expr.array);
+      if (arr?.kind !== 'array') return null;
+      return arr.element;
+    }
+    case 'GroupingExpression':
+      return resolveExprType(ctx, expr.expression);
+    default:
+      return null;
+  }
+}
+
+function walkTypeRef(ctx: BinderCtx, ref: TypeReference): void {
+  if (ref.kind === 'NamedType') {
+    addTypeRef(ctx, ref.name, ref.span);
+    return;
+  }
+  if (ref.kind === 'ArrayType') {
+    for (const dim of ref.dimensions) {
+      walkExpr(ctx, dim.lower);
+      walkExpr(ctx, dim.upper);
+    }
+    if (ref.elementType.kind === 'NamedType') {
+      addTypeRef(ctx, ref.elementType.name, ref.elementType.span);
+    }
+  }
+}
+
+function addTypeRef(ctx: BinderCtx, name: string, span: SourceSpan): void {
+  const key = identKey(name);
+  const candidates = (ctx.allByKey.get(key) ?? []).filter((s) => s.kind === 'type');
+  const symbol = candidates[0] ?? null;
+  const container = symbol?.containerName ?? 'global';
+  const symbolKey = symbol
+    ? symbolKeyOf(symbol)
+    : `${container}::${identKey(name)}::type`;
+  ctx.out.push({
+    name,
+    span,
+    kind: 'reference',
+    symbolKey,
+    containerName: ctx.containerName,
+    symbol,
+  });
 }
 
 function walkExpr(ctx: BinderCtx, expr: Expression): void {
@@ -278,8 +394,12 @@ function walkExpr(ctx: BinderCtx, expr: Expression): void {
       walkExpr(ctx, expr.expression);
       return;
     case 'IndexExpression':
-      addRef(ctx, expr.array.name, expr.array.span, 'reference');
+      walkExpr(ctx, expr.array);
       for (const idx of expr.indices) walkExpr(ctx, idx);
+      return;
+    case 'MemberExpression':
+      walkExpr(ctx, expr.object);
+      addFieldRef(ctx, expr.object, expr.property.name, expr.property.span, 'reference');
       return;
     case 'CallExpression':
       addRef(ctx, expr.callee.name, expr.callee.span, 'reference');

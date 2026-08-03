@@ -72,6 +72,10 @@ function labelKind(kind: SymbolKind): string {
       return 'PROCEDURE';
     case 'function':
       return 'FUNCTION';
+    case 'type':
+      return 'TYPE';
+    case 'field':
+      return 'field';
   }
 }
 
@@ -80,6 +84,8 @@ function dupCode(prev: SymbolKind, next: SymbolKind): string {
   if (next === 'function' || prev === 'function') return 'C_DUP_FUNCTION';
   if (next === 'constant' || prev === 'constant') return 'C_DUP_CONSTANT';
   if (next === 'parameter' || prev === 'parameter') return 'C_DUP_PARAMETER';
+  if (next === 'type' || prev === 'type') return 'C_DUP_TYPE';
+  if (next === 'field' || prev === 'field') return 'C_DUP_FIELD';
   return 'C_DUP_VARIABLE';
 }
 

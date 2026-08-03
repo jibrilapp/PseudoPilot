@@ -45,7 +45,8 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `READ` `WRITE` `APPEND` | ✅ |
 | `EOF` | ✅ |
 | `RANDOM` `SEEK` `GETRECORD` `PUTRECORD` | ❌ |
-| `TYPE` `ENDTYPE` `SET` `DEFINE` | ❌ |
+| `TYPE` `ENDTYPE` (records) | ✅ |
+| `SET` `DEFINE` / enum / pointer TYPE | ❌ |
 | `CLASS` `ENDCLASS` `PUBLIC` `PRIVATE` `INHERITS` `SUPER` `NEW` | ❌ |
 | Builtin names as reserved calls | 🟡 | Only `EOF` special-cased |
 
@@ -64,7 +65,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `AND` `OR` `NOT` | ✅ |
 | Parentheses | ✅ |
 | `&` concatenation | ✅ |
-| `.` member | ❌ |
+| `.` member | ✅ |
 | `^` pointer | ❌ |
 
 ---
@@ -78,7 +79,8 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `ARRAY[l:u] OF T` | ✅ |
 | Multi-dimensional arrays | ✅ |
 | User type names | ❌ |
-| Enum / pointer / record / set | ❌ |
+| Record TYPE … ENDTYPE | ✅ |
+| Enum / pointer / set TYPE | ❌ |
 | Class types | ❌ |
 
 ---
@@ -234,6 +236,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | String/numeric builtins (except EOF) | ✅ |
 | CONSTANT (literal) | ✅ |
 | BYREF / DATE | ❌ |
-| Extended TYPE / OOP / random files | ❌ |
+| Extended enum/pointer/SET TYPE / OOP / random files | ❌ |
+| Record TYPE … ENDTYPE | ✅ |
 
 **Estimate:** Core Paper 2 surface covers selection, iteration, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE/CONSTANT, Core builtins + `&`. Semantic analysis is **not** parser coverage — see [`SEMANTICS.md`](./SEMANTICS.md) / `@pseudopilot/checker`. Still blocked on BYREF, file I/O runtime, and exam-insert packs.

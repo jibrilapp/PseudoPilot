@@ -1,5 +1,4 @@
 import { identKey } from '@pseudopilot/checker';
-import type { TypeNameKind } from '@pseudopilot/language-core';
 import type { Binding, BindingKind, RuntimeValue } from './value.js';
 import { runtimeFail } from './value.js';
 
@@ -15,7 +14,7 @@ export class Environment {
   define(
     name: string,
     kind: BindingKind,
-    typeName: TypeNameKind | 'ARRAY',
+    typeName: string,
     value: RuntimeValue,
   ): void {
     const key = identKey(name);

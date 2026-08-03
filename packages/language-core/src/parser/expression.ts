@@ -126,23 +126,14 @@ export class ExpressionParser {
         if (!id) return null;
         if (this.cursor.match(TokenKind.LParen)) {
           const args = this.parseArgumentList();
-          return {
+          return this.parsePostfix({
             kind: 'CallExpression',
             callee: id,
             args,
             span: span(id.span.start, this.cursor.previous().span.end),
-          };
+          });
         }
-        if (this.cursor.match(TokenKind.LBracket)) {
-          const indices = this.parseIndexList();
-          return {
-            kind: 'IndexExpression',
-            array: id,
-            indices,
-            span: span(id.span.start, this.cursor.previous().span.end),
-          };
-        }
-        return id;
+        return this.parsePostfix(id);
       }
       case TokenKind.FileEof: {
         const start = this.cursor.advance();
@@ -171,16 +162,46 @@ export class ExpressionParser {
         if (!this.cursor.match(TokenKind.RParen)) {
           pushError(this.diagnostics, 'Expected ")" after expression.', this.cursor.peek());
         }
-        return {
+        return this.parsePostfix({
           kind: 'GroupingExpression',
           expression: expr,
           span: span(token.span.start, this.cursor.previous().span.end),
-        };
+        });
       }
       default:
         pushError(this.diagnostics, 'Expected expression.', token);
         return null;
     }
+  }
+
+  /** Postfix `[…]` and `.field` chains. */
+  private parsePostfix(base: Expression): Expression {
+    let expr = base;
+    for (;;) {
+      if (this.cursor.match(TokenKind.LBracket)) {
+        const indices = this.parseIndexList();
+        expr = {
+          kind: 'IndexExpression',
+          array: expr,
+          indices,
+          span: span(expr.span.start, this.cursor.previous().span.end),
+        };
+        continue;
+      }
+      if (this.cursor.match(TokenKind.Dot)) {
+        const property = this.parseIdentifier();
+        if (!property) return expr;
+        expr = {
+          kind: 'MemberExpression',
+          object: expr,
+          property,
+          span: span(expr.span.start, property.span.end),
+        };
+        continue;
+      }
+      break;
+    }
+    return expr;
   }
 
   parseIdentifier(): Identifier | null {
@@ -266,22 +287,26 @@ export class ExpressionParser {
   }
 
   /**
-   * Parse an assignable location: Name or Name[i, …]
-   * (Opening "[" is not yet consumed when called after reading the identifier.)
+   * Parse an assignable location: Name, Name[i], S.Field, Students[i].Name, …
    */
   parseAssignTarget(): AssignTarget | null {
     const id = this.parseIdentifier();
     if (!id) return null;
-    if (this.cursor.match(TokenKind.LBracket)) {
-      const indices = this.parseIndexList();
-      return {
-        kind: 'IndexExpression',
-        array: id,
-        indices,
-        span: span(id.span.start, this.cursor.previous().span.end),
-      };
+    const target = this.parsePostfix(id);
+    if (
+      target.kind !== 'Identifier' &&
+      target.kind !== 'IndexExpression' &&
+      target.kind !== 'MemberExpression'
+    ) {
+      pushError(
+        this.diagnostics,
+        'Invalid assignment target.',
+        this.cursor.peek(),
+        'E_ASSIGN_TARGET',
+      );
+      return null;
     }
-    return id;
+    return target;
   }
 }
 

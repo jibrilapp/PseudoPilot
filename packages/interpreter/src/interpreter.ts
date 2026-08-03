@@ -1,13 +1,15 @@
 import type {
-  ArrayType,
   AssignTarget,
   BinaryOperator,
   Expression,
   FunctionDeclaration,
   Identifier,
+  IndexExpression,
+  MemberExpression,
   Parameter,
   ProcedureDeclaration,
   Program,
+  SimpleType,
   SourceSpan,
   Statement,
   TypeNameKind,
@@ -28,11 +30,13 @@ import {
 import { FileSystemError, VirtualFileSystem } from './files/VirtualFileSystem.js';
 import {
   allocateArray,
+  allocateRecord,
   arrayOffset,
   asInteger,
   asNumber,
   booleanValue,
   charValue,
+  cloneValue,
   defaultScalar,
   formatValue,
   integerValue,
@@ -42,6 +46,7 @@ import {
   RuntimeError,
   runtimeFail,
   stringValue,
+  type ArrayElementType,
   type ArrayValue,
   type RuntimeDiagnostic,
   type RuntimeValue,
@@ -86,6 +91,18 @@ type Routine =
   | { readonly kind: 'procedure'; readonly decl: ProcedureDeclaration }
   | { readonly kind: 'function'; readonly decl: FunctionDeclaration };
 
+/** Registered `TYPE … ENDTYPE` shape: field name + its declared type reference. */
+type RecordTypeDef = {
+  readonly name: string;
+  readonly fields: readonly { readonly name: string; readonly typeRef: TypeReference }[];
+};
+
+/** A resolvable assignment target: read the current value, or store a new one. */
+type Place = {
+  get(): RuntimeValue;
+  set(value: RuntimeValue): void;
+};
+
 /**
  * Tree-walk interpreter over a semantically validated Cambridge AST.
  * Independent of translator IR; statement spans feed future debugger hooks.
@@ -102,6 +119,8 @@ export class Interpreter {
   private globalEnv: Environment = new Environment(null);
   private readonly stack = new CallStack();
   private readonly routines = new Map<string, Routine>();
+  /** TYPE … ENDTYPE registry, case-folded name → field defs (declaration order). */
+  private readonly typeRegistry = new Map<string, RecordTypeDef>();
 
   private steps = 0;
   private diagnostics: RuntimeDiagnostic[] = [];
@@ -125,6 +144,7 @@ export class Interpreter {
     this.diagnostics = [];
     this.steps = 0;
     this.routines.clear();
+    this.typeRegistry.clear();
     this.stack.clear();
     this.globalEnv = new Environment(null);
 
@@ -185,6 +205,17 @@ export class Interpreter {
         this.routines.set(identKey(stmt.name.name), {
           kind: 'function',
           decl: stmt,
+        });
+      } else if (stmt.kind === 'TypeDeclaration') {
+        const fields: { name: string; typeRef: TypeReference }[] = [];
+        for (const fieldDecl of stmt.fields) {
+          for (const id of fieldDecl.names) {
+            fields.push({ name: id.name, typeRef: fieldDecl.typeRef });
+          }
+        }
+        this.typeRegistry.set(identKey(stmt.name.name), {
+          name: stmt.name.name,
+          fields,
         });
       }
     }
@@ -265,12 +296,7 @@ export class Interpreter {
         return;
       case 'ConstantStatement': {
         const value = await this.evalExpr(stmt.value);
-        this.env().define(
-          stmt.name.name,
-          'constant',
-          value.kind === 'ARRAY' ? 'ARRAY' : value.kind,
-          value,
-        );
+        this.env().define(stmt.name.name, 'constant', value.kind, value);
         return;
       }
       case 'AssignmentStatement':
@@ -329,6 +355,9 @@ export class Interpreter {
       }
       case 'ProcedureDeclaration':
       case 'FunctionDeclaration':
+        return;
+      case 'TypeDeclaration':
+        // Registered into typeRegistry once at program start; nothing to do here.
         return;
       case 'OpenFileStatement':
         await this.execOpenFile(stmt);
@@ -423,31 +452,89 @@ export class Interpreter {
     typeRef: TypeReference,
     span: SourceSpan,
   ): Promise<void> {
-    if (typeRef.kind === 'TypeName') {
-      for (const name of names) {
-        this.env().define(
-          name,
-          'variable',
-          typeRef.name,
-          defaultScalar(typeRef.name),
-        );
-      }
-      return;
-    }
-    for (let i = 0; i < names.length; i++) {
-      const arr = await this.allocateFromType(typeRef, span);
-      this.env().define(names[i]!, 'variable', 'ARRAY', arr);
+    const factory = await this.buildValueFactory(typeRef, span);
+    const typeName = typeDisplayName(typeRef);
+    for (const name of names) {
+      this.env().define(name, 'variable', typeName, factory());
     }
   }
 
-  private async allocateFromType(typeRef: ArrayType, span: SourceSpan): Promise<ArrayValue> {
+  /**
+   * Build a reusable, side-effect-free factory that instantiates a fresh
+   * default value for `typeRef`. Array bounds / nested TYPE lookups are
+   * resolved once (async); the returned closure is synchronous so it can be
+   * invoked once per DECLARE'd name / array slot / record field without
+   * aliasing nested arrays or records.
+   */
+  private async buildValueFactory(
+    typeRef: TypeReference,
+    span: SourceSpan,
+  ): Promise<() => RuntimeValue> {
+    if (typeRef.kind === 'TypeName') {
+      const name = typeRef.name;
+      return () => defaultScalar(name);
+    }
+    if (typeRef.kind === 'NamedType') {
+      return this.buildRecordFactory(typeRef.name, span);
+    }
+    // ArrayType
     const lowers: number[] = [];
     const uppers: number[] = [];
     for (const dim of typeRef.dimensions) {
       lowers.push(asInteger(await this.evalExpr(dim.lower), 'array lower bound'));
       uppers.push(asInteger(await this.evalExpr(dim.upper), 'array upper bound'));
     }
-    return allocateArray(typeRef.elementType.name, lowers, uppers, span);
+    const elementType = this.elementTypeOf(typeRef.elementType, span);
+    const elementFactory = await this.buildSimpleValueFactory(typeRef.elementType, span);
+    return () => allocateArray(elementType, lowers, uppers, elementFactory, span);
+  }
+
+  private async buildSimpleValueFactory(
+    t: SimpleType,
+    span: SourceSpan,
+  ): Promise<() => RuntimeValue> {
+    if (t.kind === 'TypeName') {
+      const name = t.name;
+      return () => defaultScalar(name);
+    }
+    return this.buildRecordFactory(t.name, span);
+  }
+
+  private elementTypeOf(t: SimpleType, span: SourceSpan): ArrayElementType {
+    if (t.kind === 'TypeName') return { kind: 'SCALAR', name: t.name };
+    const def = this.typeRegistry.get(identKey(t.name));
+    if (!def) {
+      throw runtimeFail('R_UNKNOWN_TYPE', `Unknown TYPE '${t.name}'.`, span);
+    }
+    return { kind: 'RECORD', typeName: def.name };
+  }
+
+  private async buildRecordFactory(
+    typeName: string,
+    span: SourceSpan,
+  ): Promise<() => RuntimeValue> {
+    const def = this.typeRegistry.get(identKey(typeName));
+    if (!def) {
+      throw runtimeFail('R_UNKNOWN_TYPE', `Unknown TYPE '${typeName}'.`, span);
+    }
+    const fieldFactories: {
+      readonly key: string;
+      readonly displayName: string;
+      readonly factory: () => RuntimeValue;
+    }[] = [];
+    for (const f of def.fields) {
+      const factory = await this.buildValueFactory(f.typeRef, span);
+      fieldFactories.push({ key: identKey(f.name), displayName: f.name, factory });
+    }
+    return () =>
+      allocateRecord(
+        def.name,
+        fieldFactories.map((f) => ({
+          key: f.key,
+          displayName: f.displayName,
+          init: f.factory,
+        })),
+      );
   }
 
   private async execIf(stmt: Extract<Statement, { kind: 'IfStatement' }>): Promise<void> {
@@ -540,36 +627,24 @@ export class Interpreter {
   }
 
   private async execInput(target: AssignTarget, span: SourceSpan): Promise<void> {
-    let typeHint: TypeNameKind = 'STRING';
-    if (target.kind === 'Identifier') {
-      const b = this.env().lookup(target.name);
-      if (!b) {
-        throw runtimeFail(
-          'R_UNDECL',
-          `Undeclared identifier '${target.name}'.`,
-          span,
-        );
-      }
-      if (b.typeName === 'ARRAY') {
-        throw runtimeFail(
-          'R_INPUT',
-          'Cannot INPUT a whole array; INPUT an element.',
-          span,
-        );
-      }
-      typeHint = b.typeName;
-    } else {
-      const b = this.env().lookup(target.array.name);
-      if (!b || b.value.kind !== 'ARRAY') {
-        throw runtimeFail(
-          'R_UNDECL',
-          `Undeclared array '${target.array.name}'.`,
-          span,
-        );
-      }
-      typeHint = b.value.element;
+    const place = await this.resolvePlace(target, span);
+    const current = place.get();
+    if (current.kind === 'ARRAY') {
+      throw runtimeFail(
+        'R_INPUT',
+        'Cannot INPUT a whole array; INPUT an element.',
+        span,
+      );
     }
-    await this.assignTarget(target, parseInput(await this.readLine(), typeHint, span), span);
+    if (current.kind === 'RECORD') {
+      throw runtimeFail(
+        'R_INPUT',
+        'Cannot INPUT a whole record; INPUT a field.',
+        span,
+      );
+    }
+    const typeHint: TypeNameKind = current.kind;
+    place.set(parseInput(await this.readLine(), typeHint, span));
   }
 
   private async assignTarget(
@@ -577,6 +652,21 @@ export class Interpreter {
     value: RuntimeValue,
     span: SourceSpan,
   ): Promise<void> {
+    const place = await this.resolvePlace(target, span);
+    place.set(value);
+  }
+
+  /**
+   * Resolve an Identifier / IndexExpression / MemberExpression (possibly
+   * chained, e.g. `Class[1].Home.City`, `Students[i].Marks[j]`) to a place
+   * that can be read or written. Records/arrays are reference types, so once
+   * the innermost container is found, mutating it in place is sufficient —
+   * no need to write the result back up the chain.
+   */
+  private async resolvePlace(
+    target: Identifier | IndexExpression | MemberExpression,
+    span: SourceSpan,
+  ): Promise<Place> {
     if (target.kind === 'Identifier') {
       const b = this.env().lookup(target.name);
       if (!b) {
@@ -586,48 +676,100 @@ export class Interpreter {
           span,
         );
       }
-      if (b.kind === 'constant') {
+      return {
+        get: () => b.value,
+        set: (value) => {
+          if (b.kind === 'constant') {
+            throw runtimeFail(
+              'R_ASSIGN_CONSTANT',
+              `Cannot assign to CONSTANT '${b.name}'.`,
+              span,
+            );
+          }
+          b.value = this.coerceForStore(b.value, value, span);
+        },
+      };
+    }
+
+    if (target.kind === 'MemberExpression') {
+      const obj = await this.evalExpr(target.object);
+      if (obj.kind !== 'RECORD') {
         throw runtimeFail(
-          'R_ASSIGN_CONSTANT',
-          `Cannot assign to CONSTANT '${b.name}'.`,
+          'R_TYPE',
+          `Cannot access field '${target.property.name}' on non-record value.`,
           span,
         );
       }
-      if (b.typeName === 'ARRAY' || value.kind === 'ARRAY') {
-        if (b.value.kind !== 'ARRAY' || value.kind !== 'ARRAY') {
-          throw runtimeFail('R_TYPE', 'Array assignment type mismatch.', span);
-        }
-        if (!arrayShapesEqual(b.value, value)) {
-          throw runtimeFail(
-            'R_TYPE',
-            'Array shapes do not match (element type and bounds).',
-            span,
-          );
-        }
-        for (let i = 0; i < b.value.data.length; i++) {
-          b.value.data[i] = value.data[i]!;
-        }
-        return;
+      const key = identKey(target.property.name);
+      if (!obj.fields.has(key)) {
+        throw runtimeFail(
+          'R_UNKNOWN_FIELD',
+          `Unknown field '${target.property.name}' on TYPE '${obj.typeName}'.`,
+          span,
+        );
       }
-      b.value = coerceAssign(b.typeName, value, span);
-      return;
+      return {
+        get: () => obj.fields.get(key)!,
+        set: (value) => {
+          obj.fields.set(key, this.coerceForStore(obj.fields.get(key)!, value, span));
+        },
+      };
     }
 
-    const arrBinding = this.env().lookup(target.array.name);
-    if (!arrBinding || arrBinding.value.kind !== 'ARRAY') {
-      throw runtimeFail(
-        'R_UNDECL',
-        `Undeclared array '${target.array.name}'.`,
-        span,
-      );
+    // IndexExpression
+    const base = await this.evalExpr(target.array);
+    if (base.kind !== 'ARRAY') {
+      throw runtimeFail('R_TYPE', 'Cannot index a non-array value.', span);
     }
-    const arr = arrBinding.value;
     const indices: number[] = [];
     for (const ix of target.indices) {
       indices.push(asInteger(await this.evalExpr(ix), 'array index'));
     }
-    const offset = arrayOffset(arr, indices, span);
-    arr.data[offset] = coerceAssign(arr.element, value, span);
+    const offset = arrayOffset(base, indices, span);
+    return {
+      get: () => base.data[offset]!,
+      set: (value) => {
+        base.data[offset] = this.coerceForStore(base.data[offset]!, value, span);
+      },
+    };
+  }
+
+  /** Coerce/validate `incoming` against whatever currently occupies a place. */
+  private coerceForStore(
+    existing: RuntimeValue,
+    incoming: RuntimeValue,
+    span: SourceSpan,
+  ): RuntimeValue {
+    if (existing.kind === 'ARRAY' || incoming.kind === 'ARRAY') {
+      if (existing.kind !== 'ARRAY' || incoming.kind !== 'ARRAY') {
+        throw runtimeFail('R_TYPE', 'Array assignment type mismatch.', span);
+      }
+      if (!arrayShapesEqual(existing, incoming)) {
+        throw runtimeFail(
+          'R_TYPE',
+          'Array shapes do not match (element type and bounds).',
+          span,
+        );
+      }
+      for (let i = 0; i < existing.data.length; i++) {
+        existing.data[i] = cloneValue(incoming.data[i]!);
+      }
+      return existing;
+    }
+    if (existing.kind === 'RECORD' || incoming.kind === 'RECORD') {
+      if (existing.kind !== 'RECORD' || incoming.kind !== 'RECORD') {
+        throw runtimeFail('R_TYPE', 'Record assignment type mismatch.', span);
+      }
+      if (identKey(existing.typeName) !== identKey(incoming.typeName)) {
+        throw runtimeFail(
+          'R_TYPE',
+          `Cannot assign TYPE '${incoming.typeName}' to TYPE '${existing.typeName}'.`,
+          span,
+        );
+      }
+      return cloneValue(incoming);
+    }
+    return coerceAssign(existing.kind, incoming, span);
   }
 
   private async evalExpr(expr: Expression): Promise<RuntimeValue> {
@@ -686,21 +828,10 @@ export class Interpreter {
           'function',
           expr.span,
         );
-      case 'IndexExpression': {
-        const b = this.env().lookup(expr.array.name);
-        if (!b || b.value.kind !== 'ARRAY') {
-          throw runtimeFail(
-            'R_UNDECL',
-            `Undeclared array '${expr.array.name}'.`,
-            expr.span,
-          );
-        }
-        const indices: number[] = [];
-        for (const ix of expr.indices) {
-          indices.push(asInteger(await this.evalExpr(ix), 'array index'));
-        }
-        return b.value.data[arrayOffset(b.value, indices, expr.span)]!;
-      }
+      case 'IndexExpression':
+        return (await this.resolvePlace(expr, expr.span)).get();
+      case 'MemberExpression':
+        return (await this.resolvePlace(expr, expr.span)).get();
       case 'EofExpression': {
         const path = await this.evalFilePath(expr.fileName, expr.span);
         try {
@@ -824,6 +955,12 @@ function snapshotEnv(env: Environment): VariableSnapshot[] {
   return vars;
 }
 
+function typeDisplayName(typeRef: TypeReference): string {
+  if (typeRef.kind === 'TypeName') return typeRef.name;
+  if (typeRef.kind === 'NamedType') return typeRef.name;
+  return 'ARRAY';
+}
+
 function bindParameters(
   env: Environment,
   params: readonly Parameter[],
@@ -832,17 +969,35 @@ function bindParameters(
 ): void {
   for (let i = 0; i < params.length; i++) {
     const p = params[i]!;
+    const value = values[i]!;
+    if (p.typeName.kind === 'NamedType') {
+      if (value.kind !== 'RECORD' || identKey(value.typeName) !== identKey(p.typeName.name)) {
+        throw runtimeFail(
+          'R_TYPE',
+          `Parameter '${p.name.name}' expects TYPE '${p.typeName.name}' (got ${value.kind}).`,
+          span,
+        );
+      }
+      env.define(p.name.name, 'parameter', p.typeName.name, cloneValue(value));
+      continue;
+    }
     env.define(
       p.name.name,
       'parameter',
       p.typeName.name,
-      coerceAssign(p.typeName.name, values[i]!, span),
+      coerceAssign(p.typeName.name, value, span),
     );
   }
 }
 
+function arrayElementTypesEqual(a: ArrayElementType, b: ArrayElementType): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'SCALAR') return b.kind === 'SCALAR' && a.name === b.name;
+  return b.kind === 'RECORD' && identKey(a.typeName) === identKey(b.typeName);
+}
+
 function arrayShapesEqual(a: ArrayValue, b: ArrayValue): boolean {
-  if (a.element !== b.element) return false;
+  if (!arrayElementTypesEqual(a.element, b.element)) return false;
   if (a.lowers.length !== b.lowers.length) return false;
   for (let i = 0; i < a.lowers.length; i++) {
     if (a.lowers[i] !== b.lowers[i] || a.uppers[i] !== b.uppers[i]) {
@@ -857,8 +1012,8 @@ function coerceAssign(
   value: RuntimeValue,
   span: SourceSpan,
 ): ScalarValue {
-  if (value.kind === 'ARRAY') {
-    throw runtimeFail('R_TYPE', 'Cannot assign ARRAY to scalar.', span);
+  if (value.kind === 'ARRAY' || value.kind === 'RECORD') {
+    throw runtimeFail('R_TYPE', `Cannot assign ${value.kind} to scalar.`, span);
   }
   if (value.kind === to) return value;
   if (to === 'REAL' && value.kind === 'INTEGER') return realValue(value.value);
@@ -867,6 +1022,7 @@ function coerceAssign(
 
 function valuesEqual(a: RuntimeValue, b: RuntimeValue): boolean {
   if (a.kind === 'ARRAY' || b.kind === 'ARRAY') return false;
+  if (a.kind === 'RECORD' || b.kind === 'RECORD') return false;
   if (
     (a.kind === 'INTEGER' || a.kind === 'REAL') &&
     (b.kind === 'INTEGER' || b.kind === 'REAL')

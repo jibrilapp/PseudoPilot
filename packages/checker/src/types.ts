@@ -14,12 +14,25 @@ export type CheckerDiagnostic = {
 /** Scalar Cambridge types. */
 export type ScalarTypeName = 'INTEGER' | 'REAL' | 'STRING' | 'BOOLEAN' | 'CHAR';
 
+export type RecordFieldInfo = {
+  readonly name: string;
+  readonly type: PpType;
+  readonly span: SourceSpan;
+};
+
 export type PpType =
   | { readonly kind: 'scalar'; readonly name: ScalarTypeName }
   | {
       readonly kind: 'array';
-      readonly element: ScalarTypeName;
+      /** Element type: scalar or record (not nested array). */
+      readonly element: PpType;
       readonly dimensions: number;
+    }
+  | {
+      readonly kind: 'record';
+      /** Display name from TYPE declaration. */
+      readonly name: string;
+      readonly fields: readonly RecordFieldInfo[];
     }
   | {
       readonly kind: 'procedure';
@@ -28,7 +41,7 @@ export type PpType =
   | {
       readonly kind: 'function';
       readonly params: readonly PpType[];
-      readonly returns: ScalarTypeName;
+      readonly returns: PpType;
     }
   | { readonly kind: 'error' };
 
@@ -37,7 +50,9 @@ export type SymbolKind =
   | 'constant'
   | 'parameter'
   | 'procedure'
-  | 'function';
+  | 'function'
+  | 'type'
+  | 'field';
 
 export type SymbolInfo = {
   readonly name: string;
@@ -49,7 +64,7 @@ export type SymbolInfo = {
   /** True for Core builtins seeded into the global scope. */
   readonly builtin?: boolean;
   /**
-   * Owning scope name: `'global'` or the PROCEDURE/FUNCTION name.
+   * Owning scope name: `'global'`, PROCEDURE/FUNCTION name, or TYPE name for fields.
    * Used by the language service for hover / symbols / rename.
    */
   readonly containerName?: string;

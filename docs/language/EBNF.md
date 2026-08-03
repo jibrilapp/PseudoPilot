@@ -141,7 +141,7 @@ assign_stmt     = assign_target assign_op expression ;    (* ✅ *)
 
 assign_target   = identifier                              (* ✅ *)
                 | index_expr                              (* ✅ *)
-                | member_expr                             (* ❌ *)
+                | member_expr                             (* ✅ *)
                 ;
 
 input_stmt      = "INPUT" assign_target ;                 (* ✅ *)
@@ -248,7 +248,7 @@ unary_expr      = ( "+" | "-" | "NOT" ) unary_expr
 postfix_expr    = primary
                   { "(" [ arg_list ] ")"                  (* call ✅ *)
                   | "[" expression { "," expression } "]" (* index ✅ *)
-                  | "." identifier                        (* member ❌ *)
+                  | "." identifier                        (* member ✅ *)
                   | "^"                                   (* deref ❌ *)
                   } ;
 
@@ -268,7 +268,7 @@ literal         = integer_lit                             (* ✅ *)
 
 index_expr      = identifier "[" expression { "," expression } "]" ;
 
-member_expr     = postfix_expr "." identifier ;           (* ❌ *)
+member_expr     = postfix_expr "." identifier ;           (* ✅ *)
 ```
 
 **Call note:** `EOF(…)` is a dedicated primary, not a general identifier call, so it is not shadowed by user functions.
@@ -292,7 +292,7 @@ pointer_type    = "TYPE" identifier "=" "^" type_name ;
 
 record_type     = "TYPE" identifier NL
                   { declare_stmt NL }
-                  "ENDTYPE" ;
+                  "ENDTYPE" ;                             (* ✅ records *)
 
 set_type        = "TYPE" identifier "=" "SET" "OF" type_name NL
                   "DEFINE" identifier
@@ -334,6 +334,7 @@ class_member    = [ "PUBLIC" | "PRIVATE" ]
 | `&` concat | ✅ |
 | Builtins LENGTH/RIGHT/… | ✅ |
 | CHAR / DATE literals | ❌ / ❌ |
-| TYPE / CLASS | ❌ |
+| TYPE records / member access | ✅ |
+| TYPE enum / pointer / set / CLASS | ❌ |
 
 Exact itemised checklists: [PARSER_COVERAGE.md](./PARSER_COVERAGE.md).

@@ -1,9 +1,15 @@
 import type {
+  IrArrayDimension,
+  IrArrayType,
   IrAssignTarget,
   IrBinaryExpression,
   IrExpression,
+  IrIndexExpression,
+  IrMemberExpression,
   IrProgram,
+  IrSimpleType,
   IrStatement,
+  IrTypeField,
   IrTypeReference,
   IrUnaryExpression,
 } from '../ir/nodes.js';
@@ -91,11 +97,54 @@ function irTypeToPython(typeName: string): string {
   }
 }
 
+/** Scalar builtin → Python annotation; user TYPE name → the dataclass name. */
+function irSimpleTypeToPython(typeRef: IrSimpleType): string {
+  if (typeRef.kind === 'IrScalarType') return irTypeToPython(typeRef.name);
+  return typeRef.name;
+}
+
+/** Cambridge default value for a scalar type, matching TYPE dataclass field defaults. */
+function scalarDefaultLiteral(typeName: string): string {
+  switch (typeName) {
+    case 'INTEGER':
+      return '0';
+    case 'REAL':
+      return '0.0';
+    case 'STRING':
+      return '""';
+    case 'BOOLEAN':
+      return 'False';
+    case 'CHAR':
+      return "' '";
+    default:
+      return '0';
+  }
+}
+
+/** Zero-arg constructor call / literal default for a single array element. */
+function elementDefaultExpr(elem: IrSimpleType): string {
+  if (elem.kind === 'IrScalarType') return scalarDefaultLiteral(elem.name);
+  return `${elem.name}()`;
+}
+
+/** Build a (possibly nested, for multi-dim ARRAY) list-comprehension default expression. */
+function arrayDefaultExpr(typeRef: IrArrayType): string {
+  const build = (dims: readonly IrArrayDimension[]): string => {
+    if (dims.length === 0) return elementDefaultExpr(typeRef.elementType);
+    const [dim, ...rest] = dims;
+    const inner = build(rest);
+    return `[${inner} for _ in range(${printExpr(dim!.lower, 0)}, ${printExpr(dim!.upper, 0)} + 1)]`;
+  };
+  return build(typeRef.dimensions);
+}
+
 /**
  * Python emission strategy (DECLARE / CONSTANT):
  * - Scalar DECLARE → `Name: pytype` (annotation only; CHAR adds `# CHAR`)
- * - Array DECLARE → `Name: list[elem]  # ARRAY[l:u, …]`
- * - Multi-name DECLARE → one annotation line per name
+ * - Named-type (record) DECLARE → `Name: Record = Record()` (usable instance)
+ * - Array of scalar DECLARE → `Name: list[elem]  # ARRAY[l:u, …]` (annotation only)
+ * - Array of record DECLARE → `Name: list[Record] = [Record() for _ in range(l, u+1)]  # ARRAY[l:u, …]`
+ * - Multi-name DECLARE → one line per name
  * - CONSTANT → `Name = literal  # CONSTANT`
  */
 function printDeclarePython(
@@ -109,10 +158,21 @@ function printDeclarePython(
     const charTag = typeRef.name === 'CHAR' ? '  # CHAR' : '';
     return names.map((name) => `${p}${name}: ${py}${charTag}`);
   }
-  const elem = irTypeToPython(typeRef.elementType);
+  if (typeRef.kind === 'IrNamedType') {
+    return names.map(
+      (name) => `${p}${name}: ${typeRef.name} = ${typeRef.name}()`,
+    );
+  }
+  const elem = irSimpleTypeToPython(typeRef.elementType);
   const dims = typeRef.dimensions
     .map((d) => `${printExpr(d.lower, 0)}:${printExpr(d.upper, 0)}`)
     .join(', ');
+  if (typeRef.elementType.kind === 'IrNamedType') {
+    const init = arrayDefaultExpr(typeRef);
+    return names.map(
+      (name) => `${p}${name}: list[${elem}] = ${init}  # ARRAY[${dims}]`,
+    );
+  }
   return names.map(
     (name) => `${p}${name}: list[${elem}]  # ARRAY[${dims}]`,
   );
@@ -122,12 +182,77 @@ function pad(level: number): string {
   return INDENT.repeat(level);
 }
 
-function printTarget(target: IrAssignTarget): string {
-  if (target.kind === 'IrIdentifier') return target.name;
-  return target.indices.reduce(
-    (acc, idx) => `${acc}[${printExpr(idx, 0)}]`,
-    target.array.name,
+/**
+ * Emit one `@dataclass` field line per DECLARE'd name, with a default matching
+ * Cambridge's implicit type default (INTEGER 0, REAL 0.0, STRING "", BOOLEAN
+ * False, CHAR " "). Nested records / arrays need `field(default_factory=…)`
+ * since a plain mutable/unhashable default is rejected by `dataclasses`.
+ */
+function printDataclassFields(
+  fields: readonly IrTypeField[],
+  level: number,
+): string[] {
+  const p = pad(level);
+  const lines: string[] = [];
+  for (const field of fields) {
+    for (const name of field.names) {
+      lines.push(`${p}${printDataclassFieldLine(name, field.typeRef)}`);
+    }
+  }
+  return lines;
+}
+
+function printDataclassFieldLine(name: string, typeRef: IrTypeReference): string {
+  if (typeRef.kind === 'IrScalarType') {
+    const py = irTypeToPython(typeRef.name);
+    const charTag = typeRef.name === 'CHAR' ? '  # CHAR' : '';
+    return `${name}: ${py} = ${scalarDefaultLiteral(typeRef.name)}${charTag}`;
+  }
+  if (typeRef.kind === 'IrNamedType') {
+    return `${name}: ${typeRef.name} = field(default_factory=${typeRef.name})`;
+  }
+  const elem = irSimpleTypeToPython(typeRef.elementType);
+  const dims = typeRef.dimensions
+    .map((d) => `${printExpr(d.lower, 0)}:${printExpr(d.upper, 0)}`)
+    .join(', ');
+  const init = arrayDefaultExpr(typeRef);
+  return `${name}: list[${elem}] = field(default_factory=lambda: ${init})  # ARRAY[${dims}]`;
+}
+
+/** Whether any TYPE field needs `field(default_factory=…)` (records / arrays). */
+function typeDeclarationsNeedFieldImport(program: IrProgram): boolean {
+  return program.body.some(
+    (stmt) =>
+      stmt.kind === 'IrTypeDeclaration' &&
+      stmt.fields.some((f) => f.typeRef.kind !== 'IrScalarType'),
   );
+}
+
+/** Higher than any binary/unary operator — forces parens around compound bases. */
+const POSTFIX_PRECEDENCE = 100;
+
+function printIndex(expr: IrIndexExpression): string {
+  const base = printExpr(expr.array, POSTFIX_PRECEDENCE);
+  return expr.indices.reduce((acc, idx) => `${acc}[${printExpr(idx, 0)}]`, base);
+}
+
+function printMember(expr: IrMemberExpression): string {
+  return `${printExpr(expr.object, POSTFIX_PRECEDENCE)}.${expr.property}`;
+}
+
+function printTarget(target: IrAssignTarget): string {
+  switch (target.kind) {
+    case 'IrIdentifier':
+      return target.name;
+    case 'IrIndexExpression':
+      return printIndex(target);
+    case 'IrMemberExpression':
+      return printMember(target);
+    default: {
+      const _exhaustive: never = target;
+      return _exhaustive;
+    }
+  }
 }
 
 function printExpr(expr: IrExpression, parentPrec: number): string {
@@ -145,7 +270,11 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
     case 'IrIdentifier':
       return expr.name;
     case 'IrIndexExpression':
-      return printTarget(expr);
+      return printIndex(expr);
+    case 'IrMemberExpression':
+      return printMember(expr);
+    case 'IrDeepCopyExpression':
+      return `copy.deepcopy(${printExpr(expr.value, 0)})`;
     case 'IrCallExpression': {
       const builtin = tryPrintBuiltinPython(
         expr.callee,
@@ -302,7 +431,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       break;
     case 'IrProcedureDeclaration': {
       const params = stmt.parameters
-        .map((param) => `${param.name}: ${irTypeToPython(param.typeName)}`)
+        .map((param) => `${param.name}: ${irSimpleTypeToPython(param.typeName)}`)
         .join(', ');
       lines.push(`${p}def ${stmt.name}(${params}):`);
       lines.push(...printBlock(stmt.body, level + 1));
@@ -310,12 +439,19 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     }
     case 'IrFunctionDeclaration': {
       const params = stmt.parameters
-        .map((param) => `${param.name}: ${irTypeToPython(param.typeName)}`)
+        .map((param) => `${param.name}: ${irSimpleTypeToPython(param.typeName)}`)
         .join(', ');
       lines.push(
-        `${p}def ${stmt.name}(${params}) -> ${irTypeToPython(stmt.returnType)}:`,
+        `${p}def ${stmt.name}(${params}) -> ${irSimpleTypeToPython(stmt.returnType)}:`,
       );
       lines.push(...printBlock(stmt.body, level + 1));
+      break;
+    }
+    case 'IrTypeDeclaration': {
+      lines.push(`${p}@dataclass`);
+      lines.push(`${p}class ${stmt.name}:`);
+      const fieldLines = printDataclassFields(stmt.fields, level + 1);
+      lines.push(...(fieldLines.length > 0 ? fieldLines : [`${pad(level + 1)}pass`]));
       break;
     }
     case 'IrCallStatement': {
@@ -373,6 +509,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     stmt.kind !== 'IrConstantStatement' &&
     stmt.kind !== 'IrProcedureDeclaration' &&
     stmt.kind !== 'IrFunctionDeclaration' &&
+    stmt.kind !== 'IrTypeDeclaration' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('#')
   ) {
@@ -404,6 +541,22 @@ export function printPython(program: IrProgram): string {
       seedFileHandles(program.body, fileCtx);
     }
     const lines: string[] = [...printTrivia(program.leadingTrivia, 'hash')];
+    const hasTypeDeclarations = program.body.some(
+      (stmt) => stmt.kind === 'IrTypeDeclaration',
+    );
+    if (hasTypeDeclarations) {
+      const needsField = typeDeclarationsNeedFieldImport(program);
+      lines.push(
+        needsField
+          ? 'from dataclasses import dataclass, field'
+          : 'from dataclasses import dataclass',
+      );
+      lines.push('');
+    }
+    if (programUsesDeepCopy(program)) {
+      lines.push('import copy');
+      lines.push('');
+    }
     if (irUsesRand(program)) {
       lines.push('import random');
       lines.push('');
@@ -465,11 +618,12 @@ function seedFileHandles(
   }
 }
 
-function irUsesRand(program: IrProgram): boolean {
+function programUsesDeepCopy(program: IrProgram): boolean {
   const walkExpr = (e: IrExpression): boolean => {
     switch (e.kind) {
+      case 'IrDeepCopyExpression':
+        return true;
       case 'IrCallExpression':
-        if (e.callee.toLowerCase() === 'rand') return true;
         return e.args.some(walkExpr);
       case 'IrUnaryExpression':
         return walkExpr(e.argument);
@@ -478,7 +632,77 @@ function irUsesRand(program: IrProgram): boolean {
       case 'IrGroupingExpression':
         return walkExpr(e.expression);
       case 'IrIndexExpression':
-        return e.indices.some(walkExpr);
+        return walkExpr(e.array) || e.indices.some(walkExpr);
+      case 'IrMemberExpression':
+        return walkExpr(e.object);
+      case 'IrEofExpression':
+        return walkExpr(e.fileName);
+      default:
+        return false;
+    }
+  };
+  const walkStmt = (s: IrStatement): boolean => {
+    switch (s.kind) {
+      case 'IrAssignment':
+      case 'IrReturnStatement':
+        return walkExpr(s.value);
+      case 'IrCallStatement':
+        return s.args.some(walkExpr);
+      case 'IrOutput':
+        return s.values.some(walkExpr);
+      case 'IrIfStatement':
+        return (
+          walkExpr(s.condition) ||
+          s.consequent.some(walkStmt) ||
+          s.elseIfClauses.some(
+            (c) => walkExpr(c.condition) || c.consequent.some(walkStmt),
+          ) ||
+          (s.alternate?.some(walkStmt) ?? false)
+        );
+      case 'IrWhileStatement':
+      case 'IrRepeatStatement':
+        return walkExpr(s.condition) || s.body.some(walkStmt);
+      case 'IrForStatement':
+        return (
+          walkExpr(s.start) ||
+          walkExpr(s.end) ||
+          (s.step ? walkExpr(s.step) : false) ||
+          s.body.some(walkStmt)
+        );
+      case 'IrCaseStatement':
+        return (
+          walkExpr(s.discriminant) ||
+          s.arms.some((a) => a.body.some(walkStmt)) ||
+          (s.otherwise?.some(walkStmt) ?? false)
+        );
+      case 'IrProcedureDeclaration':
+      case 'IrFunctionDeclaration':
+        return s.body.some(walkStmt);
+      default:
+        return false;
+    }
+  };
+  return program.body.some(walkStmt);
+}
+
+function irUsesRand(program: IrProgram): boolean {
+  const walkExpr = (e: IrExpression): boolean => {
+    switch (e.kind) {
+      case 'IrCallExpression':
+        if (e.callee.toLowerCase() === 'rand') return true;
+        return e.args.some(walkExpr);
+      case 'IrDeepCopyExpression':
+        return walkExpr(e.value);
+      case 'IrUnaryExpression':
+        return walkExpr(e.argument);
+      case 'IrBinaryExpression':
+        return walkExpr(e.left) || walkExpr(e.right);
+      case 'IrGroupingExpression':
+        return walkExpr(e.expression);
+      case 'IrIndexExpression':
+        return walkExpr(e.array) || e.indices.some(walkExpr);
+      case 'IrMemberExpression':
+        return walkExpr(e.object);
       default:
         return false;
     }

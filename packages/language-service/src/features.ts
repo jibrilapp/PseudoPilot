@@ -140,8 +140,14 @@ function formatHover(analysis: DocumentAnalysis, symbol: SymbolInfo): string {
     lines.push(
       bounds
         ? `Array: ${bounds}`
-        : `Array: ${symbol.type.dimensions} dimension(s) of \`${symbol.type.element}\``,
+        : `Array: ${symbol.type.dimensions} dimension(s) of \`${formatType(symbol.type.element)}\``,
     );
+  }
+  if (symbol.type.kind === 'record') {
+    const fields = symbol.type.fields
+      .map((f) => `${f.name}: ${formatType(f.type)}`)
+      .join(', ');
+    lines.push(fields ? `Fields: \`${fields}\`` : '_Empty record_');
   }
   if (symbol.type.kind === 'procedure' || symbol.type.kind === 'function') {
     const params = callableParams(analysis, symbol.name);
@@ -185,7 +191,7 @@ function formatCallable(
     return `\`PROCEDURE ${name}(${labels(type.params)})\``;
   }
   if (type.kind === 'function') {
-    return `\`FUNCTION ${name}(${labels(type.params)}) RETURNS ${type.returns}\``;
+    return `\`FUNCTION ${name}(${labels(type.params)}) RETURNS ${formatType(type.returns)}\``;
   }
   return formatType(type);
 }
@@ -218,7 +224,7 @@ function findDeclareTypeText(
   const m = /:\s*(ARRAY\[[^\]]+\](?:\s*OF\s+\w+)?)/i.exec(line);
   if (m) return m[1]!.trim();
   if (symbol.type.kind !== 'array') return null;
-  return `${symbol.type.dimensions}D OF ${symbol.type.element}`;
+  return `${symbol.type.dimensions}D OF ${formatType(symbol.type.element)}`;
 }
 
 function callableParams(
@@ -473,9 +479,27 @@ export function completion(
     items.push(item);
   };
 
+  // Member completion first — must not mix in globals/builtins.
+  const rawPrefix = linePrefixAt(analysis.source, position);
+  if (/\.\s*$/.test(rawPrefix)) {
+    const recordType = recordTypeBeforeDot(analysis, position);
+    if (recordType) {
+      for (const f of recordType.fields) {
+        add({
+          label: f.name,
+          kind: 'variable',
+          detail: formatType(f.type),
+          documentation: `Field of ${recordType.name}`,
+        });
+      }
+      return items;
+    }
+  }
+
   // In-scope symbols (prefer locals / globals from checker).
   for (const s of analysis.symbols) {
     if (s.builtin) continue;
+    if (s.kind === 'field') continue; // offered after `.` only
     add({
       label: s.name,
       kind:
@@ -487,7 +511,9 @@ export function completion(
               ? 'constant'
               : s.kind === 'parameter'
                 ? 'parameter'
-                : 'variable',
+                : s.kind === 'type'
+                  ? 'type'
+                  : 'variable',
       detail: formatType(s.type),
     });
   }
@@ -502,7 +528,8 @@ export function completion(
   }
 
   // Context keywords (lightweight prefix-agnostic set).
-  const linePrefix = linePrefixAt(analysis.source, position).toUpperCase();
+  const linePrefix = rawPrefix.toUpperCase();
+
   if (/\bCALL\s+$/i.test(linePrefix) || /\bCALL$/i.test(linePrefix.trimEnd())) {
     for (const s of analysis.symbols) {
       if (s.kind === 'procedure') {
@@ -513,9 +540,14 @@ export function completion(
         });
       }
     }
-  } else if (/\bDECLARE\b/i.test(linePrefix)) {
+  } else if (/\bDECLARE\b/i.test(linePrefix) || /\bRETURNS\b/i.test(linePrefix)) {
     for (const t of ['INTEGER', 'REAL', 'STRING', 'BOOLEAN', 'CHAR', 'ARRAY']) {
       add({ label: t, kind: 'type' });
+    }
+    for (const s of analysis.symbols) {
+      if (s.kind === 'type') {
+        add({ label: s.name, kind: 'type', detail: 'TYPE' });
+      }
     }
   } else {
     for (const kw of [
@@ -536,6 +568,8 @@ export function completion(
       'ENDCASE',
       'DECLARE',
       'CONSTANT',
+      'TYPE',
+      'ENDTYPE',
       'PROCEDURE',
       'FUNCTION',
       'CALL',
@@ -561,6 +595,56 @@ function linePrefixAt(source: string, position: LsPosition): string {
   const lines = source.split('\n');
   const line = lines[position.line] ?? '';
   return line.slice(0, position.character);
+}
+
+/**
+ * Resolve the record type of the expression immediately before a trailing `.`
+ * so completion can offer fields (e.g. `S.`, `S.Home.`, `Class[1].`).
+ */
+function recordTypeBeforeDot(
+  analysis: DocumentAnalysis,
+  position: LsPosition,
+): Extract<PpType, { kind: 'record' }> | null {
+  const prefix = linePrefixAt(analysis.source, position);
+  const m =
+    /(?:^|[^A-Za-z0-9_])([A-Za-z_][\w]*)((?:\s*(?:\.\s*[A-Za-z_][\w]*|\[[^\]]*\]))*)\s*\.\s*$/.exec(
+      prefix,
+    );
+  if (!m) return null;
+
+  const rootName = m[1]!;
+  const chain = m[2] ?? '';
+
+  const rootSym = analysis.symbols.find(
+    (s) =>
+      s.name.toLowerCase() === rootName.toLowerCase() &&
+      (s.kind === 'variable' ||
+        s.kind === 'parameter' ||
+        s.kind === 'constant'),
+  );
+  let type: PpType | null = rootSym?.type ?? null;
+  if (!type) return null;
+
+  let current: PpType = type;
+
+  const segmentRe = /\.\s*([A-Za-z_][\w]*)|\[/g;
+  let seg: RegExpExecArray | null;
+  while ((seg = segmentRe.exec(chain)) !== null) {
+    if (seg[0]!.startsWith('[')) {
+      if (current.kind !== 'array') return null;
+      current = current.element;
+      continue;
+    }
+    const fieldName = seg[1]!;
+    if (current.kind !== 'record') return null;
+    const field = current.fields.find(
+      (f) => f.name.toLowerCase() === fieldName.toLowerCase(),
+    );
+    if (!field) return null;
+    current = field.type;
+  }
+
+  return current.kind === 'record' ? current : null;
 }
 
 export function signatureHelp(

@@ -9,7 +9,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/checker' as const;
-export const PACKAGE_VERSION = '0.11.0' as const;
+export const PACKAGE_VERSION = '0.12.0' as const;
 
 export { check } from './check.js';
 export type {
@@ -27,6 +27,11 @@ export {
   formatType,
   isAssignable,
   typeFromTypeRef,
+  resolveTypeRef,
+  lookupRecordField,
   scalar,
+  recordType,
 } from './type-system.js';
+export type { RecordFieldInfo } from './types.js';
+
 export { Scope, makeSymbol, identKey, lookupSymbol } from './scope.js';

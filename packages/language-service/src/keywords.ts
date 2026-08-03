@@ -12,6 +12,8 @@ export const CAMBRIDGE_KEYWORDS: readonly string[] = [
   'MOD',
   'DECLARE',
   'CONSTANT',
+  'TYPE',
+  'ENDTYPE',
   'IF',
   'THEN',
   'ELSE',

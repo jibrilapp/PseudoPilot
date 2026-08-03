@@ -6,7 +6,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/language-core' as const;
-export const PACKAGE_VERSION = '0.10.0' as const;
+export const PACKAGE_VERSION = '0.11.0' as const;
 
 export {
   parse,
@@ -44,14 +44,18 @@ export type {
   CallExpression,
   IndexExpression,
   EofExpression,
+  MemberExpression,
   ArrayType,
   ArrayDimension,
   TypeReference,
+  NamedType,
+  SimpleType,
   AssignTarget,
   FileMode,
   Parameter,
   TypeName,
   TypeNameKind,
+  TypeDeclaration,
   Identifier,
   BinaryExpression,
   UnaryExpression,

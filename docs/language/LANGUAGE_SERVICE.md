@@ -34,13 +34,13 @@ See [`INCREMENTAL_COMPILATION.md`](./INCREMENTAL_COMPILATION.md).
 | Feature | API | Notes |
 | --- | --- | --- |
 | Hover | `hover` | Kind, type, constant value, callable signature, array bounds, scope, declaration location |
-| Go to definition | `definition` / `findDeclaration` | Variables, constants, arrays, procedures, functions, parameters |
-| Find references | `references` | Decl + uses; scoped correctly under shadowing |
-| Document symbols | `documentSymbols` | Outline from checker symbols |
+| Go to definition | `definition` / `findDeclaration` | Variables, constants, arrays, procedures, functions, parameters, **TYPE** names, **fields** |
+| Find references | `references` | Decl + uses; scoped correctly under shadowing; TYPE/field refs |
+| Document symbols | `documentSymbols` | Outline from checker symbols (includes TYPE + fields) |
 | Workspace symbols | `workspaceSymbols` | Query filter across open documents |
+| Completion | `completion` | Symbols, builtins, keywords; **fields after `.`**; TYPE names after DECLARE/RETURNS |
 | Rename prepare | `prepareRename` | Rejects keywords, builtins, undeclared |
-| Rename | `rename` | Validates duplicates / keywords / builtins; returns text edits only |
-| Completion | `completion` | In-scope ids, builtins, context keywords (CALL / DECLARE / …) |
+| Rename | `rename` | Validates duplicates / keywords / builtins; returns text edits only (TYPE + fields supported) |
 | Signature help | `signatureHelp` | Active parameter, names + types, return type |
 | Classification | `classifyAt` | Identifier kind for future semantic highlighting |
 | Diagnostics | `diagnostics` | Merged parse + checker (`C_*` / parse codes) — no duplicated messages |
@@ -78,6 +78,8 @@ A future adapter maps:
 No architectural change required — only a thin transport layer (stdio JSON-RPC, Monaco providers, or VS Code `LanguageClient`).
 
 Same package can power AI assistance (symbol context / hover text) without calling the interpreter.
+
+See also [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md) for Monaco field completion after `.`.
 
 ---
 

@@ -8,10 +8,15 @@ export type ScalarValue =
   | { readonly kind: 'STRING'; readonly value: string }
   | { readonly kind: 'CHAR'; readonly value: string };
 
+/** Element type of an ARRAY: builtin scalar, or a named record TYPE. */
+export type ArrayElementType =
+  | { readonly kind: 'SCALAR'; readonly name: TypeNameKind }
+  | { readonly kind: 'RECORD'; readonly typeName: string };
+
 /** Dense multi-dimensional array with Cambridge inclusive bounds. */
 export type ArrayValue = {
   readonly kind: 'ARRAY';
-  readonly element: TypeNameKind;
+  readonly element: ArrayElementType;
   /** Inclusive lower bound per dimension. */
   readonly lowers: readonly number[];
   /** Inclusive upper bound per dimension. */
@@ -20,14 +25,26 @@ export type ArrayValue = {
   readonly data: RuntimeValue[];
 };
 
-export type RuntimeValue = ScalarValue | ArrayValue;
+/** TYPE … ENDTYPE record instance. Field keys are case-folded (Cambridge idents). */
+export type RecordValue = {
+  readonly kind: 'RECORD';
+  /** Display name from the TYPE declaration. */
+  readonly typeName: string;
+  /** Case-folded field name → current value. */
+  readonly fields: Map<string, RuntimeValue>;
+  /** Display-case field names in declaration order (for formatting). */
+  readonly fieldNames: readonly string[];
+};
+
+export type RuntimeValue = ScalarValue | ArrayValue | RecordValue;
 
 export type BindingKind = 'variable' | 'constant' | 'parameter';
 
 export type Binding = {
   readonly name: string;
   readonly kind: BindingKind;
-  readonly typeName: TypeNameKind | 'ARRAY';
+  /** Scalar TypeNameKind, `'ARRAY'`, or a record TYPE display name. */
+  typeName: string;
   value: RuntimeValue;
 };
 
@@ -78,6 +95,12 @@ export function defaultScalar(type: TypeNameKind): ScalarValue {
   }
 }
 
+function quoteForDisplay(v: RuntimeValue): string {
+  if (v.kind === 'STRING') return `"${v.value}"`;
+  if (v.kind === 'CHAR') return `'${v.value}'`;
+  return formatValue(v);
+}
+
 export function formatValue(v: RuntimeValue): string {
   switch (v.kind) {
     case 'INTEGER':
@@ -93,7 +116,14 @@ export function formatValue(v: RuntimeValue): string {
     case 'CHAR':
       return v.value;
     case 'ARRAY':
-      return `[ARRAY ${v.element}]`;
+      return `[${v.data.map(quoteForDisplay).join(', ')}]`;
+    case 'RECORD': {
+      const parts = v.fieldNames.map((name) => {
+        const field = v.fields.get(name.toLowerCase());
+        return `${name}: ${field ? quoteForDisplay(field) : '?'}`;
+      });
+      return `{${parts.join(', ')}}`;
+    }
   }
 }
 
@@ -191,10 +221,15 @@ export function arrayOffset(
   return offset;
 }
 
+/**
+ * Allocate a dense array. `fill` is invoked once per slot so nested
+ * records/arrays get fresh, non-aliased instances.
+ */
 export function allocateArray(
-  element: TypeNameKind,
+  element: ArrayElementType,
   lowers: readonly number[],
   uppers: readonly number[],
+  fill: () => RuntimeValue,
   span?: SourceSpan,
 ): ArrayValue {
   if (lowers.length === 0 || lowers.length !== uppers.length) {
@@ -231,7 +266,7 @@ export function allocateArray(
   const data: RuntimeValue[] = new Array(size);
   for (let i = 0; i < size; i++) {
     // Fresh value per slot so later in-place mutation cannot alias elements.
-    data[i] = defaultScalar(element);
+    data[i] = fill();
   }
   return {
     kind: 'ARRAY',
@@ -240,4 +275,51 @@ export function allocateArray(
     uppers: [...uppers],
     data,
   };
+}
+
+export type RecordFieldInit = {
+  /** Case-folded lookup key. */
+  readonly key: string;
+  /** Display-case name (declaration casing). */
+  readonly displayName: string;
+  /** Invoked once to produce a fresh value for this field. */
+  readonly init: () => RuntimeValue;
+};
+
+export function allocateRecord(
+  typeName: string,
+  fieldInits: readonly RecordFieldInit[],
+): RecordValue {
+  const fields = new Map<string, RuntimeValue>();
+  const fieldNames: string[] = [];
+  for (const f of fieldInits) {
+    fields.set(f.key, f.init());
+    fieldNames.push(f.displayName);
+  }
+  return { kind: 'RECORD', typeName, fields, fieldNames };
+}
+
+/** Deep by-value copy: records/arrays are reference types otherwise. */
+export function cloneValue(v: RuntimeValue): RuntimeValue {
+  switch (v.kind) {
+    case 'ARRAY':
+      return {
+        kind: 'ARRAY',
+        element: v.element,
+        lowers: v.lowers,
+        uppers: v.uppers,
+        data: v.data.map(cloneValue),
+      };
+    case 'RECORD':
+      return {
+        kind: 'RECORD',
+        typeName: v.typeName,
+        fields: new Map([...v.fields].map(([k, val]) => [k, cloneValue(val)])),
+        fieldNames: v.fieldNames,
+      };
+    default:
+      // Scalars are treated as immutable — always replaced wholesale, never
+      // mutated in place — so sharing the reference is safe.
+      return v;
+  }
 }

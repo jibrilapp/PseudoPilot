@@ -64,6 +64,9 @@ export enum TokenKind {
   TypeBoolean = 'TypeBoolean',
   TypeChar = 'TypeChar',
 
+  Type = 'Type',
+  Endtype = 'Endtype',
+
   Assign = 'Assign',
   Equal = 'Equal',
   NotEqual = 'NotEqual',
@@ -82,6 +85,7 @@ export enum TokenKind {
   RBracket = 'RBracket',
   Comma = 'Comma',
   Colon = 'Colon',
+  Dot = 'Dot',
   Newline = 'Newline',
 
   Eof = 'Eof',
@@ -144,6 +148,8 @@ const KEYWORDS: ReadonlyMap<string, TokenKind> = new Map([
   ['STRING', TokenKind.TypeString],
   ['BOOLEAN', TokenKind.TypeBoolean],
   ['CHAR', TokenKind.TypeChar],
+  ['TYPE', TokenKind.Type],
+  ['ENDTYPE', TokenKind.Endtype],
 ]);
 
 export function keywordKind(lexeme: string): TokenKind | undefined {

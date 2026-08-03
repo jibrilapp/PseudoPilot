@@ -78,6 +78,7 @@ function liftOne(
   if (
     stmt.kind === 'IrAssignment' &&
     stmt.target.kind === 'IrIndexExpression' &&
+    stmt.target.array.kind === 'IrIdentifier' &&
     stmt.target.array.name === '_pp_files' &&
     stmt.target.indices.length === 1 &&
     stmt.value.kind === 'IrCallExpression' &&
@@ -251,6 +252,7 @@ function matchReadlineAssign(
 function filesDictPath(expr: IrExpression): IrExpression | null {
   if (
     expr.kind === 'IrIndexExpression' &&
+    expr.array.kind === 'IrIdentifier' &&
     expr.array.name === '_pp_files' &&
     expr.indices.length === 1
   ) {
@@ -286,7 +288,9 @@ function rewriteEofExprs(
       case 'IrCallExpression':
         return { ...e, args: e.args.map(walk) };
       case 'IrIndexExpression':
-        return { ...e, indices: e.indices.map(walk) };
+        return { ...e, array: walk(e.array), indices: e.indices.map(walk) };
+      case 'IrMemberExpression':
+        return { ...e, object: walk(e.object) };
       case 'IrGroupingExpression':
         return { ...e, expression: walk(e.expression) };
       case 'IrEofExpression':

@@ -377,13 +377,15 @@ ENDPROCEDURE
     expect(result.ok).toBe(false);
   });
 
-  it('28. rejects unknown type name', () => {
+  it('28. accepts user type names in parameters (semantics check unknown TYPE)', () => {
     const result = parse(`
 PROCEDURE Bad(A : NUMBER)
     OUTPUT A
 ENDPROCEDURE
 `);
-    expect(result.ok).toBe(false);
+    // Parser allows NamedType; checker reports C_UNKNOWN_TYPE.
+    expect(result.ok).toBe(true);
+    expect(result.ast?.body[0]?.kind).toBe('ProcedureDeclaration');
   });
 
   it('29. rejects ENDPROCEDURE at top level', () => {

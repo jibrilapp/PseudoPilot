@@ -14,6 +14,7 @@ export type AstNode =
   | CaseLabel
   | Parameter
   | TypeName
+  | NamedType
   | ArrayType
   | ArrayDimension;
 
@@ -34,6 +35,7 @@ export type Statement =
   | ForStatement
   | DeclareStatement
   | ConstantStatement
+  | TypeDeclaration
   | ProcedureDeclaration
   | FunctionDeclaration
   | CallStatement
@@ -45,17 +47,31 @@ export type Statement =
 
 export type TypeNameKind = 'INTEGER' | 'REAL' | 'STRING' | 'BOOLEAN' | 'CHAR';
 
+/** Builtin scalar type (INTEGER, REAL, …). */
 export type TypeName = {
   readonly kind: 'TypeName';
   readonly name: TypeNameKind;
   readonly span: SourceSpan;
 };
 
+/**
+ * User-defined type reference (record name from TYPE … ENDTYPE).
+ * Display casing preserved; comparison is case-insensitive in the checker.
+ */
+export type NamedType = {
+  readonly kind: 'NamedType';
+  readonly name: string;
+  readonly span: SourceSpan;
+};
+
+/** Scalar builtin or user type name (ARRAY element / param / RETURNS). */
+export type SimpleType = TypeName | NamedType;
+
 /** ARRAY[lower:upper, …] OF elementType */
 export type ArrayType = {
   readonly kind: 'ArrayType';
   readonly dimensions: ArrayDimension[];
-  readonly elementType: TypeName;
+  readonly elementType: SimpleType;
   readonly span: SourceSpan;
 };
 
@@ -66,18 +82,32 @@ export type ArrayDimension = {
   readonly span: SourceSpan;
 };
 
-/** Scalar or array type in DECLARE (and potentially elsewhere). */
-export type TypeReference = TypeName | ArrayType;
+/** Scalar, named record, or array type in DECLARE. */
+export type TypeReference = TypeName | NamedType | ArrayType;
 
 export type FileMode = 'READ' | 'WRITE' | 'APPEND';
 
 /** Left-hand side of assignment / INPUT / READFILE targets. */
-export type AssignTarget = Identifier | IndexExpression;
+export type AssignTarget = Identifier | IndexExpression | MemberExpression;
 
 export type Parameter = {
   readonly kind: 'Parameter';
   readonly name: Identifier;
-  readonly typeName: TypeName;
+  /** Builtin scalar or user record type (not ARRAY in Core params). */
+  readonly typeName: SimpleType;
+  readonly span: SourceSpan;
+};
+
+/**
+ * TYPE Name
+ *   DECLARE Field : Type
+ *   …
+ * ENDTYPE
+ */
+export type TypeDeclaration = {
+  readonly kind: 'TypeDeclaration';
+  readonly name: Identifier;
+  readonly fields: DeclareStatement[];
   readonly span: SourceSpan;
 };
 
@@ -112,7 +142,7 @@ export type FunctionDeclaration = {
   readonly kind: 'FunctionDeclaration';
   readonly name: Identifier;
   readonly parameters: Parameter[];
-  readonly returnType: TypeName;
+  readonly returnType: SimpleType;
   readonly body: Statement[];
   readonly span: SourceSpan;
 };
@@ -266,6 +296,7 @@ export type Expression =
   | GroupingExpression
   | CallExpression
   | IndexExpression
+  | MemberExpression
   | EofExpression;
 
 export type CallExpression = {
@@ -275,11 +306,22 @@ export type CallExpression = {
   readonly span: SourceSpan;
 };
 
-/** Name[i] or Name[i, j] */
+/**
+ * Array / string indexing. Base may be an identifier, member, or prior index
+ * (e.g. `Scores[i]`, `S.Marks[1]`, `Rows[i][j]` is not Cambridge — multi-dim uses commas).
+ */
 export type IndexExpression = {
   readonly kind: 'IndexExpression';
-  readonly array: Identifier;
+  readonly array: Expression;
   readonly indices: Expression[];
+  readonly span: SourceSpan;
+};
+
+/** Field access: `S.Name`, `S.Home.City`, `Students[i].Name`. */
+export type MemberExpression = {
+  readonly kind: 'MemberExpression';
+  readonly object: Expression;
+  readonly property: Identifier;
   readonly span: SourceSpan;
 };
 

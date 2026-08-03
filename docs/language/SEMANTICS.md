@@ -107,6 +107,8 @@ Operands must be STRING or CHAR (`C_CONCAT_TYPE`). Result is STRING. Same preced
 | `C_CONCAT_TYPE` | `&` operand not STRING/CHAR |
 | `C_FILE_PATH_TYPE` | File path not STRING/CHAR |
 | `C_FILE_NOT_OPEN` / `C_FILE_ALREADY_OPEN` / `C_FILE_MODE` | Open-state (literal paths, best-effort) |
+| `C_UNKNOWN_TYPE` / `C_DUP_TYPE` / `C_RECURSIVE_TYPE` | TYPE … ENDTYPE |
+| `C_UNKNOWN_FIELD` / `C_DUP_FIELD` / `C_NOT_RECORD` | Record fields |
 | `C_COND_TYPE` / `C_BINARY_TYPE` / `C_UNARY_TYPE` / `C_COMPARE_TYPE` | Expression typing |
 | `C_CASE_LABEL_TYPE` / `C_CASE_RANGE_TYPE` | CASE (warnings / errors) |
 | `C_UNREACHABLE` | Statement after RETURN (warning) |
@@ -140,7 +142,8 @@ const { ok, diagnostics, globalSymbols } = check(ast);
 - Unreachable-after-RETURN is **same-block** only (including nested IF/loop/CASE bodies); does not prove a branch always returns.
 - No definite-assignment / use-before-init beyond undeclared names.
 - File I/O: open-state for literal paths (`C_FILE_*`), READFILE assignability to STRING, path types.
-- No BYREF / DATE / OOP / TYPE records.
+- No BYREF / DATE / OOP / enum-pointer-SET TYPE forms.
+- Record `TYPE` … `ENDTYPE` is supported — see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md).
 - Expression typing is best-effort; some operator combinations may under-report.
 - NEXT/FOR variable mismatch and CASE duplicate labels remain **parser** structural diagnostics (`E_*`).
 - Runtime execution lives in `@pseudopilot/interpreter` (see [`INTERPRETER.md`](./INTERPRETER.md)); checker does not evaluate code.
