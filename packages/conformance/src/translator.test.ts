@@ -36,6 +36,32 @@ describe('conformance / translator', () => {
     }
   });
 
+  it('round-trips CLASS and TYPE corpus entries with structural markers preserved', () => {
+    for (const id of ['type-record', 'class-inherit', 'builtins-string'] as const) {
+      const entry = CORPUS.find((e) => e.id === id);
+      expect(entry, id).toBeTruthy();
+      const { roundTrip } = translateBothWays(entry!.source);
+      const again = translatePseudocodeToPython(roundTrip);
+      expect(again.ok, id).toBe(true);
+      if (id === 'class-inherit') {
+        expect(roundTrip).toContain('CLASS Pet');
+        expect(roundTrip).toContain('CLASS Cat INHERITS Pet');
+        expect(roundTrip).toContain('NEW Cat(');
+        expect(roundTrip).toContain('GetName()');
+      }
+      if (id === 'type-record') {
+        expect(roundTrip).toContain('TYPE Point');
+        expect(roundTrip).toContain('ENDTYPE');
+        expect(roundTrip).toContain('P.X');
+      }
+      if (id === 'builtins-string') {
+        expect(roundTrip).toContain('LEFT(');
+        expect(roundTrip).toContain('MID(');
+        expect(roundTrip).toContain('LCASE(');
+      }
+    }
+  });
+
   it('round-trip preserves runtime behaviour for runnable samples', async () => {
     const samples = CORPUS.filter(
       (e) => e.expectOutput && !e.skipRun && !e.skipRoundTrip,

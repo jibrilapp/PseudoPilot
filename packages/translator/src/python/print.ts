@@ -1,8 +1,10 @@
+import { printPythonIndex } from './array-index.js';
 import type {
   IrArrayDimension,
   IrArrayType,
   IrAssignTarget,
   IrBinaryExpression,
+  IrClassMember,
   IrExpression,
   IrIndexExpression,
   IrMemberExpression,
@@ -10,6 +12,7 @@ import type {
   IrSimpleType,
   IrStatement,
   IrTypeField,
+  IrTypeName,
   IrTypeReference,
   IrUnaryExpression,
 } from '../ir/nodes.js';
@@ -45,8 +48,90 @@ type FilePrintCtx = {
   needsDict: boolean;
 };
 
+/** Active while printing — emit _pp_input_bool / _pp_input_char helpers once. */
+let needsInputBoolHelper = false;
+let needsInputCharHelper = false;
+let needsInputDateHelper = false;
+
+const PP_INPUT_BOOL_HELPER = `def _pp_input_bool() -> bool:
+    s = input().strip().upper()
+    if s == "TRUE":
+        return True
+    if s == "FALSE":
+        return False
+    raise ValueError(f"Invalid BOOLEAN INPUT '{s}' (expected TRUE or FALSE)")`;
+
+const PP_INPUT_CHAR_HELPER = `def _pp_input_char() -> str:
+    s = input()
+    if len(s) < 1:
+        raise ValueError("CHAR INPUT requires one character.")
+    return s[0]`;
+
+const PP_INPUT_DATE_HELPER = `def _pp_input_date():
+    raw = input().strip()
+    parts = raw.split("/")
+    if len(parts) != 3:
+        raise ValueError("DATE INPUT requires dd/mm/yyyy.")
+    d, m, y = (int(parts[0]), int(parts[1]), int(parts[2]))
+    return date(y, m, d)
+`;
+
+/**
+ * Cambridge INPUT has no prompt; Python `input(prompt)` reverse may set prompt.
+ * Typed conversions match the interpreter's parseInput rules.
+ */
+function printTypedInputRhs(
+  valueType: IrTypeName | null,
+  prompt: IrExpression | null,
+): string {
+  const raw =
+    prompt !== null ? `input(${printExpr(prompt, 0)})` : 'input()';
+  switch (valueType) {
+    case 'INTEGER':
+      return `int(${raw}.strip())`;
+    case 'REAL':
+      return `float(${raw}.strip())`;
+    case 'BOOLEAN':
+      needsInputBoolHelper = true;
+      return '_pp_input_bool()';
+    case 'CHAR':
+      needsInputCharHelper = true;
+      return '_pp_input_char()';
+    case 'DATE':
+      needsInputDateHelper = true;
+      return '_pp_input_date()';
+    case 'STRING':
+    case null:
+      return raw;
+    default: {
+      const _exhaustive: never = valueType;
+      return _exhaustive;
+    }
+  }
+}
+
 /** Active while {@link printPython} runs — avoids threading ctx through every expr. */
 let activeFileCtx: FilePrintCtx | null = null;
+
+/**
+ * Lower-cased CLASS names in the program — active while {@link printPython}
+ * runs. Distinguishes a `DECLARE X : Foo` where `Foo` is a CLASS (reference
+ * type; default `None`, never eagerly constructed) from a TYPE record
+ * (value type; default `Foo()`).
+ */
+let activeClassNames: ReadonlySet<string> = new Set();
+
+function isKnownClassName(name: string): boolean {
+  return activeClassNames.has(name.toLowerCase());
+}
+
+function collectClassNames(program: IrProgram): Set<string> {
+  const names = new Set<string>();
+  for (const stmt of program.body) {
+    if (stmt.kind === 'IrClassDeclaration') names.add(stmt.name.toLowerCase());
+  }
+  return names;
+}
 
 function fileRef(pathExpr: IrExpression): string {
   const ctx = activeFileCtx;
@@ -92,6 +177,8 @@ function irTypeToPython(typeName: string): string {
       return 'bool';
     case 'CHAR':
       return 'str';
+    case 'DATE':
+      return 'date';
     default:
       return 'int';
   }
@@ -116,24 +203,35 @@ function scalarDefaultLiteral(typeName: string): string {
       return 'False';
     case 'CHAR':
       return "' '";
+    case 'DATE':
+      return 'date(1900, 1, 1)';
     default:
       return '0';
   }
 }
 
-/** Zero-arg constructor call / literal default for a single array element. */
+/**
+ * Zero-arg constructor call / literal default for a single array element.
+ * CLASS elements default to `None` — constructors may require arguments and
+ * CLASS instances are reference types, never eagerly allocated.
+ */
 function elementDefaultExpr(elem: IrSimpleType): string {
   if (elem.kind === 'IrScalarType') return scalarDefaultLiteral(elem.name);
+  if (isKnownClassName(elem.name)) return 'None';
   return `${elem.name}()`;
 }
 
-/** Build a (possibly nested, for multi-dim ARRAY) list-comprehension default expression. */
+/** Build a (possibly nested, for multi-dim ARRAY) list-comprehension default.
+ * Length is always `(upper - lower + 1)` — storage is dense and 0-based.
+ */
 function arrayDefaultExpr(typeRef: IrArrayType): string {
   const build = (dims: readonly IrArrayDimension[]): string => {
     if (dims.length === 0) return elementDefaultExpr(typeRef.elementType);
     const [dim, ...rest] = dims;
     const inner = build(rest);
-    return `[${inner} for _ in range(${printExpr(dim!.lower, 0)}, ${printExpr(dim!.upper, 0)} + 1)]`;
+    const lo = printExpr(dim!.lower, 0);
+    const hi = printExpr(dim!.upper, 0);
+    return `[${inner} for _ in range((${hi}) - (${lo}) + 1)]`;
   };
   return build(typeRef.dimensions);
 }
@@ -142,10 +240,13 @@ function arrayDefaultExpr(typeRef: IrArrayType): string {
  * Python emission strategy (DECLARE / CONSTANT):
  * - Scalar DECLARE → `Name: pytype` (annotation only; CHAR adds `# CHAR`)
  * - Named-type (record) DECLARE → `Name: Record = Record()` (usable instance)
- * - Array of scalar DECLARE → `Name: list[elem]  # ARRAY[l:u, …]` (annotation only)
- * - Array of record DECLARE → `Name: list[Record] = [Record() for _ in range(l, u+1)]  # ARRAY[l:u, …]`
- * - Multi-name DECLARE → one line per name
- * - CONSTANT → `Name = literal  # CONSTANT`
+ * - Named-type (CLASS) DECLARE → `Name: Cls | None = None` (reference type;
+ *   constructors may require arguments, so never eagerly allocated — assign
+ *   via `NEW Cls(...)` instead)
+ * - Array of scalar DECLARE → `Name: list[elem] = [… for _ in range((u)-(l)+1)]  # ARRAY[l:u, …]`
+ * - Array of record DECLARE → `Name: list[Record] = [Record() for _ in range((u)-(l)+1)]  # ARRAY[l:u, …]`
+ * - Array of CLASS DECLARE → `Name: list[Cls | None] = [None for _ in range((u)-(l)+1)]  # ARRAY[l:u, …]`
+ *   Indices are emitted as `arr[i - l]` (see {@link printPythonIndex}).
  */
 function printDeclarePython(
   names: readonly string[],
@@ -155,26 +256,35 @@ function printDeclarePython(
   const p = pad(level);
   if (typeRef.kind === 'IrScalarType') {
     const py = irTypeToPython(typeRef.name);
-    const charTag = typeRef.name === 'CHAR' ? '  # CHAR' : '';
-    return names.map((name) => `${p}${name}: ${py}${charTag}`);
+    const tag =
+      typeRef.name === 'CHAR'
+        ? '  # CHAR'
+        : typeRef.name === 'DATE'
+          ? '  # DATE'
+          : '';
+    return names.map((name) => `${p}${name}: ${py}${tag}`);
   }
   if (typeRef.kind === 'IrNamedType') {
+    if (isKnownClassName(typeRef.name)) {
+      return names.map(
+        (name) => `${p}${name}: ${typeRef.name} | None = None`,
+      );
+    }
     return names.map(
       (name) => `${p}${name}: ${typeRef.name} = ${typeRef.name}()`,
     );
   }
+  const elemIsClass =
+    typeRef.elementType.kind === 'IrNamedType' &&
+    isKnownClassName(typeRef.elementType.name);
   const elem = irSimpleTypeToPython(typeRef.elementType);
+  const elemAnnotated = elemIsClass ? `${elem} | None` : elem;
   const dims = typeRef.dimensions
     .map((d) => `${printExpr(d.lower, 0)}:${printExpr(d.upper, 0)}`)
     .join(', ');
-  if (typeRef.elementType.kind === 'IrNamedType') {
-    const init = arrayDefaultExpr(typeRef);
-    return names.map(
-      (name) => `${p}${name}: list[${elem}] = ${init}  # ARRAY[${dims}]`,
-    );
-  }
+  const init = arrayDefaultExpr(typeRef);
   return names.map(
-    (name) => `${p}${name}: list[${elem}]  # ARRAY[${dims}]`,
+    (name) => `${p}${name}: list[${elemAnnotated}] = ${init}  # ARRAY[${dims}]`,
   );
 }
 
@@ -205,8 +315,13 @@ function printDataclassFields(
 function printDataclassFieldLine(name: string, typeRef: IrTypeReference): string {
   if (typeRef.kind === 'IrScalarType') {
     const py = irTypeToPython(typeRef.name);
-    const charTag = typeRef.name === 'CHAR' ? '  # CHAR' : '';
-    return `${name}: ${py} = ${scalarDefaultLiteral(typeRef.name)}${charTag}`;
+    const tag =
+      typeRef.name === 'CHAR'
+        ? '  # CHAR'
+        : typeRef.name === 'DATE'
+          ? '  # DATE'
+          : '';
+    return `${name}: ${py} = ${scalarDefaultLiteral(typeRef.name)}${tag}`;
   }
   if (typeRef.kind === 'IrNamedType') {
     return `${name}: ${typeRef.name} = field(default_factory=${typeRef.name})`;
@@ -232,8 +347,7 @@ function typeDeclarationsNeedFieldImport(program: IrProgram): boolean {
 const POSTFIX_PRECEDENCE = 100;
 
 function printIndex(expr: IrIndexExpression): string {
-  const base = printExpr(expr.array, POSTFIX_PRECEDENCE);
-  return expr.indices.reduce((acc, idx) => `${acc}[${printExpr(idx, 0)}]`, base);
+  return printPythonIndex(expr, printExpr, POSTFIX_PRECEDENCE);
 }
 
 function printMember(expr: IrMemberExpression): string {
@@ -267,6 +381,9 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return `'${escapePythonChar(expr.value)}'`;
     case 'IrBooleanLiteral':
       return formatBooleanPython(expr.value);
+    case 'IrDateLiteral':
+      // Python date(year, month, day) — note argument order vs Cambridge dd/mm/yyyy.
+      return `date(${expr.year}, ${expr.month}, ${expr.day})`;
     case 'IrIdentifier':
       return expr.name;
     case 'IrIndexExpression':
@@ -292,6 +409,23 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return printUnary(expr, parentPrec);
     case 'IrBinaryExpression':
       return printBinary(expr, parentPrec);
+    case 'IrNewExpression':
+      return `${expr.className}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
+    case 'IrMethodCallExpression': {
+      const isSuperNew =
+        expr.object.kind === 'IrSuperExpression' &&
+        expr.method.toUpperCase() === 'NEW';
+      const obj =
+        expr.object.kind === 'IrSuperExpression'
+          ? 'super()'
+          : printExpr(expr.object, POSTFIX_PRECEDENCE);
+      const method = isSuperNew ? '__init__' : expr.method;
+      return `${obj}.${method}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
+    }
+    case 'IrSuperExpression':
+      // Only ever appears as the `object` of IrMethodCallExpression, handled
+      // above; kept for exhaustiveness / defensive printing.
+      return 'super()';
     default: {
       const _exhaustive: never = expr;
       return _exhaustive;
@@ -331,6 +465,38 @@ function printBlock(
   return lines;
 }
 
+/**
+ * Print one CLASS member. Properties emit nothing — Python has no separate
+ * field-declaration syntax; instance attributes materialize via `self.X = …`
+ * assignments inside `__init__` / other methods (see `IrClassProperty` doc).
+ */
+function printClassMember(member: IrClassMember, level: number): string[] {
+  const p = pad(level);
+  if (member.kind === 'IrClassProperty') return [];
+
+  const isCtor = member.name.toUpperCase() === 'NEW';
+  const pyName = isCtor ? '__init__' : member.name;
+  const params = [
+    'self',
+    ...member.parameters.map(
+      (param) => `${param.name}: ${irSimpleTypeToPython(param.typeName)}`,
+    ),
+  ].join(', ');
+
+  if (member.kind === 'IrClassProcedure') {
+    const returnAnno = isCtor ? ' -> None' : '';
+    const lines = [`${p}def ${pyName}(${params})${returnAnno}:`];
+    lines.push(...printBlock(member.body, level + 1));
+    return lines;
+  }
+
+  const lines = [
+    `${p}def ${pyName}(${params}) -> ${irSimpleTypeToPython(member.returnType)}:`,
+  ];
+  lines.push(...printBlock(member.body, level + 1));
+  return lines;
+}
+
 function printStatement(stmt: IrStatement, level: number): string[] {
   const p = pad(level);
   const lines: string[] = [
@@ -343,15 +509,24 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     case 'IrAssignment':
       lines.push(`${p}${printTarget(stmt.target)} = ${printExpr(stmt.value, 0)}`);
       break;
-    case 'IrInput':
-      if (stmt.prompt) {
+    case 'IrInput': {
+      const target = printTarget(stmt.target);
+      // BOOLEAN/CHAR helpers ignore prompts; surface prompt as a print first.
+      if (
+        stmt.prompt &&
+        (stmt.valueType === 'BOOLEAN' || stmt.valueType === 'CHAR')
+      ) {
+        lines.push(`${p}print(${printExpr(stmt.prompt, 0)})`);
         lines.push(
-          `${p}${printTarget(stmt.target)} = input(${printExpr(stmt.prompt, 0)})`,
+          `${p}${target} = ${printTypedInputRhs(stmt.valueType, null)}`,
         );
       } else {
-        lines.push(`${p}${printTarget(stmt.target)} = input()`);
+        lines.push(
+          `${p}${target} = ${printTypedInputRhs(stmt.valueType, stmt.prompt)}`,
+        );
       }
       break;
+    }
     case 'IrOutput':
       lines.push(
         `${p}print(${stmt.values.map((v) => printExpr(v, 0)).join(', ')})`,
@@ -492,6 +667,21 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       lines.push(`${p}${handle}.close()`);
       break;
     }
+    case 'IrClassDeclaration': {
+      const base = stmt.inherits ? `(${stmt.inherits})` : '';
+      lines.push(`${p}class ${stmt.name}${base}:`);
+      const memberLines: string[] = [];
+      for (const member of stmt.members) {
+        memberLines.push(...printClassMember(member, level + 1));
+      }
+      lines.push(
+        ...(memberLines.length > 0 ? memberLines : [`${pad(level + 1)}pass`]),
+      );
+      break;
+    }
+    case 'IrExpressionStatement':
+      lines.push(`${p}${printExpr(stmt.expression, 0)}`);
+      break;
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
@@ -510,6 +700,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     stmt.kind !== 'IrProcedureDeclaration' &&
     stmt.kind !== 'IrFunctionDeclaration' &&
     stmt.kind !== 'IrTypeDeclaration' &&
+    stmt.kind !== 'IrClassDeclaration' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('#')
   ) {
@@ -535,10 +726,18 @@ function finalizeOutput(lines: string[]): string {
 export function printPython(program: IrProgram): string {
   const fileCtx: FilePrintCtx = { handles: new Map(), needsDict: false };
   activeFileCtx = fileCtx;
+  activeClassNames = collectClassNames(program);
+  needsInputBoolHelper = false;
+  needsInputCharHelper = false;
+  needsInputDateHelper = false;
   try {
     // Pre-walk file ops so handle names are stable before EOF exprs print.
     if (programUsesFiles(program)) {
       seedFileHandles(program.body, fileCtx);
+    }
+    const bodyLines: string[] = [];
+    for (const stmt of program.body) {
+      bodyLines.push(...printStatement(stmt, 0));
     }
     const lines: string[] = [...printTrivia(program.leadingTrivia, 'hash')];
     const hasTypeDeclarations = program.body.some(
@@ -561,6 +760,11 @@ export function printPython(program: IrProgram): string {
       lines.push('import random');
       lines.push('');
     }
+    const dt = datetimeImportNeeds(program);
+    if (dt.date) {
+      lines.push('from datetime import date');
+      lines.push('');
+    }
     if (programUsesFiles(program)) {
       if (fileCtx.needsDict) {
         lines.push(PP_FILES_INIT);
@@ -572,13 +776,27 @@ export function printPython(program: IrProgram): string {
         lines.push('');
       }
     }
-    for (const stmt of program.body) {
-      lines.push(...printStatement(stmt, 0));
+    if (needsInputBoolHelper) {
+      lines.push(PP_INPUT_BOOL_HELPER);
+      lines.push('');
     }
+    if (needsInputCharHelper) {
+      lines.push(PP_INPUT_CHAR_HELPER);
+      lines.push('');
+    }
+    if (needsInputDateHelper) {
+      lines.push(PP_INPUT_DATE_HELPER);
+      lines.push('');
+    }
+    lines.push(...bodyLines);
     lines.push(...printTrivia(program.trailingTrivia, 'hash'));
     return finalizeOutput(lines);
   } finally {
     activeFileCtx = null;
+    activeClassNames = new Set();
+    needsInputBoolHelper = false;
+    needsInputCharHelper = false;
+    needsInputDateHelper = false;
   }
 }
 
@@ -614,6 +832,12 @@ function seedFileHandles(
       stmt.kind === 'IrFunctionDeclaration'
     ) {
       seedFileHandles(stmt.body, ctx);
+    } else if (stmt.kind === 'IrClassDeclaration') {
+      for (const member of stmt.members) {
+        if (member.kind !== 'IrClassProperty') {
+          seedFileHandles(member.body, ctx);
+        }
+      }
     }
   }
 }
@@ -637,6 +861,10 @@ function programUsesDeepCopy(program: IrProgram): boolean {
         return walkExpr(e.object);
       case 'IrEofExpression':
         return walkExpr(e.fileName);
+      case 'IrNewExpression':
+        return e.args.some(walkExpr);
+      case 'IrMethodCallExpression':
+        return walkExpr(e.object) || e.args.some(walkExpr);
       default:
         return false;
     }
@@ -648,6 +876,8 @@ function programUsesDeepCopy(program: IrProgram): boolean {
         return walkExpr(s.value);
       case 'IrCallStatement':
         return s.args.some(walkExpr);
+      case 'IrExpressionStatement':
+        return walkExpr(s.expression);
       case 'IrOutput':
         return s.values.some(walkExpr);
       case 'IrIfStatement':
@@ -678,6 +908,10 @@ function programUsesDeepCopy(program: IrProgram): boolean {
       case 'IrProcedureDeclaration':
       case 'IrFunctionDeclaration':
         return s.body.some(walkStmt);
+      case 'IrClassDeclaration':
+        return s.members.some(
+          (m) => m.kind !== 'IrClassProperty' && m.body.some(walkStmt),
+        );
       default:
         return false;
     }
@@ -703,6 +937,10 @@ function irUsesRand(program: IrProgram): boolean {
         return walkExpr(e.array) || e.indices.some(walkExpr);
       case 'IrMemberExpression':
         return walkExpr(e.object);
+      case 'IrNewExpression':
+        return e.args.some(walkExpr);
+      case 'IrMethodCallExpression':
+        return walkExpr(e.object) || e.args.some(walkExpr);
       default:
         return false;
     }
@@ -715,6 +953,8 @@ function irUsesRand(program: IrProgram): boolean {
         return s.values.some(walkExpr);
       case 'IrInput':
         return s.prompt ? walkExpr(s.prompt) : false;
+      case 'IrExpressionStatement':
+        return walkExpr(s.expression);
       case 'IrIfStatement':
         return (
           walkExpr(s.condition) ||
@@ -743,6 +983,10 @@ function irUsesRand(program: IrProgram): boolean {
       case 'IrProcedureDeclaration':
       case 'IrFunctionDeclaration':
         return s.body.some(walkStmt);
+      case 'IrClassDeclaration':
+        return s.members.some(
+          (m) => m.kind !== 'IrClassProperty' && m.body.some(walkStmt),
+        );
       case 'IrCallStatement':
         return (
           s.callee.toLowerCase() === 'rand' || s.args.some(walkExpr)
@@ -756,4 +1000,165 @@ function irUsesRand(program: IrProgram): boolean {
     }
   };
   return program.body.some(walkStmt);
+}
+
+function datetimeImportNeeds(program: IrProgram): {
+  date: boolean;
+} {
+  let needDate = false;
+
+  const noteType = (name: string): void => {
+    if (name === 'DATE') needDate = true;
+  };
+
+  const walkExpr = (e: IrExpression): void => {
+    switch (e.kind) {
+      case 'IrDateLiteral':
+        needDate = true;
+        return;
+      case 'IrCallExpression': {
+        const c = e.callee.toUpperCase();
+        if (['DAY', 'MONTH', 'YEAR', 'DAYINDEX', 'SETDATE', 'TODAY'].includes(c)) {
+          needDate = true;
+        }
+        e.args.forEach(walkExpr);
+        return;
+      }
+      case 'IrDeepCopyExpression':
+        walkExpr(e.value);
+        return;
+      case 'IrUnaryExpression':
+        walkExpr(e.argument);
+        return;
+      case 'IrBinaryExpression':
+        walkExpr(e.left);
+        walkExpr(e.right);
+        return;
+      case 'IrGroupingExpression':
+        walkExpr(e.expression);
+        return;
+      case 'IrIndexExpression':
+        walkExpr(e.array);
+        e.indices.forEach(walkExpr);
+        return;
+      case 'IrMemberExpression':
+        walkExpr(e.object);
+        return;
+      case 'IrNewExpression':
+        e.args.forEach(walkExpr);
+        return;
+      case 'IrMethodCallExpression':
+        walkExpr(e.object);
+        e.args.forEach(walkExpr);
+        return;
+      case 'IrEofExpression':
+        walkExpr(e.fileName);
+        return;
+      default:
+        return;
+    }
+  };
+
+  const walkStmt = (s: IrStatement): void => {
+    switch (s.kind) {
+      case 'IrDeclareStatement':
+        if (s.typeRef.kind === 'IrScalarType') noteType(s.typeRef.name);
+        if (
+          s.typeRef.kind === 'IrArrayType' &&
+          s.typeRef.elementType.kind === 'IrScalarType'
+        ) {
+          noteType(s.typeRef.elementType.name);
+        }
+        return;
+      case 'IrConstantStatement':
+        walkExpr(s.value);
+        return;
+      case 'IrAssignment':
+        walkExpr(s.value);
+        return;
+      case 'IrOutput':
+        s.values.forEach(walkExpr);
+        return;
+      case 'IrInput':
+        if (s.valueType === 'DATE') needDate = true;
+        if (s.prompt) walkExpr(s.prompt);
+        return;
+      case 'IrExpressionStatement':
+        walkExpr(s.expression);
+        return;
+      case 'IrIfStatement':
+        walkExpr(s.condition);
+        s.consequent.forEach(walkStmt);
+        s.elseIfClauses.forEach((c) => {
+          walkExpr(c.condition);
+          c.consequent.forEach(walkStmt);
+        });
+        s.alternate?.forEach(walkStmt);
+        return;
+      case 'IrWhileStatement':
+      case 'IrRepeatStatement':
+        walkExpr(s.condition);
+        s.body.forEach(walkStmt);
+        return;
+      case 'IrForStatement':
+        walkExpr(s.start);
+        walkExpr(s.end);
+        if (s.step) walkExpr(s.step);
+        s.body.forEach(walkStmt);
+        return;
+      case 'IrCaseStatement':
+        walkExpr(s.discriminant);
+        s.arms.forEach((a) => a.body.forEach(walkStmt));
+        s.otherwise?.forEach(walkStmt);
+        return;
+      case 'IrProcedureDeclaration':
+        s.parameters.forEach((p) => {
+          if (p.typeName.kind === 'IrScalarType') noteType(p.typeName.name);
+        });
+        s.body.forEach(walkStmt);
+        return;
+      case 'IrFunctionDeclaration':
+        s.parameters.forEach((p) => {
+          if (p.typeName.kind === 'IrScalarType') noteType(p.typeName.name);
+        });
+        if (s.returnType.kind === 'IrScalarType') noteType(s.returnType.name);
+        s.body.forEach(walkStmt);
+        return;
+      case 'IrTypeDeclaration':
+        s.fields.forEach((f) => {
+          if (f.typeRef.kind === 'IrScalarType') noteType(f.typeRef.name);
+        });
+        return;
+      case 'IrClassDeclaration':
+        s.members.forEach((m) => {
+          if (m.kind === 'IrClassProperty') {
+            if (m.typeRef.kind === 'IrScalarType') noteType(m.typeRef.name);
+          } else {
+            m.parameters.forEach((p) => {
+              if (p.typeName.kind === 'IrScalarType') noteType(p.typeName.name);
+            });
+            if (
+              m.kind === 'IrClassFunction' &&
+              m.returnType.kind === 'IrScalarType'
+            ) {
+              noteType(m.returnType.name);
+            }
+            m.body.forEach(walkStmt);
+          }
+        });
+        return;
+      case 'IrCallStatement':
+        s.args.forEach(walkExpr);
+        return;
+      case 'IrReturnStatement':
+        walkExpr(s.value);
+        return;
+      default:
+        return;
+    }
+  };
+
+  program.body.forEach(walkStmt);
+  if (needsInputDateHelper) needDate = true;
+  return { date: needDate };
 }

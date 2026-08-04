@@ -22,8 +22,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | --- | --- |
 | `DECLARE` | ✅ |
 | `CONSTANT` | ✅ |
-| `INTEGER` `REAL` `CHAR` `STRING` `BOOLEAN` | ✅ |
-| `DATE` | ❌ |
+| `INTEGER` `REAL` `CHAR` `STRING` `BOOLEAN` `DATE` | ✅ |
 | `ARRAY` `OF` | ✅ |
 | `TRUE` `FALSE` | ✅ |
 | `INPUT` `OUTPUT` | ✅ |
@@ -47,7 +46,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `RANDOM` `SEEK` `GETRECORD` `PUTRECORD` | ❌ |
 | `TYPE` `ENDTYPE` (records) | ✅ |
 | `SET` `DEFINE` / enum / pointer TYPE | ❌ |
-| `CLASS` `ENDCLASS` `PUBLIC` `PRIVATE` `INHERITS` `SUPER` `NEW` | ❌ |
+| `CLASS` `ENDCLASS` `PUBLIC` `PRIVATE` `INHERITS` `SUPER` `NEW` | ✅ |
 | Builtin names as reserved calls | 🟡 | Only `EOF` special-cased |
 
 ---
@@ -75,7 +74,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Feature | Status |
 | --- | --- |
 | Scalar type names in DECLARE / params / RETURNS | ✅ |
-| `DATE` type name | ❌ |
+| `DATE` type name + `dd/mm/yyyy` literal | ✅ |
 | `ARRAY[l:u] OF T` | ✅ |
 | Multi-dimensional arrays | ✅ |
 | User type names | ❌ |
@@ -96,6 +95,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `MID` | ✅ |
 | `LCASE` / `UCASE` | ✅ |
 | `INT` / `RAND` | ✅ |
+| DATE helpers (`DAY`/`MONTH`/`YEAR`/`DAYINDEX`/`SETDATE`/`TODAY`) | ✅ |
 | Exam-insert registry | 🟡 | Core registry shipped; packs later |
 
 ---
@@ -133,7 +133,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | --- | --- |
 | `PROCEDURE` / `ENDPROCEDURE` | ✅ |
 | `FUNCTION` / `RETURNS` / `ENDFUNCTION` | ✅ |
-| Typed parameters | ✅ |
+| Typed parameters (incl. Cambridge grouped `a, b : T`) | ✅ |
 | `CALL` with/without args | ✅ |
 | `RETURN` in function | ✅ |
 | Reject `RETURN` in procedure / top-level | ✅ |
@@ -235,7 +235,8 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | CASE | ✅ |
 | String/numeric builtins (except EOF) | ✅ |
 | CONSTANT (literal) | ✅ |
-| BYREF / DATE | ❌ |
+| BYREF | ❌ |
+| DATE | ✅ |
 | Extended enum/pointer/SET TYPE / OOP / random files | ❌ |
 | Record TYPE … ENDTYPE | ✅ |
 

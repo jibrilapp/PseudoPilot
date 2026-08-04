@@ -51,6 +51,8 @@ export {
   type RuntimeValue,
   type ScalarValue,
   type ArrayValue,
+  type RecordValue,
+  type ObjectValue,
   type Binding,
   type RuntimeDiagnostic,
   formatValue,

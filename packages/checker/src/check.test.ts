@@ -50,6 +50,23 @@ PROCEDURE P(A : INTEGER, A : INTEGER)
 ENDPROCEDURE
 `),
     ).toContain('C_DUP_PARAMETER');
+    expect(
+      codes(`
+PROCEDURE P(A, A : INTEGER)
+ENDPROCEDURE
+`),
+    ).toContain('C_DUP_PARAMETER');
+  });
+
+  it('accepts Cambridge grouped parameters as distinct bindings', () => {
+    const { result } = checkSource(`
+FUNCTION Sum(a, b : INTEGER, c : INTEGER) RETURNS INTEGER
+  RETURN a + b + c
+ENDFUNCTION
+OUTPUT Sum(1, 2, 3)
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(lookupSymbol(result.globalSymbols, 'Sum')?.kind).toBe('function');
   });
 
   it('detects undeclared identifiers', () => {
@@ -475,6 +492,41 @@ DECLARE N : INTEGER
 OPENFILE "f.txt" FOR READ
 READFILE "f.txt", N
 CLOSEFILE "f.txt"
+`),
+    ).toContain('C_ASSIGN_TYPE');
+  });
+});
+
+describe('DATE', () => {
+  it('accepts DATE declare, assignment, comparison, and builtins', () => {
+    const { result } = checkSource(`
+DECLARE D : DATE
+D ← 04/10/2003
+IF D = SETDATE(4, 10, 2003) THEN
+  OUTPUT YEAR(D)
+ENDIF
+IF D < SETDATE(5, 10, 2003) THEN
+  OUTPUT MONTH(D)
+ENDIF
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+  });
+
+  it('rejects arithmetic on DATE', () => {
+    expect(
+      codes(`
+DECLARE D : DATE
+D ← 01/01/2000
+OUTPUT D + 1
+`),
+    ).toContain('C_BINARY_TYPE');
+  });
+
+  it('rejects assigning INTEGER to DATE', () => {
+    expect(
+      codes(`
+DECLARE D : DATE
+D ← 1
 `),
     ).toContain('C_ASSIGN_TYPE');
   });

@@ -109,4 +109,15 @@ OUTPUT LENGTH(UCASE(LEFT("abc", 2)))
     expect(lookupBuiltin('length')?.name).toBe('LENGTH');
     expect(lookupBuiltin('Mid')?.params).toHaveLength(3);
   });
+
+  it('diagnoses LENGTH(INTEGER) as C_BUILTIN_ARG_TYPE (not a parse/FOR error)', () => {
+    const result = checkSource(`
+DECLARE count : INTEGER
+count ← LENGTH(5)
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'C_BUILTIN_ARG_TYPE')).toBe(
+      true,
+    );
+  });
 });

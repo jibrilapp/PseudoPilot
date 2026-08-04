@@ -76,6 +76,10 @@ function labelKind(kind: SymbolKind): string {
       return 'TYPE';
     case 'field':
       return 'field';
+    case 'class':
+      return 'CLASS';
+    case 'method':
+      return 'method';
   }
 }
 
@@ -84,8 +88,10 @@ function dupCode(prev: SymbolKind, next: SymbolKind): string {
   if (next === 'function' || prev === 'function') return 'C_DUP_FUNCTION';
   if (next === 'constant' || prev === 'constant') return 'C_DUP_CONSTANT';
   if (next === 'parameter' || prev === 'parameter') return 'C_DUP_PARAMETER';
+  if (next === 'class' || prev === 'class') return 'C_DUP_CLASS';
   if (next === 'type' || prev === 'type') return 'C_DUP_TYPE';
   if (next === 'field' || prev === 'field') return 'C_DUP_FIELD';
+  if (next === 'method' || prev === 'method') return 'C_DUP_METHOD';
   return 'C_DUP_VARIABLE';
 }
 

@@ -5,6 +5,7 @@ import {
   asNumber,
   asStringy,
   charValue,
+  dateValue,
   integerValue,
   realValue,
   runtimeFail,
@@ -85,7 +86,58 @@ const BUILTIN_IMPL: Readonly<Record<string, BuiltinImpl>> = {
     }
     return realValue(random.next() * x);
   },
+  DAY(args, _r, span) {
+    const d = asDate(args[0]!, 'DAY', span);
+    return integerValue(d.day);
+  },
+  MONTH(args, _r, span) {
+    const d = asDate(args[0]!, 'MONTH', span);
+    return integerValue(d.month);
+  },
+  YEAR(args, _r, span) {
+    const d = asDate(args[0]!, 'YEAR', span);
+    return integerValue(d.year);
+  },
+  DAYINDEX(args, _r, span) {
+    const d = asDate(args[0]!, 'DAYINDEX', span);
+    // Sunday = 1 … Saturday = 7 (Cambridge insert).
+    const js = new Date(Date.UTC(d.year, d.month - 1, d.day)).getUTCDay(); // 0=Sun
+    return integerValue(js + 1);
+  },
+  SETDATE(args, _r, span) {
+    const day = asInteger(args[0]!, 'SETDATE');
+    const month = asInteger(args[1]!, 'SETDATE');
+    const year = asInteger(args[2]!, 'SETDATE');
+    const dt = new Date(Date.UTC(year, month - 1, day));
+    if (
+      dt.getUTCFullYear() !== year ||
+      dt.getUTCMonth() !== month - 1 ||
+      dt.getUTCDate() !== day
+    ) {
+      throw runtimeFail(
+        'R_BUILTIN',
+        `SETDATE(${day}, ${month}, ${year}) is not a valid calendar date.`,
+        span,
+      );
+    }
+    return dateValue(day, month, year);
+  },
+  TODAY() {
+    const now = new Date();
+    return dateValue(now.getDate(), now.getMonth() + 1, now.getFullYear());
+  },
 };
+
+function asDate(
+  v: RuntimeValue,
+  what: string,
+  span: SourceSpan | undefined,
+): Extract<RuntimeValue, { kind: 'DATE' }> {
+  if (v.kind !== 'DATE') {
+    throw runtimeFail('R_TYPE', `${what} expects DATE, got ${v.kind}.`, span);
+  }
+  return v;
+}
 
 export function executeBuiltin(
   name: string,

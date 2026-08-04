@@ -204,7 +204,12 @@ function walkStatement(ctx: BinderCtx, stmt: Statement): void {
       }
       return;
     case 'CallStatement':
-      addRef(ctx, stmt.callee.name, stmt.callee.span, 'reference');
+      if (stmt.callee.kind === 'MemberExpression') {
+        walkExpr(ctx, stmt.callee.object);
+        addMethodRef(ctx, stmt.callee.object, stmt.callee.property.name, stmt.callee.property.span, 'reference');
+      } else {
+        addRef(ctx, stmt.callee.name, stmt.callee.span, 'reference');
+      }
       for (const a of stmt.args) walkExpr(ctx, a);
       return;
     case 'ReturnStatement':
@@ -253,6 +258,41 @@ function walkStatement(ctx: BinderCtx, stmt: Statement): void {
     case 'CloseFileStatement':
       walkExpr(ctx, stmt.fileName);
       return;
+    case 'ClassDeclaration': {
+      for (const member of stmt.members) {
+        if (member.kind === 'ClassPropertyDeclaration') {
+          walkTypeRef(ctx, member.typeRef);
+          continue;
+        }
+        const prev = ctx.containerName;
+        const prevLocals = ctx.locals;
+        ctx.containerName = `${stmt.name.name}.${member.name.name}`;
+        ctx.locals = new Map();
+        for (const list of ctx.allByKey.values()) {
+          for (const sym of list) {
+            if (
+              (sym.containerName ?? 'global') === ctx.containerName &&
+              (sym.kind === 'parameter' ||
+                sym.kind === 'variable' ||
+                sym.kind === 'constant')
+            ) {
+              ctx.locals.set(identKey(sym.name), sym);
+            }
+          }
+        }
+        for (const p of member.parameters) walkTypeRef(ctx, p.typeName);
+        if (member.kind === 'ClassFunctionDeclaration') {
+          walkTypeRef(ctx, member.returnType);
+        }
+        for (const s of member.body) walkStatement(ctx, s);
+        ctx.containerName = prev;
+        ctx.locals = prevLocals;
+      }
+      return;
+    }
+    case 'ExpressionStatement':
+      walkExpr(ctx, stmt.expression);
+      return;
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
@@ -278,6 +318,43 @@ function walkAssignTarget(
   for (const idx of target.indices) walkExpr(ctx, idx);
 }
 
+/** Depth guard against pathological/undetected inheritance cycles. */
+const MAX_INHERITANCE_DEPTH = 64;
+
+/** The `class`-kind symbol named `name`, if any (case-insensitive). */
+function classSymbolByName(ctx: BinderCtx, name: string): SymbolInfo | undefined {
+  const key = identKey(name);
+  return (ctx.allByKey.get(key) ?? []).find((s) => s.kind === 'class');
+}
+
+/**
+ * Resolve `memberName` (a field or method) declared on CLASS `className` or
+ * one of its ancestors — own members first, so a child override wins.
+ * Mirrors `@pseudopilot/checker`'s `findClassFieldOwner` / `findClassMethodOwner`,
+ * but works off the language-service's flat symbol list (no checker re-run).
+ */
+function resolveClassMemberSymbol(
+  ctx: BinderCtx,
+  className: string,
+  memberName: string,
+  memberKind: 'field' | 'method',
+): SymbolInfo | null {
+  const memberKey = identKey(memberName);
+  let current = classSymbolByName(ctx, className);
+  let depth = 0;
+  while (current && depth < MAX_INHERITANCE_DEPTH) {
+    const currentClassKey = identKey(current.name);
+    const found = (ctx.allByKey.get(memberKey) ?? []).find(
+      (s) => s.kind === memberKind && identKey(s.containerName ?? '') === currentClassKey,
+    );
+    if (found) return found;
+    if (current.type.kind !== 'class' || !current.type.inherits) return null;
+    current = classSymbolByName(ctx, current.type.inherits);
+    depth += 1;
+  }
+  return null;
+}
+
 function addFieldRef(
   ctx: BinderCtx,
   object: Expression,
@@ -299,11 +376,51 @@ function addFieldRef(
             identKey(s.containerName ?? '') === typeKey,
         ) ?? null;
     }
+  } else if (objType?.kind === 'class') {
+    // Resolves properties declared on this CLASS or any ancestor (child
+    // overrides shadow a same-named ancestor field, matching the checker).
+    symbol = resolveClassMemberSymbol(ctx, objType.name, name, 'field');
   }
   const container = symbol?.containerName ?? ctx.containerName;
   const symbolKey = symbol
     ? symbolKeyOf(symbol)
     : `${container}::${identKey(name)}::field`;
+  ctx.out.push({
+    name,
+    span,
+    kind,
+    symbolKey,
+    containerName: ctx.containerName,
+    symbol,
+  });
+}
+
+/** Same as {@link addFieldRef} but for `Obj.Method(...)` / `SUPER.Method(...)`. */
+function addMethodRef(
+  ctx: BinderCtx,
+  object: Expression,
+  name: string,
+  span: SourceSpan,
+  kind: OccurrenceKind,
+): void {
+  let symbol: SymbolInfo | null = null;
+  if (object.kind !== 'SuperExpression') {
+    const objType = resolveExprType(ctx, object);
+    if (objType?.kind === 'class') {
+      symbol = resolveClassMemberSymbol(ctx, objType.name, name, 'method');
+    }
+  } else if (ctx.containerName.includes('.')) {
+    // `SUPER.Method(...)` resolves against the enclosing class's *parent*.
+    const ownerClass = ctx.containerName.split('.')[0]!;
+    const ownerSym = classSymbolByName(ctx, ownerClass);
+    if (ownerSym && ownerSym.type.kind === 'class' && ownerSym.type.inherits) {
+      symbol = resolveClassMemberSymbol(ctx, ownerSym.type.inherits, name, 'method');
+    }
+  }
+  const container = symbol?.containerName ?? ctx.containerName;
+  const symbolKey = symbol
+    ? symbolKeyOf(symbol)
+    : `${container}::${identKey(name)}::method`;
   ctx.out.push({
     name,
     span,
@@ -323,8 +440,14 @@ function resolveExprType(ctx: BinderCtx, expr: Expression): PpType | null {
     }
     case 'MemberExpression': {
       const obj = resolveExprType(ctx, expr.object);
-      if (obj?.kind !== 'record') return null;
-      return lookupRecordField(obj, expr.property.name)?.type ?? null;
+      if (obj?.kind === 'record') {
+        return lookupRecordField(obj, expr.property.name)?.type ?? null;
+      }
+      if (obj?.kind === 'class') {
+        const sym = resolveClassMemberSymbol(ctx, obj.name, expr.property.name, 'field');
+        return sym?.type ?? null;
+      }
+      return null;
     }
     case 'IndexExpression': {
       const arr = resolveExprType(ctx, expr.array);
@@ -356,7 +479,9 @@ function walkTypeRef(ctx: BinderCtx, ref: TypeReference): void {
 
 function addTypeRef(ctx: BinderCtx, name: string, span: SourceSpan): void {
   const key = identKey(name);
-  const candidates = (ctx.allByKey.get(key) ?? []).filter((s) => s.kind === 'type');
+  const candidates = (ctx.allByKey.get(key) ?? []).filter(
+    (s) => s.kind === 'type' || s.kind === 'class',
+  );
   const symbol = candidates[0] ?? null;
   const container = symbol?.containerName ?? 'global';
   const symbolKey = symbol
@@ -382,6 +507,7 @@ function walkExpr(ctx: BinderCtx, expr: Expression): void {
     case 'StringLiteral':
     case 'CharLiteral':
     case 'BooleanLiteral':
+    case 'DateLiteral':
       return;
     case 'UnaryExpression':
       walkExpr(ctx, expr.argument);
@@ -407,6 +533,17 @@ function walkExpr(ctx: BinderCtx, expr: Expression): void {
       return;
     case 'EofExpression':
       walkExpr(ctx, expr.fileName);
+      return;
+    case 'MethodCallExpression':
+      if (expr.object.kind !== 'SuperExpression') walkExpr(ctx, expr.object);
+      addMethodRef(ctx, expr.object, expr.method.name, expr.method.span, 'reference');
+      for (const a of expr.args) walkExpr(ctx, a);
+      return;
+    case 'NewExpression':
+      addTypeRef(ctx, expr.className.name, expr.className.span);
+      for (const a of expr.args) walkExpr(ctx, a);
+      return;
+    case 'SuperExpression':
       return;
     default: {
       const _exhaustive: never = expr;

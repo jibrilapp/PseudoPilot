@@ -36,9 +36,9 @@ TYPE Student
   DECLARE Home : Address
   DECLARE Marks : ARRAY[1:3] OF INTEGER
 ENDTYPE
-DECLARE Class : ARRAY[1:2] OF Student
-Class[1].Home.City ← "Cambridge"
-Class[1].Marks[2] ← 90
+DECLARE Roster : ARRAY[1:2] OF Student
+Roster[1].Home.City ← "Cambridge"
+Roster[1].Marks[2] ← 90
 `;
     const result = parse(src);
     expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);

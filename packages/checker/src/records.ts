@@ -58,12 +58,19 @@ export function registerTypeDeclarations(
 
   for (const decl of decls) {
     const key = identKey(decl.name.name);
-    if (host.typeTable.has(key)) {
+    const existing = host.typeTable.get(key);
+    if (existing) {
+      // CLASS and TYPE share one case-insensitive namespace; a name already
+      // taken by a CLASS is reported as C_DUP_CLASS, not C_DUP_TYPE.
+      const code = existing.kind === 'class' ? 'C_DUP_CLASS' : 'C_DUP_TYPE';
       host.diag({
-        code: 'C_DUP_TYPE',
-        message: `Duplicate TYPE '${decl.name.name}'.`,
+        code,
+        message:
+          existing.kind === 'class'
+            ? `TYPE '${decl.name.name}' collides with an existing CLASS of the same name.`
+            : `Duplicate TYPE '${decl.name.name}'.`,
         span: decl.name.span,
-        help: 'TYPE names are case-insensitive.',
+        help: 'TYPE and CLASS names are case-insensitive.',
       });
       continue;
     }

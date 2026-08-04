@@ -5,17 +5,18 @@
  * REPEAT/UNTIL, FOR/TO/STEP/NEXT, CASE OF/OTHERWISE/ENDCASE,
  * PROCEDURE/CALL, FUNCTION/RETURNS/RETURN, expression calls, DECLARE,
  * CONSTANT, literals, variables, arithmetic / relational / logical
- * expressions, CHAR, array indexes, Core builtins, text file I/O.
- * Not supported: BYREF, RANDOM files.
+ * expressions, CHAR, array indexes, Core builtins, text file I/O,
+ * TYPE/ENDTYPE records, CLASS/ENDCLASS (incl. inheritance) — both directions.
+ * Not supported: BYREF, RANDOM files, general Python (lambda, async, with, …).
  *
  * @see docs/language/TRANSLATION.md
  * @see docs/adr/0006-canonical-ir-translation.md
  */
 
 export const PACKAGE_NAME = '@pseudopilot/translator' as const;
-export const PACKAGE_VERSION = '0.12.0' as const;
+export const PACKAGE_VERSION = '0.14.0' as const;
 export const TRANSLATOR_SUBSET =
-  'v12-assign-io-expr-control-procedure-function-declare-check-builtins-files' as const;
+  'v14-assign-io-expr-control-procedure-function-declare-check-builtins-files-type-class' as const;
 
 export {
   translatePseudocodeToPython,
@@ -79,6 +80,16 @@ export type {
   IrUnaryExpression,
   IrBinaryExpression,
   IrGroupingExpression,
+  IrVisibility,
+  IrClassProperty,
+  IrClassProcedure,
+  IrClassFunction,
+  IrClassMember,
+  IrClassDeclaration,
+  IrExpressionStatement,
+  IrSuperExpression,
+  IrNewExpression,
+  IrMethodCallExpression,
 } from './ir/nodes.js';
 
 export { emptyTrivia, withEmptyTrivia } from './ir/nodes.js';

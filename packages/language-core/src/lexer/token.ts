@@ -63,9 +63,21 @@ export enum TokenKind {
   TypeString = 'TypeString',
   TypeBoolean = 'TypeBoolean',
   TypeChar = 'TypeChar',
+  TypeDate = 'TypeDate',
+
+  /** Calendar date literal `dd/mm/yyyy` (Cambridge DATE). */
+  Date = 'Date',
 
   Type = 'Type',
   Endtype = 'Endtype',
+
+  Class = 'Class',
+  Endclass = 'Endclass',
+  Public = 'Public',
+  Private = 'Private',
+  Inherits = 'Inherits',
+  Super = 'Super',
+  New = 'New',
 
   Assign = 'Assign',
   Equal = 'Equal',
@@ -148,8 +160,16 @@ const KEYWORDS: ReadonlyMap<string, TokenKind> = new Map([
   ['STRING', TokenKind.TypeString],
   ['BOOLEAN', TokenKind.TypeBoolean],
   ['CHAR', TokenKind.TypeChar],
+  ['DATE', TokenKind.TypeDate],
   ['TYPE', TokenKind.Type],
   ['ENDTYPE', TokenKind.Endtype],
+  ['CLASS', TokenKind.Class],
+  ['ENDCLASS', TokenKind.Endclass],
+  ['PUBLIC', TokenKind.Public],
+  ['PRIVATE', TokenKind.Private],
+  ['INHERITS', TokenKind.Inherits],
+  ['SUPER', TokenKind.Super],
+  ['NEW', TokenKind.New],
 ]);
 
 export function keywordKind(lexeme: string): TokenKind | undefined {
@@ -162,7 +182,8 @@ export function isTypeToken(kind: TokenKind): boolean {
     kind === TokenKind.TypeReal ||
     kind === TokenKind.TypeString ||
     kind === TokenKind.TypeBoolean ||
-    kind === TokenKind.TypeChar
+    kind === TokenKind.TypeChar ||
+    kind === TokenKind.TypeDate
   );
 }
 

@@ -94,9 +94,9 @@ ENDTYPE
 TYPE Student
   DECLARE Marks : ARRAY[1:3] OF INTEGER
 ENDTYPE
-DECLARE Class : ARRAY[1:2] OF Student
-Class[1].Marks[2] ← 90
-OUTPUT Class[1].Marks[2]
+DECLARE Cohort : ARRAY[1:2] OF Student
+Cohort[1].Marks[2] ← 90
+OUTPUT Cohort[1].Marks[2]
 `);
     expect(result.ok).toBe(true);
   });

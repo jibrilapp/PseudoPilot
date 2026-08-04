@@ -33,14 +33,14 @@ See [`INCREMENTAL_COMPILATION.md`](./INCREMENTAL_COMPILATION.md).
 
 | Feature | API | Notes |
 | --- | --- | --- |
-| Hover | `hover` | Kind, type, constant value, callable signature, array bounds, scope, declaration location |
-| Go to definition | `definition` / `findDeclaration` | Variables, constants, arrays, procedures, functions, parameters, **TYPE** names, **fields** |
-| Find references | `references` | Decl + uses; scoped correctly under shadowing; TYPE/field refs |
-| Document symbols | `documentSymbols` | Outline from checker symbols (includes TYPE + fields) |
+| Hover | `hover` | Kind, type, constant value, callable signature, array bounds, scope, declaration location; **class/method/field/`NEW`** |
+| Go to definition | `definition` / `findDeclaration` | Variables, constants, arrays, procedures, functions, parameters, **TYPE** names, **fields**, **CLASS names, methods, inherited fields/methods** |
+| Find references | `references` | Decl + uses; scoped correctly under shadowing; TYPE/field refs; **class field/method refs, resolved through the inheritance chain** |
+| Document symbols | `documentSymbols` | Outline from checker symbols (includes TYPE + fields, **and CLASS + its fields/methods**) |
 | Workspace symbols | `workspaceSymbols` | Query filter across open documents |
-| Completion | `completion` | Symbols, builtins, keywords; **fields after `.`**; TYPE names after DECLARE/RETURNS |
+| Completion | `completion` | Symbols, builtins, keywords; **fields after `.`** for records, **fields + methods (own + inherited) after `.`** for class instances; TYPE/CLASS names after DECLARE/RETURNS |
 | Rename prepare | `prepareRename` | Rejects keywords, builtins, undeclared |
-| Rename | `rename` | Validates duplicates / keywords / builtins; returns text edits only (TYPE + fields supported) |
+| Rename | `rename` | Validates duplicates / keywords / builtins; returns text edits only (TYPE + fields, **CLASS names/methods/fields**, namespaced per declaring class, supported) |
 | Signature help | `signatureHelp` | Active parameter, names + types, return type |
 | Classification | `classifyAt` | Identifier kind for future semantic highlighting |
 | Diagnostics | `diagnostics` | Merged parse + checker (`C_*` / parse codes) — no duplicated messages |
@@ -79,7 +79,10 @@ No architectural change required — only a thin transport layer (stdio JSON-RPC
 
 Same package can power AI assistance (symbol context / hover text) without calling the interpreter.
 
-See also [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md) for Monaco field completion after `.`.
+See also [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md) for Monaco field completion after `.`, and
+[`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md) §8 for `CLASS`-specific
+completion, hover, and rename behaviour (own vs. inherited members, visibility, override
+namespacing). Coverage: `packages/language-service/src/classes.test.ts`.
 
 ---
 

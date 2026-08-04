@@ -264,6 +264,26 @@ OUTPUT Add(2, 3)
     expect(host.outputs).toEqual(['5']);
   });
 
+  it('executes FUNCTIONS with Cambridge grouped parameters', async () => {
+    const { host } = await run(`
+FUNCTION Mix(a, b : INTEGER, c : INTEGER) RETURNS INTEGER
+  RETURN a + b + c
+ENDFUNCTION
+OUTPUT Mix(1, 2, 3)
+`);
+    expect(host.outputs).toEqual(['6']);
+  });
+
+  it('executes PROCEDURES with grouped STRING parameters', async () => {
+    const { host } = await run(`
+PROCEDURE Show(x, y : STRING)
+  OUTPUT x & y
+ENDPROCEDURE
+CALL Show("Hi", "there")
+`);
+    expect(host.outputs).toEqual(['Hithere']);
+  });
+
   it('supports recursion', async () => {    const { host } = await run(`
 FUNCTION Fact(N : INTEGER) RETURNS INTEGER
   IF N <= 1 THEN
@@ -602,5 +622,34 @@ OUTPUT N
     const result = await pending;
     expect(result.ok).toBe(true);
     expect(host.outputs).toContain('9');
+  });
+});
+
+describe('DATE runtime', () => {
+  it('formats DATE and runs Cambridge date builtins', async () => {
+    const { host } = await run(`
+DECLARE D : DATE
+D ← SETDATE(9, 5, 2023)
+OUTPUT D
+OUTPUT DAY(D)
+OUTPUT MONTH(D)
+OUTPUT YEAR(D)
+OUTPUT DAYINDEX(D)
+`);
+    expect(host.outputs).toEqual(['09/05/2023', '9', '5', '2023', '3']);
+  });
+
+  it('compares DATE chronologically', async () => {
+    const { host } = await run(`
+IF 01/01/2000 < 02/01/2000 THEN
+  OUTPUT "date-ok"
+ENDIF
+`);
+    expect(host.outputs).toEqual(['date-ok']);
+  });
+
+  it('exposes readable DATE values to debugger snapshots', async () => {
+    const { formatValue, dateValue } = await import('./value.js');
+    expect(formatValue(dateValue(4, 10, 2003))).toBe('04/10/2003');
   });
 });

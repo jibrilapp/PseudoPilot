@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parse } from '@pseudopilot/language-core';
 import {
   translatePseudocodeToPython as translateCam,
   translatePythonToPseudocode,
@@ -7,6 +8,8 @@ import {
   ABSOLUTE_MAX_SOURCE_CHARS,
   type TranslateOptions,
 } from './types.js';
+import { lowerCambridgeProgram } from './cambridge/lower.js';
+import { printCambridge } from './cambridge/print.js';
 
 /** Golden IR/print tests disable the checker so undeclared demo vars still translate. */
 function translatePseudocodeToPython(
@@ -18,6 +21,25 @@ function translatePseudocodeToPython(
 
 function norm(s: string): string {
   return s.replace(/\r\n/g, '\n').trimEnd() + '\n';
+}
+
+/**
+ * Lower Cambridge source straight back to Cambridge print (bypassing Python)
+ * — useful for IR/printer golden tests independent of reverse translation.
+ */
+function roundTripCambridgePrint(source: string): string {
+  const parsed = parse(source);
+  const lowered = lowerCambridgeProgram(parsed.ast, source, true);
+  return printCambridge(lowered.ir, 'unicode');
+}
+
+/** Pseudo → Python → Pseudo (full bidirectional round trip). */
+function roundTripViaPython(source: string): string {
+  const py = translatePseudocodeToPython(source);
+  expect(py.ok, JSON.stringify(py.diagnostics)).toBe(true);
+  const back = translatePythonToPseudocode(py.code);
+  expect(back.ok, JSON.stringify(back.diagnostics)).toBe(true);
+  return back.code;
 }
 
 describe('translatePseudocodeToPython (V1)', () => {
@@ -436,20 +458,27 @@ CLOSEFILE Path
 
   it('translates array element assignment and INPUT', () => {
     const result = translatePseudocodeToPython(`
+DECLARE Scores : ARRAY[1:5] OF INTEGER
 Scores[1] ← 10
 INPUT Scores[2]
 OUTPUT Scores[1]
 `);
     expect(result.ok).toBe(true);
-    expect(norm(result.code)).toBe(
-      'Scores[1] = 10\nScores[2] = input()\nprint(Scores[1])\n',
+    expect(norm(result.code)).toContain(
+      'Scores: list[int] = [0 for _ in range((5) - (1) + 1)]  # ARRAY[1:5]',
     );
+    expect(norm(result.code)).toContain('Scores[1 - 1] = 10');
+    expect(norm(result.code)).toContain('Scores[2 - 1] = int(input().strip())');
+    expect(norm(result.code)).toContain('print(Scores[1 - 1])');
   });
 
-  it('translates multi-dimensional index as nested Python subscripts', () => {
-    const result = translatePseudocodeToPython(`Grid[I, J] ← 1\n`);
+  it('translates multi-dimensional index as nested Python subscripts with lowers', () => {
+    const result = translatePseudocodeToPython(`
+DECLARE Grid : ARRAY[1:3, 1:4] OF INTEGER
+Grid[I, J] ← 1
+`);
     expect(result.ok).toBe(true);
-    expect(norm(result.code)).toBe('Grid[I][J] = 1\n');
+    expect(norm(result.code)).toContain('Grid[I - 1][J - 1] = 1');
   });
 
   it('preserves trailing line comments', () => {
@@ -1313,6 +1342,17 @@ CALL DisplaySum(3, 4)
     );
   });
 
+  it('translates Cambridge grouped PROCEDURE parameters to individual Python params', () => {
+    const result = translatePseudocodeToPython(`
+PROCEDURE P(x, y, z : STRING)
+    OUTPUT x
+ENDPROCEDURE
+CALL P("a", "b", "c")
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('def P(x: str, y: str, z: str):');
+  });
+
   it('translates parameterless PROCEDURE', () => {
     const result = translatePseudocodeToPython(`
 PROCEDURE Hello
@@ -1553,6 +1593,26 @@ OUTPUT Add(2, 3)
     expect(norm(result.code)).toBe(
       'def Add(A: int, B: int) -> int:\n    return A + B\n\nprint(Add(2, 3))\n',
     );
+  });
+
+  it('translates mixed grouped FUNCTION parameters and round-trips via Python', () => {
+    const src = `
+FUNCTION F(a, b : INTEGER, c : INTEGER) RETURNS INTEGER
+    RETURN a + b + c
+ENDFUNCTION
+OUTPUT F(1, 2, 3)
+`;
+    const result = translatePseudocodeToPython(src);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('def F(a: int, b: int, c: int) -> int:');
+    const back = translatePythonToPseudocode(result.code);
+    expect(back.ok, JSON.stringify(back.diagnostics)).toBe(true);
+    expect(back.code).toMatch(/FUNCTION F\(/);
+    expect(back.code).toContain('a : INTEGER');
+    expect(back.code).toContain('b : INTEGER');
+    expect(back.code).toContain('c : INTEGER');
+    // Reverse prints expanded form (no requirement to regroup).
+    expect(back.code).not.toMatch(/a, b : INTEGER/);
   });
 
   it('translates zero-parameter FUNCTION', () => {
@@ -1803,7 +1863,9 @@ DECLARE Average : REAL
       `DECLARE Scores : ARRAY[1:10] OF INTEGER\n`,
     );
     expect(result.ok).toBe(true);
-    expect(norm(result.code)).toBe('Scores: list[int]  # ARRAY[1:10]\n');
+    expect(norm(result.code)).toBe(
+      'Scores: list[int] = [0 for _ in range((10) - (1) + 1)]  # ARRAY[1:10]\n',
+    );
   });
 
   it('translates CONSTANT literals', () => {
@@ -1931,12 +1993,12 @@ NEXT I
   });
 
   it('diagnostics: REJECT Python keyword DECLARE/CONSTANT names', () => {
-    const decl = translatePseudocodeToPython(`DECLARE class : INTEGER\n`, {
+    const decl = translatePseudocodeToPython(`DECLARE lambda : INTEGER\n`, {
       semanticCheck: false,
     });
     expect(decl.ok).toBe(false);
     expect(decl.diagnostics.some((d) => d.code === 'T_DECL_PY_KEYWORD')).toBe(true);
-    expect(decl.code).not.toContain('class:');
+    expect(decl.code).not.toContain('lambda:');
 
     const cons = translatePseudocodeToPython(`CONSTANT def = 1\n`, {
       semanticCheck: false,
@@ -2262,20 +2324,20 @@ TYPE Student
   DECLARE Name : STRING
   DECLARE Marks : ARRAY[1:3] OF INTEGER
 ENDTYPE
-DECLARE Class : ARRAY[1:2] OF Student
-Class[1].Name ← "Alice"
-Class[1].Marks[2] ← 90
-OUTPUT Class[1].Name
+DECLARE Cohort : ARRAY[1:2] OF Student
+Cohort[1].Name ← "Alice"
+Cohort[1].Marks[2] ← 90
+OUTPUT Cohort[1].Name
 `);
     expect(result.ok).toBe(true);
     expect(result.code).toContain(
-      'Marks: list[int] = field(default_factory=lambda: [0 for _ in range(1, 3 + 1)])  # ARRAY[1:3]',
+      'Marks: list[int] = field(default_factory=lambda: [0 for _ in range((3) - (1) + 1)])  # ARRAY[1:3]',
     );
     expect(result.code).toContain(
-      'Class: list[Student] = [Student() for _ in range(1, 2 + 1)]  # ARRAY[1:2]',
+      'Cohort: list[Student] = [Student() for _ in range((2) - (1) + 1)]  # ARRAY[1:2]',
     );
-    expect(result.code).toContain('Class[1].Name = "Alice"');
-    expect(result.code).toContain('Class[1].Marks[2] = 90');
+    expect(result.code).toContain('Cohort[1 - 1].Name = "Alice"');
+    expect(result.code).toContain('Cohort[1 - 1].Marks[2 - 1] = 90');
   });
 
   it('translates record-typed PROCEDURE parameters and FUNCTION return types', () => {
@@ -2354,9 +2416,9 @@ TYPE Student
   DECLARE Name : STRING
   DECLARE Home : Address
 ENDTYPE
-DECLARE Class : ARRAY[1:2] OF Student
-Class[1].Home.City ← "Cambridge"
-OUTPUT Class[1].Home.City
+DECLARE Cohort : ARRAY[1:2] OF Student
+Cohort[1].Home.City ← "Cambridge"
+OUTPUT Cohort[1].Home.City
 `;
     const py = translatePseudocodeToPython(src);
     expect(py.ok).toBe(true);
@@ -2366,8 +2428,8 @@ OUTPUT Class[1].Home.City
     expect(norm(back.code)).toContain('DECLARE City : STRING');
     expect(norm(back.code)).toContain('TYPE Student');
     expect(norm(back.code)).toContain('DECLARE Home : Address');
-    expect(norm(back.code)).toContain('Class[1].Home.City ← "Cambridge"');
-    expect(norm(back.code)).toContain('OUTPUT Class[1].Home.City');
+    expect(norm(back.code)).toContain('Cohort[1].Home.City ← "Cambridge"');
+    expect(norm(back.code)).toContain('OUTPUT Cohort[1].Home.City');
   });
 
   it('round-trips PROCEDURE/FUNCTION with record parameter and return types', () => {
@@ -2427,5 +2489,601 @@ class Student:
     expect(back.code).toContain('TYPE Student');
     expect(back.code).toContain('DECLARE Name : STRING');
     expect(back.code).toContain('DECLARE Marks : ARRAY[1:3] OF INTEGER');
+  });
+});
+
+describe('CLASS / ENDCLASS — Cambridge 9618 OOP → Python', () => {
+  const PET_CAT_SRC = `
+CLASS Pet
+PRIVATE Name : STRING
+PUBLIC PROCEDURE NEW(GivenName : STRING)
+  Name ← GivenName
+ENDPROCEDURE
+PUBLIC FUNCTION GetName() RETURNS STRING
+  RETURN Name
+ENDFUNCTION
+ENDCLASS
+
+CLASS Cat INHERITS Pet
+PRIVATE Breed : STRING
+PUBLIC PROCEDURE NEW(GivenName : STRING, GivenBreed : STRING)
+  SUPER.NEW(GivenName)
+  Breed ← GivenBreed
+ENDPROCEDURE
+ENDCLASS
+
+DECLARE MyCat : Cat
+MyCat ← NEW Cat("Kitty", "Shorthaired")
+OUTPUT MyCat.GetName()
+`;
+
+  it('translates the Pet/Cat example to the target Python shape', () => {
+    const result = translatePseudocodeToPython(PET_CAT_SRC);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(norm(result.code)).toBe(
+      [
+        'class Pet:',
+        '    def __init__(self, GivenName: str) -> None:',
+        '        self.Name = GivenName',
+        '    def GetName(self) -> str:',
+        '        return self.Name',
+        '',
+        'class Cat(Pet):',
+        '    def __init__(self, GivenName: str, GivenBreed: str) -> None:',
+        '        super().__init__(GivenName)',
+        '        self.Breed = GivenBreed',
+        '',
+        'MyCat: Cat | None = None',
+        'MyCat = Cat("Kitty", "Shorthaired")',
+        'print(MyCat.GetName())',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('runs the emitted Pet/Cat Python end to end (checker enabled)', () => {
+    const result = translateCam(PET_CAT_SRC);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+  });
+
+  it('translates a class with no INHERITS as a plain Python class', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Counter
+  PRIVATE Value : INTEGER
+  PUBLIC PROCEDURE NEW(Start : INTEGER)
+    Value ← Start
+  ENDPROCEDURE
+  PUBLIC FUNCTION GetValue() RETURNS INTEGER
+    RETURN Value
+  ENDFUNCTION
+ENDCLASS
+DECLARE C : Counter
+C ← NEW Counter(5)
+OUTPUT C.GetValue()
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('class Counter:');
+    expect(result.code).not.toMatch(/class Counter\(/);
+    expect(result.code).toContain('def __init__(self, Start: int) -> None:');
+    expect(result.code).toContain('self.Value = Start');
+    expect(result.code).toContain('def GetValue(self) -> int:');
+    expect(result.code).toContain('return self.Value');
+    expect(result.code).toContain('C: Counter | None = None');
+    expect(result.code).toContain('C = Counter(5)');
+    expect(result.code).toContain('print(C.GetValue())');
+  });
+
+  it('calls a method as a bare ExpressionStatement (no CALL keyword)', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Player
+  PRIVATE Attempts : INTEGER
+  PUBLIC PROCEDURE NEW()
+    Attempts ← 0
+  ENDPROCEDURE
+  PUBLIC PROCEDURE SetAttempts(N : INTEGER)
+    Attempts ← N
+  ENDPROCEDURE
+  PUBLIC FUNCTION GetAttempts() RETURNS INTEGER
+    RETURN Attempts
+  ENDFUNCTION
+ENDCLASS
+DECLARE P : Player
+P ← NEW Player()
+P.SetAttempts(5)
+OUTPUT P.GetAttempts()
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('def SetAttempts(self, N: int):');
+    expect(result.code).toContain('self.Attempts = N');
+    expect(result.code).toContain('P.SetAttempts(5)');
+    expect(result.code).toContain('print(P.GetAttempts())');
+  });
+
+  it('translates an explicit CALL Obj.Method(args) statement', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Player
+  PRIVATE Attempts : INTEGER
+  PUBLIC PROCEDURE NEW()
+    Attempts ← 0
+  ENDPROCEDURE
+  PUBLIC PROCEDURE SetAttempts(N : INTEGER)
+    Attempts ← N
+  ENDPROCEDURE
+ENDCLASS
+DECLARE P : Player
+P ← NEW Player()
+CALL P.SetAttempts(5)
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('P.SetAttempts(5)');
+    expect(result.code).not.toContain('CALL');
+  });
+
+  it('dispatches SUPER.Method(...) (not just SUPER.NEW) to the parent method', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Animal
+  PUBLIC PROCEDURE NEW()
+  ENDPROCEDURE
+  PUBLIC FUNCTION Describe() RETURNS STRING
+    RETURN "an animal"
+  ENDFUNCTION
+ENDCLASS
+CLASS Dog INHERITS Animal
+  PUBLIC PROCEDURE NEW()
+    SUPER.NEW()
+  ENDPROCEDURE
+  PUBLIC FUNCTION Describe() RETURNS STRING
+    RETURN SUPER.Describe() & ", specifically a dog"
+  ENDFUNCTION
+ENDCLASS
+DECLARE D : Dog
+D ← NEW Dog()
+OUTPUT D.Describe()
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('super().Describe()');
+  });
+
+  it('supports polymorphism: a parent-typed variable assigned a subclass instance', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Animal
+  PUBLIC PROCEDURE NEW()
+  ENDPROCEDURE
+  PUBLIC FUNCTION Speak() RETURNS STRING
+    RETURN "..."
+  ENDFUNCTION
+ENDCLASS
+CLASS Dog INHERITS Animal
+  PUBLIC PROCEDURE NEW()
+    SUPER.NEW()
+  ENDPROCEDURE
+  PUBLIC FUNCTION Speak() RETURNS STRING
+    RETURN "Woof"
+  ENDFUNCTION
+ENDCLASS
+DECLARE A : Animal
+A ← NEW Dog()
+OUTPUT A.Speak()
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('A: Animal | None = None');
+    expect(result.code).toContain('A = Dog()');
+    expect(result.code).toContain('print(A.Speak())');
+  });
+
+  it('does not deep-copy CLASS instances on assignment (reference semantics)', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Box
+  PUBLIC Value : INTEGER
+  PUBLIC PROCEDURE NEW(V : INTEGER)
+    Value ← V
+  ENDPROCEDURE
+ENDCLASS
+DECLARE A, B : Box
+A ← NEW Box(1)
+B ← A
+B.Value ← 99
+OUTPUT A.Value
+OUTPUT B.Value
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).not.toContain('import copy');
+    expect(result.code).not.toContain('copy.deepcopy');
+    expect(result.code).toContain('B = A');
+    expect(result.code).toContain('B.Value = 99');
+  });
+
+  it('still deep-copies TYPE records passed alongside CLASS instances (regression)', () => {
+    const result = translatePseudocodeToPython(`
+TYPE Point
+  DECLARE X : INTEGER
+ENDTYPE
+CLASS Box
+  PUBLIC Value : INTEGER
+  PUBLIC PROCEDURE NEW(V : INTEGER)
+    Value ← V
+  ENDPROCEDURE
+ENDCLASS
+DECLARE P1, P2 : Point
+DECLARE A, B : Box
+P1.X ← 1
+P2 ← P1
+A ← NEW Box(1)
+B ← A
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('import copy');
+    expect(result.code).toContain('P2 = copy.deepcopy(P1)');
+    expect(result.code).toContain('B = A');
+  });
+
+  it('does not eagerly construct array-of-CLASS elements (None placeholders)', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Point
+  PUBLIC X : INTEGER
+  PUBLIC PROCEDURE NEW(GivenX : INTEGER)
+    X ← GivenX
+  ENDPROCEDURE
+ENDCLASS
+DECLARE Points : ARRAY[1:3] OF Point
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain(
+      'Points: list[Point | None] = [None for _ in range((3) - (1) + 1)]  # ARRAY[1:3]',
+    );
+  });
+
+  it('supports nested object fields (object containing another object)', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Engine
+  PUBLIC Horsepower : INTEGER
+  PUBLIC PROCEDURE NEW(HP : INTEGER)
+    Horsepower ← HP
+  ENDPROCEDURE
+ENDCLASS
+CLASS Car
+  PUBLIC CarEngine : Engine
+  PUBLIC PROCEDURE NEW(HP : INTEGER)
+    CarEngine ← NEW Engine(HP)
+  ENDPROCEDURE
+ENDCLASS
+DECLARE C : Car
+C ← NEW Car(300)
+OUTPUT C.CarEngine.Horsepower
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('self.CarEngine = Engine(HP)');
+    expect(result.code).toContain('print(C.CarEngine.Horsepower)');
+  });
+
+  it('normalizes field-access casing to the CLASS declaration', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Pet
+  PUBLIC Name : STRING
+  PUBLIC PROCEDURE NEW(GivenName : STRING)
+    Name ← GivenName
+  ENDPROCEDURE
+ENDCLASS
+DECLARE P : Pet
+P ← NEW Pet("Rex")
+OUTPUT P.name
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('print(P.Name)');
+    expect(result.code).not.toMatch(/P\.name/);
+  });
+
+  it('handles a class with no properties or methods (NEW with 0 args)', () => {
+    const result = translatePseudocodeToPython(`
+CLASS Empty
+ENDCLASS
+DECLARE E : Empty
+E ← NEW Empty()
+OUTPUT "ok"
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('class Empty:');
+    expect(result.code).toContain('pass');
+    expect(result.code).toContain('E = Empty()');
+  });
+
+  it('round-trips Pet/Cat through Cambridge print (IR round trip)', () => {
+    expect(norm(roundTripCambridgePrint(PET_CAT_SRC))).toBe(
+      [
+        'CLASS Pet',
+        '    PRIVATE Name : STRING',
+        '    PUBLIC PROCEDURE NEW(GivenName : STRING)',
+        '        Name ← GivenName',
+        '    ENDPROCEDURE',
+        '    PUBLIC FUNCTION GetName() RETURNS STRING',
+        '        RETURN Name',
+        '    ENDFUNCTION',
+        'ENDCLASS',
+        '',
+        'CLASS Cat INHERITS Pet',
+        '    PRIVATE Breed : STRING',
+        '    PUBLIC PROCEDURE NEW(GivenName : STRING, GivenBreed : STRING)',
+        '        SUPER.NEW(GivenName)',
+        '        Breed ← GivenBreed',
+        '    ENDPROCEDURE',
+        'ENDCLASS',
+        '',
+        'DECLARE MyCat : Cat',
+        'MyCat ← NEW Cat("Kitty", "Shorthaired")',
+        'OUTPUT MyCat.GetName()',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('round-trips Pet/Cat via Python (Pseudo → Python → Pseudo)', () => {
+    expect(norm(roundTripViaPython(PET_CAT_SRC))).toBe(
+      [
+        'CLASS Pet',
+        '    PRIVATE Name : STRING',
+        '    PUBLIC PROCEDURE NEW(GivenName : STRING)',
+        '        Name ← GivenName',
+        '    ENDPROCEDURE',
+        '    PUBLIC FUNCTION GetName() RETURNS STRING',
+        '        RETURN Name',
+        '    ENDFUNCTION',
+        'ENDCLASS',
+        'CLASS Cat INHERITS Pet',
+        '    PRIVATE Breed : STRING',
+        '    PUBLIC PROCEDURE NEW(GivenName : STRING, GivenBreed : STRING)',
+        '        SUPER.NEW(GivenName)',
+        '        Breed ← GivenBreed',
+        '    ENDPROCEDURE',
+        'ENDCLASS',
+        'DECLARE MyCat : Cat',
+        'MyCat ← NEW Cat("Kitty", "Shorthaired")',
+        'OUTPUT MyCat.GetName()',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('round-trips a bare method-call statement through Cambridge print', () => {
+    const src = `
+CLASS Player
+  PRIVATE Attempts : INTEGER
+  PUBLIC PROCEDURE NEW()
+    Attempts ← 0
+  ENDPROCEDURE
+  PUBLIC PROCEDURE SetAttempts(N : INTEGER)
+    Attempts ← N
+  ENDPROCEDURE
+ENDCLASS
+DECLARE P : Player
+P ← NEW Player()
+P.SetAttempts(5)
+`;
+    expect(roundTripCambridgePrint(src)).toContain('P.SetAttempts(5)');
+  });
+
+  it('round-trips a bare method-call statement via Python', () => {
+    const src = `
+CLASS Player
+  PRIVATE Attempts : INTEGER
+  PUBLIC PROCEDURE NEW()
+    Attempts ← 0
+  ENDPROCEDURE
+  PUBLIC PROCEDURE SetAttempts(N : INTEGER)
+    Attempts ← N
+  ENDPROCEDURE
+ENDCLASS
+DECLARE P : Player
+P ← NEW Player()
+P.SetAttempts(5)
+`;
+    const back = roundTripViaPython(src);
+    expect(back).toContain('P.SetAttempts(5)');
+    expect(back).toContain('CLASS Player');
+    expect(back).toContain('PROCEDURE NEW()');
+  });
+
+  it('round-trips SUPER.Method dispatch via Python', () => {
+    const src = `
+CLASS Animal
+  PUBLIC PROCEDURE NEW()
+  ENDPROCEDURE
+  PUBLIC PROCEDURE Speak()
+    OUTPUT "..."
+  ENDPROCEDURE
+ENDCLASS
+CLASS Dog INHERITS Animal
+  PUBLIC PROCEDURE NEW()
+    SUPER.NEW()
+  ENDPROCEDURE
+  PUBLIC PROCEDURE Speak()
+    SUPER.Speak()
+    OUTPUT "woof"
+  ENDPROCEDURE
+ENDCLASS
+DECLARE D : Dog
+D ← NEW Dog()
+D.Speak()
+`;
+    const back = roundTripViaPython(src);
+    expect(back).toContain('SUPER.NEW()');
+    expect(back).toContain('SUPER.Speak()');
+    expect(back).toContain('CLASS Dog INHERITS Animal');
+  });
+
+  it('round-trips array-of-CLASS DECLARE via Python', () => {
+    const src = `
+CLASS Point
+  PRIVATE X : INTEGER
+  PUBLIC PROCEDURE NEW(V : INTEGER)
+    X ← V
+  ENDPROCEDURE
+ENDCLASS
+DECLARE Pts : ARRAY[1:2] OF Point
+Pts[1] ← NEW Point(3)
+`;
+    const back = roundTripViaPython(src);
+    expect(back).toContain('DECLARE Pts : ARRAY[1:2] OF Point');
+    expect(back).toContain('Pts[1] ← NEW Point(3)');
+  });
+
+  it('rejects unsupported Python class-body constructs with a clear diagnostic', () => {
+    const result = translatePythonToPseudocode(`
+class Bad:
+    x = 1
+`);
+    expect(result.ok).toBe(false);
+    expect(
+      result.diagnostics.some((d) =>
+        d.message.includes("Unsupported class body statement"),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects lambda / with / async with clear diagnostics', () => {
+    expect(translatePythonToPseudocode('lambda: 1\n').ok).toBe(false);
+    expect(translatePythonToPseudocode('with open("f") as f:\n    pass\n').ok).toBe(
+      false,
+    );
+    expect(translatePythonToPseudocode('async def f():\n    pass\n').ok).toBe(false);
+    expect(translatePythonToPseudocode('try:\n    pass\n').ok).toBe(false);
+  });
+});
+
+describe('array bounds → Python indexing (arbitrary lowers)', () => {
+  it('translates ARRAY[1:5] with i - lower indexing', () => {
+    const result = translatePseudocodeToPython(`
+DECLARE Players : ARRAY[1:5] OF INTEGER
+DECLARE Count : INTEGER
+Count ← 3
+Players[Count] ← 10
+OUTPUT Players[Count]
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain(
+      'Players: list[int] = [0 for _ in range((5) - (1) + 1)]  # ARRAY[1:5]',
+    );
+    expect(result.code).toContain('Players[Count - 1] = 10');
+    expect(result.code).toContain('print(Players[Count - 1])');
+  });
+
+  it('translates ARRAY[5:10] without special-casing lower 1', () => {
+    const result = translatePseudocodeToPython(`
+DECLARE Slice : ARRAY[5:10] OF INTEGER
+Slice[5] ← 1
+Slice[10] ← 2
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('range((10) - (5) + 1)');
+    expect(result.code).toContain('Slice[5 - 5] = 1');
+    expect(result.code).toContain('Slice[10 - 5] = 2');
+  });
+
+  it('translates ARRAY[-3:3] with parenthesized negative lower', () => {
+    const result = translatePseudocodeToPython(`
+DECLARE Window : ARRAY[-3:3] OF INTEGER
+Window[-3] ← 0
+Window[0] ← 1
+Window[3] ← 2
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('range((3) - (-3) + 1)');
+    expect(result.code).toContain('Window[-3 - (-3)] = 0');
+    expect(result.code).toContain('Window[0 - (-3)] = 1');
+    expect(result.code).toContain('Window[3 - (-3)] = 2');
+  });
+
+  it('translates nested TYPE field arrays with lowers', () => {
+    const result = translatePseudocodeToPython(`
+TYPE Student
+  DECLARE Marks : ARRAY[1:3] OF INTEGER
+ENDTYPE
+DECLARE Roster : ARRAY[1:2] OF Student
+Roster[1].Marks[2] ← 90
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('Roster[1 - 1].Marks[2 - 1] = 90');
+  });
+
+  it('round-trips ARRAY[5:10] indexing through Python', () => {
+    const src = `
+DECLARE Slice : ARRAY[5:10] OF INTEGER
+Slice[7] ← 42
+OUTPUT Slice[7]
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('DECLARE Slice : ARRAY[5:10] OF INTEGER');
+    expect(norm(back.code)).toContain('Slice[7] ← 42');
+    expect(norm(back.code)).toContain('OUTPUT Slice[7]');
+  });
+});
+
+describe('typed INPUT → Python', () => {
+  it('emits int/float/bool/char conversions', () => {
+    const result = translatePseudocodeToPython(`
+DECLARE N : INTEGER
+DECLARE R : REAL
+DECLARE F : BOOLEAN
+DECLARE C : CHAR
+DECLARE S : STRING
+INPUT N
+INPUT R
+INPUT F
+INPUT C
+INPUT S
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('N = int(input().strip())');
+    expect(result.code).toContain('R = float(input().strip())');
+    expect(result.code).toContain('F = _pp_input_bool()');
+    expect(result.code).toContain('C = _pp_input_char()');
+    expect(result.code).toContain('S = input()');
+    expect(result.code).toContain('def _pp_input_bool()');
+    expect(result.code).toContain('def _pp_input_char()');
+  });
+
+  it('round-trips typed INTEGER INPUT', () => {
+    const src = `
+DECLARE N : INTEGER
+INPUT N
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('DECLARE N : INTEGER');
+    expect(norm(back.code)).toContain('INPUT N');
+  });
+});
+
+describe('DATE translation', () => {
+  it('translates DATE declare, literals, and builtins to Python', () => {
+    const result = translatePseudocodeToPython(`
+DECLARE D : DATE
+D ← 04/10/2003
+OUTPUT DAY(D), MONTH(D), YEAR(D)
+OUTPUT SETDATE(1, 2, 2000)
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.code).toContain('from datetime import date');
+    expect(result.code).toContain('D: date  # DATE');
+    expect(result.code).toContain('date(2003, 10, 4)');
+    expect(result.code).toContain('D.day');
+    expect(result.code).not.toMatch(/\btime\b/);
+  });
+
+  it('round-trips DATE via Python', () => {
+    const src = `
+DECLARE D : DATE
+D ← SETDATE(4, 10, 2003)
+OUTPUT YEAR(D)
+`;
+    const back = roundTripViaPython(src);
+    expect(back).toContain('DECLARE D : DATE');
+    expect(back).toMatch(/SETDATE|04\/10\/2003/);
+    expect(back).toContain('YEAR(D)');
   });
 });

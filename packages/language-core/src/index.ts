@@ -6,7 +6,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/language-core' as const;
-export const PACKAGE_VERSION = '0.11.0' as const;
+export const PACKAGE_VERSION = '0.11.1' as const;
 
 export {
   parse,
@@ -45,6 +45,9 @@ export type {
   IndexExpression,
   EofExpression,
   MemberExpression,
+  SuperExpression,
+  NewExpression,
+  MethodCallExpression,
   ArrayType,
   ArrayDimension,
   TypeReference,
@@ -56,6 +59,13 @@ export type {
   TypeName,
   TypeNameKind,
   TypeDeclaration,
+  Visibility,
+  ClassPropertyDeclaration,
+  ClassProcedureDeclaration,
+  ClassFunctionDeclaration,
+  ClassMember,
+  ClassDeclaration,
+  ExpressionStatement,
   Identifier,
   BinaryExpression,
   UnaryExpression,
@@ -65,6 +75,7 @@ export type {
   StringLiteral,
   CharLiteral,
   BooleanLiteral,
+  DateLiteral,
   BinaryOperator,
   UnaryOperator,
   AstNode,

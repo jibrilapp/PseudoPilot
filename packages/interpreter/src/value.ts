@@ -6,12 +6,19 @@ export type ScalarValue =
   | { readonly kind: 'REAL'; readonly value: number }
   | { readonly kind: 'BOOLEAN'; readonly value: boolean }
   | { readonly kind: 'STRING'; readonly value: string }
-  | { readonly kind: 'CHAR'; readonly value: string };
+  | { readonly kind: 'CHAR'; readonly value: string }
+  | {
+      readonly kind: 'DATE';
+      readonly day: number;
+      readonly month: number;
+      readonly year: number;
+    };
 
-/** Element type of an ARRAY: builtin scalar, or a named record TYPE. */
+/** Element type of an ARRAY: builtin scalar, a named record TYPE, or a CLASS. */
 export type ArrayElementType =
   | { readonly kind: 'SCALAR'; readonly name: TypeNameKind }
-  | { readonly kind: 'RECORD'; readonly typeName: string };
+  | { readonly kind: 'RECORD'; readonly typeName: string }
+  | { readonly kind: 'CLASS'; readonly className: string };
 
 /** Dense multi-dimensional array with Cambridge inclusive bounds. */
 export type ArrayValue = {
@@ -36,7 +43,23 @@ export type RecordValue = {
   readonly fieldNames: readonly string[];
 };
 
-export type RuntimeValue = ScalarValue | ArrayValue | RecordValue;
+/**
+ * CLASS instance. Unlike RECORD, objects are **reference types**: assignment
+ * and parameter passing alias the same instance (Cambridge 9618 OOP identity
+ * semantics) rather than deep-cloning. Field keys are case-folded, mirroring
+ * RecordValue.
+ */
+export type ObjectValue = {
+  readonly kind: 'OBJECT';
+  /** Display name from the CLASS declaration (the object's *runtime* class). */
+  readonly className: string;
+  /** Case-folded field name → current value (own + inherited, flattened). */
+  readonly fields: Map<string, RuntimeValue>;
+  /** Display-case field names in allocation order (ancestors first) for formatting. */
+  readonly fieldNames: readonly string[];
+};
+
+export type RuntimeValue = ScalarValue | ArrayValue | RecordValue | ObjectValue;
 
 export type BindingKind = 'variable' | 'constant' | 'parameter';
 
@@ -76,6 +99,10 @@ export function charValue(c: string): ScalarValue {
   return { kind: 'CHAR', value: c.length === 0 ? ' ' : c[0]! };
 }
 
+export function dateValue(day: number, month: number, year: number): ScalarValue {
+  return { kind: 'DATE', day, month, year };
+}
+
 export function defaultScalar(type: TypeNameKind): ScalarValue {
   switch (type) {
     case 'INTEGER':
@@ -88,6 +115,8 @@ export function defaultScalar(type: TypeNameKind): ScalarValue {
       return stringValue('');
     case 'CHAR':
       return charValue(' ');
+    case 'DATE':
+      return dateValue(1, 1, 1900);
     default: {
       const _exhaustive: never = type;
       return _exhaustive;
@@ -115,6 +144,8 @@ export function formatValue(v: RuntimeValue): string {
       return v.value;
     case 'CHAR':
       return v.value;
+    case 'DATE':
+      return `${pad2(v.day)}/${pad2(v.month)}/${String(v.year).padStart(4, '0')}`;
     case 'ARRAY':
       return `[${v.data.map(quoteForDisplay).join(', ')}]`;
     case 'RECORD': {
@@ -124,7 +155,18 @@ export function formatValue(v: RuntimeValue): string {
       });
       return `{${parts.join(', ')}}`;
     }
+    case 'OBJECT': {
+      const parts = v.fieldNames.map((name) => {
+        const field = v.fields.get(name.toLowerCase());
+        return `${name}: ${field ? quoteForDisplay(field) : '?'}`;
+      });
+      return `${v.className}{${parts.join(', ')}}`;
+    }
   }
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
 }
 
 export function isTruthyBoolean(v: RuntimeValue): boolean {
@@ -299,6 +341,20 @@ export function allocateRecord(
   return { kind: 'RECORD', typeName, fields, fieldNames };
 }
 
+/** Default-initialise a CLASS instance's fields (no constructor invoked). */
+export function allocateObject(
+  className: string,
+  fieldInits: readonly RecordFieldInit[],
+): ObjectValue {
+  const fields = new Map<string, RuntimeValue>();
+  const fieldNames: string[] = [];
+  for (const f of fieldInits) {
+    fields.set(f.key, f.init());
+    fieldNames.push(f.displayName);
+  }
+  return { kind: 'OBJECT', className, fields, fieldNames };
+}
+
 /** Deep by-value copy: records/arrays are reference types otherwise. */
 export function cloneValue(v: RuntimeValue): RuntimeValue {
   switch (v.kind) {
@@ -317,6 +373,10 @@ export function cloneValue(v: RuntimeValue): RuntimeValue {
         fields: new Map([...v.fields].map(([k, val]) => [k, cloneValue(val)])),
         fieldNames: v.fieldNames,
       };
+    case 'OBJECT':
+      // Objects are reference types: assignment/params alias the same
+      // instance (Cambridge 9618 OOP identity semantics) — never clone.
+      return v;
     default:
       // Scalars are treated as immutable — always replaced wholesale, never
       // mutated in place — so sharing the reference is safe.

@@ -51,8 +51,10 @@ If the FOR control variable is not yet bound, the checker **implicitly** introdu
 
 ## 3. Types
 
-Scalars: `INTEGER`, `REAL`, `STRING`, `BOOLEAN`, `CHAR`  
+Scalars: `INTEGER`, `REAL`, `STRING`, `BOOLEAN`, `CHAR`, `DATE`  
 Arrays: `ARRAY[…] OF <scalar>` (dimensionality checked on indexing)
+
+Cambridge 9618 does not define a standalone `TIME` datatype; PseudoPilot does not invent one.
 
 ### Assignment compatibility
 
@@ -62,6 +64,7 @@ Arrays: `ARRAY[…] OF <scalar>` (dimensionality checked on indexing)
 | `INTEGER` → `REAL` | ✅ (implicit widening) |
 | `REAL` → `INTEGER` | ❌ (use `INT(...)`) |
 | `CHAR` ↔ `STRING` | ❌ (distinct) |
+| `DATE` ↔ other scalars | ❌ (use `SETDATE` / component builtins) |
 | Arrays | ✅ only if element type **and** rank match |
 
 `INPUT` / `READFILE` require an assignable target (declared, not CONSTANT) but do **not** enforce a source type (Cambridge I/O is untyped at the language level).
@@ -82,6 +85,11 @@ Signatures live in `language-core` `CORE_BUILTINS` (types only). Python emission
 | `LCASE` / `UCASE` | same as arg | Guide: CHAR→CHAR; PseudoPilot also STRING→STRING |
 | `INT(x)` | INTEGER | REAL or INTEGER; truncate toward zero |
 | `RAND(x)` | **REAL** | `[0, x)`; `x` must be INTEGER |
+| `DAY` / `MONTH` / `YEAR` / `DAYINDEX` | INTEGER | DATE insert helpers |
+| `SETDATE(d, m, y)` | DATE | Construct calendar date |
+| `TODAY()` | DATE | Current calendar date |
+
+DATE values may be compared with `=` / `<>` / `<` / `<=` / `>` / `>=`. Arithmetic on DATE is rejected (`C_BINARY_TYPE`).
 
 Builtin names are **soft-reserved against redefinition** (SPEC §1.9): `DECLARE Length` / `FUNCTION LENGTH` collide with the injected Core builtin (`C_DUP_FUNCTION`).
 
@@ -109,6 +117,9 @@ Operands must be STRING or CHAR (`C_CONCAT_TYPE`). Result is STRING. Same preced
 | `C_FILE_NOT_OPEN` / `C_FILE_ALREADY_OPEN` / `C_FILE_MODE` | Open-state (literal paths, best-effort) |
 | `C_UNKNOWN_TYPE` / `C_DUP_TYPE` / `C_RECURSIVE_TYPE` | TYPE … ENDTYPE |
 | `C_UNKNOWN_FIELD` / `C_DUP_FIELD` / `C_NOT_RECORD` | Record fields |
+| `C_UNKNOWN_CLASS` / `C_DUP_CLASS` / `C_INVALID_INHERITS` / `C_CYCLIC_INHERITANCE` | CLASS declaration |
+| `C_DUP_MEMBER` / `C_DUP_METHOD` / `C_OVERRIDE_MISMATCH` (warning) | CLASS members |
+| `C_NOT_CLASS` / `C_UNKNOWN_METHOD` / `C_PRIVATE_ACCESS` / `C_INVALID_NEW` / `C_SUPER_OUTSIDE` | CLASS usage (`obj.Method(...)`, `NEW`, `SUPER`) |
 | `C_COND_TYPE` / `C_BINARY_TYPE` / `C_UNARY_TYPE` / `C_COMPARE_TYPE` | Expression typing |
 | `C_CASE_LABEL_TYPE` / `C_CASE_RANGE_TYPE` | CASE (warnings / errors) |
 | `C_UNREACHABLE` | Statement after RETURN (warning) |
@@ -142,8 +153,11 @@ const { ok, diagnostics, globalSymbols } = check(ast);
 - Unreachable-after-RETURN is **same-block** only (including nested IF/loop/CASE bodies); does not prove a branch always returns.
 - No definite-assignment / use-before-init beyond undeclared names.
 - File I/O: open-state for literal paths (`C_FILE_*`), READFILE assignability to STRING, path types.
-- No BYREF / DATE / OOP / enum-pointer-SET TYPE forms.
+- No BYREF / enum-pointer-SET TYPE forms.
 - Record `TYPE` … `ENDTYPE` is supported — see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md).
+- `CLASS` OOP (single inheritance, `PUBLIC`/`PRIVATE`, `SUPER`, `NEW`) is supported — see
+  [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md). `C_OVERRIDE_MISMATCH`
+  is a warning only, not enforced strictly.
 - Expression typing is best-effort; some operator combinations may under-report.
 - NEXT/FOR variable mismatch and CASE duplicate labels remain **parser** structural diagnostics (`E_*`).
 - Runtime execution lives in `@pseudopilot/interpreter` (see [`INTERPRETER.md`](./INTERPRETER.md)); checker does not evaluate code.

@@ -36,7 +36,9 @@ export type IrStatement =
   | IrOpenFileStatement
   | IrReadFileStatement
   | IrWriteFileStatement
-  | IrCloseFileStatement;
+  | IrCloseFileStatement
+  | IrClassDeclaration
+  | IrExpressionStatement;
 
 type WithTrivia = {
   readonly leadingTrivia: IrTrivia[];
@@ -53,12 +55,17 @@ export type IrAssignment = WithTrivia & {
   readonly value: IrExpression;
 };
 
-/** INPUT x / x = input() */
+/** INPUT x / x = input() — valueType drives typed Python conversions. */
 export type IrInput = WithTrivia & {
   readonly kind: 'IrInput';
   readonly target: IrAssignTarget;
   /** Optional prompt expression (from Python input(prompt)). */
   readonly prompt: IrExpression | null;
+  /**
+   * Declared scalar type of the target (INTEGER/REAL/BOOLEAN/CHAR/STRING).
+   * `null` when unknown (e.g. reverse without annotations) → plain `input()`.
+   */
+  readonly valueType: IrTypeName | null;
 };
 
 /** OUTPUT a, b / print(a, b) */
@@ -130,7 +137,13 @@ export type IrForStatement = WithTrivia & {
 };
 
 /** Cambridge scalar type names on procedure parameters / DECLARE / RETURNS. */
-export type IrTypeName = 'INTEGER' | 'REAL' | 'STRING' | 'BOOLEAN' | 'CHAR';
+export type IrTypeName =
+  | 'INTEGER'
+  | 'REAL'
+  | 'STRING'
+  | 'BOOLEAN'
+  | 'CHAR'
+  | 'DATE';
 
 export type IrArrayDimension = {
   readonly kind: 'IrArrayDimension';
@@ -268,12 +281,68 @@ export type IrCloseFileStatement = WithTrivia & {
   readonly fileName: IrExpression;
 };
 
+export type IrVisibility = 'PUBLIC' | 'PRIVATE';
+
+/** `PRIVATE Name : STRING` inside a CLASS body (no direct Python emission — see IrClassDeclaration). */
+export type IrClassProperty = {
+  readonly kind: 'IrClassProperty';
+  readonly names: string[];
+  readonly typeRef: IrTypeReference;
+  readonly visibility: IrVisibility;
+};
+
+/**
+ * Class method with no return value. `name` is `NEW` for the constructor,
+ * which prints as Python `__init__`.
+ */
+export type IrClassProcedure = {
+  readonly kind: 'IrClassProcedure';
+  readonly name: string;
+  readonly parameters: IrParameter[];
+  readonly body: IrStatement[];
+  readonly visibility: IrVisibility;
+};
+
+/** Class method returning a value. */
+export type IrClassFunction = {
+  readonly kind: 'IrClassFunction';
+  readonly name: string;
+  readonly parameters: IrParameter[];
+  readonly returnType: IrSimpleType;
+  readonly body: IrStatement[];
+  readonly visibility: IrVisibility;
+};
+
+export type IrClassMember = IrClassProperty | IrClassProcedure | IrClassFunction;
+
+/**
+ * CLASS Name [INHERITS Parent] … ENDCLASS — maps to a Python `class`.
+ * `inherits` is the parent class name (display casing) or `null`.
+ */
+export type IrClassDeclaration = WithTrivia & {
+  readonly kind: 'IrClassDeclaration';
+  readonly name: string;
+  readonly inherits: string | null;
+  readonly members: IrClassMember[];
+};
+
+/**
+ * Standalone call used as a statement with no assignment/CALL target value,
+ * e.g. `Player.SetAttempts(5)` (bare method call) or a `CALL Obj.Method(...)`
+ * lowered from a MemberExpression callee.
+ */
+export type IrExpressionStatement = WithTrivia & {
+  readonly kind: 'IrExpressionStatement';
+  readonly expression: IrExpression;
+};
+
 export type IrExpression =
   | IrIntegerLiteral
   | IrRealLiteral
   | IrStringLiteral
   | IrCharLiteral
   | IrBooleanLiteral
+  | IrDateLiteral
   | IrIdentifier
   | IrIndexExpression
   | IrMemberExpression
@@ -282,7 +351,33 @@ export type IrExpression =
   | IrBinaryExpression
   | IrGroupingExpression
   | IrEofExpression
-  | IrDeepCopyExpression;
+  | IrDeepCopyExpression
+  | IrSuperExpression
+  | IrNewExpression
+  | IrMethodCallExpression;
+
+/** `SUPER` — only meaningful as the `object` of an {@link IrMethodCallExpression}. */
+export type IrSuperExpression = {
+  readonly kind: 'IrSuperExpression';
+};
+
+/** `NEW ClassName(args)` — instantiates a class; prints as `ClassName(args)` in Python. */
+export type IrNewExpression = {
+  readonly kind: 'IrNewExpression';
+  readonly className: string;
+  readonly args: IrExpression[];
+};
+
+/**
+ * `Object.Method(args)` / `SUPER.NEW(args)` — method call (expression form).
+ * `SUPER.NEW` prints as Python `super().__init__(args)`.
+ */
+export type IrMethodCallExpression = {
+  readonly kind: 'IrMethodCallExpression';
+  readonly object: IrExpression;
+  readonly method: string;
+  readonly args: IrExpression[];
+};
 
 /**
  * Explicit deep copy for Cambridge by-value record/array semantics in Python.
@@ -325,19 +420,34 @@ export type IrBooleanLiteral = {
   readonly value: boolean;
 };
 
+/** Cambridge DATE literal components (dd/mm/yyyy). */
+export type IrDateLiteral = {
+  readonly kind: 'IrDateLiteral';
+  readonly day: number;
+  readonly month: number;
+  readonly year: number;
+};
+
 export type IrIdentifier = {
   readonly kind: 'IrIdentifier';
   readonly name: string;
 };
 
 /**
- * Name[i, j] — Cambridge 1-based indices preserved as written.
+ * Name[i, j] — Cambridge indices preserved on IR.
+ * Python print subtracts {@link lowers} so dense 0-based lists stay correct
+ * for arbitrary Cambridge bounds (1:5, 5:10, -3:3, …).
  * `array` may itself be a member/index expression (e.g. `Students[i].Marks[1]`).
  */
 export type IrIndexExpression = {
   readonly kind: 'IrIndexExpression';
   readonly array: IrExpression;
   readonly indices: IrExpression[];
+  /**
+   * Parallel to {@link indices}: Cambridge lower bound of each dimension.
+   * Omitted when bounds are unknown (incomplete reverse / untyped IR).
+   */
+  readonly lowers?: readonly IrExpression[];
 };
 
 /** Field access: `S.Name`, `S.Home.City`, `Students[i].Name`. */

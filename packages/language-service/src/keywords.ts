@@ -47,6 +47,7 @@ export const CAMBRIDGE_KEYWORDS: readonly string[] = [
   'STRING',
   'BOOLEAN',
   'CHAR',
+  'DATE',
   'OPENFILE',
   'READFILE',
   'WRITEFILE',
@@ -55,6 +56,13 @@ export const CAMBRIDGE_KEYWORDS: readonly string[] = [
   'WRITE',
   'APPEND',
   'EOF',
+  'CLASS',
+  'ENDCLASS',
+  'PUBLIC',
+  'PRIVATE',
+  'INHERITS',
+  'SUPER',
+  'NEW',
 ];
 
 const KEYWORD_SET = new Set(CAMBRIDGE_KEYWORDS.map((k) => k.toLowerCase()));

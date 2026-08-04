@@ -1,5 +1,7 @@
 import {
   formatType,
+  type ClassFieldInfo,
+  type ClassMethodInfo,
   type SymbolInfo,
   type PpType,
 } from '@pseudopilot/checker';
@@ -97,12 +99,52 @@ export function occurrenceAt(
   return best;
 }
 
+/** Static hover text for keywords that never appear as occurrences (no declaration site of their own). */
+const KEYWORD_HOVER: Readonly<Record<string, string>> = {
+  NEW: [
+    '**(keyword)** `NEW`',
+    '`NEW ClassName(args)` instantiates CLASS `ClassName`: allocates its fields (own + inherited, default-initialised) and — if the class declares a `NEW` constructor method — calls it with `args`.',
+    'Objects are **reference types**: assigning or passing the result aliases the same instance (unlike `TYPE` records, which copy by value).',
+  ].join('\n\n'),
+};
+
+/** Word (identifier/keyword) touching `position`, with its source range. */
+function wordTokenAt(
+  source: string,
+  position: LsPosition,
+): { readonly word: string; readonly range: LsRange } | null {
+  const lines = source.split('\n');
+  const line = lines[position.line] ?? '';
+  const left = line.slice(0, position.character);
+  const right = line.slice(position.character);
+  const leftPart = /[A-Za-z_][A-Za-z0-9_]*$/.exec(left)?.[0] ?? '';
+  const rightPart = /^[A-Za-z0-9_]*/.exec(right)?.[0] ?? '';
+  const word = leftPart + rightPart;
+  if (!word) return null;
+  return {
+    word,
+    range: {
+      start: { line: position.line, character: position.character - leftPart.length },
+      end: { line: position.line, character: position.character + rightPart.length },
+    },
+  };
+}
+
 export function hover(
   analysis: DocumentAnalysis,
   position: LsPosition,
 ): HoverInfo | null {
   const occ = occurrenceAt(analysis, position);
-  if (!occ) return null;
+  if (!occ) {
+    // Keywords with no occurrence of their own (e.g. `NEW` in `NEW ClassName(...)`
+    // — only the class name is indexed) still deserve a hover.
+    const token = wordTokenAt(analysis.source, position);
+    const keywordDoc = token ? KEYWORD_HOVER[token.word.toUpperCase()] : undefined;
+    if (token && keywordDoc) {
+      return { range: token.range, contents: keywordDoc, symbol: null };
+    }
+    return null;
+  }
   const symbol = occ.symbol;
   const range = spanToRange(occ.span);
   if (!symbol) {
@@ -149,9 +191,31 @@ function formatHover(analysis: DocumentAnalysis, symbol: SymbolInfo): string {
       .join(', ');
     lines.push(fields ? `Fields: \`${fields}\`` : '_Empty record_');
   }
+  if (symbol.type.kind === 'class') {
+    const cls = symbol.type;
+    if (cls.inherits) {
+      lines.push(`Inherits: \`${cls.inherits}\``);
+    }
+    const fields = cls.fields.map((f) => formatClassFieldSig(f)).join(', ');
+    lines.push(fields ? `Own fields: \`${fields}\`` : '_No own fields_');
+    const methods = cls.methods.map((m) => formatClassMethodSig(m)).join(', ');
+    lines.push(methods ? `Own methods: \`${methods}\`` : '_No own methods_');
+  }
   if (symbol.type.kind === 'procedure' || symbol.type.kind === 'function') {
-    const params = callableParams(analysis, symbol.name);
+    const params =
+      symbol.kind === 'method'
+        ? findClassMethodParams(analysis, symbol.containerName ?? '', symbol.name)
+        : callableParams(analysis, symbol.name);
     lines.push(formatCallable(symbol.name, symbol.type, params));
+  }
+  if (symbol.kind === 'field' || symbol.kind === 'method') {
+    const visibility = findClassMemberVisibility(
+      analysis,
+      symbol.containerName ?? '',
+      symbol.name,
+      symbol.kind,
+    );
+    if (visibility) lines.push(`Visibility: \`${visibility}\``);
   }
   if (symbol.kind === 'constant') {
     const value = constantLiteralText(analysis, symbol);
@@ -194,6 +258,57 @@ function formatCallable(
     return `\`FUNCTION ${name}(${labels(type.params)}) RETURNS ${formatType(type.returns)}\``;
   }
   return formatType(type);
+}
+
+function formatClassFieldSig(f: ClassFieldInfo): string {
+  const mark = f.visibility === 'PRIVATE' ? '-' : '+';
+  return `${mark}${f.name}: ${formatType(f.type)}`;
+}
+
+function formatClassMethodSig(m: ClassMethodInfo): string {
+  const mark = m.visibility === 'PRIVATE' ? '-' : '+';
+  const params = m.params.map(formatType).join(', ');
+  if (m.kind === 'procedure') return `${mark}${m.name}(${params})`;
+  const returns = m.returns ? formatType(m.returns) : '?';
+  return `${mark}${m.name}(${params}) → ${returns}`;
+}
+
+/** Own-declared visibility of a field/method on CLASS `className` (best-effort). */
+function findClassMemberVisibility(
+  analysis: DocumentAnalysis,
+  className: string,
+  memberName: string,
+  kind: 'field' | 'method',
+): 'PUBLIC' | 'PRIVATE' | null {
+  const clsSymbol = analysis.symbols.find(
+    (s) => s.kind === 'class' && s.name.toLowerCase() === className.toLowerCase(),
+  );
+  if (!clsSymbol || clsSymbol.type.kind !== 'class') return null;
+  const key = memberName.toLowerCase();
+  if (kind === 'field') {
+    return clsSymbol.type.fields.find((f) => f.name.toLowerCase() === key)?.visibility ?? null;
+  }
+  return clsSymbol.type.methods.find((m) => m.name.toLowerCase() === key)?.visibility ?? null;
+}
+
+/** Named parameters of a CLASS method declared directly on `className` (not inherited). */
+function findClassMethodParams(
+  analysis: DocumentAnalysis,
+  className: string,
+  methodName: string,
+): readonly Parameter[] | null {
+  if (!analysis.ast) return null;
+  for (const stmt of analysis.ast.body) {
+    if (stmt.kind !== 'ClassDeclaration') continue;
+    if (stmt.name.name.toLowerCase() !== className.toLowerCase()) continue;
+    for (const member of stmt.members) {
+      if (member.kind === 'ClassPropertyDeclaration') continue;
+      if (member.name.name.toLowerCase() === methodName.toLowerCase()) {
+        return member.parameters;
+      }
+    }
+  }
+  return null;
 }
 
 function constantLiteralText(
@@ -482,14 +597,47 @@ export function completion(
   // Member completion first — must not mix in globals/builtins.
   const rawPrefix = linePrefixAt(analysis.source, position);
   if (/\.\s*$/.test(rawPrefix)) {
-    const recordType = recordTypeBeforeDot(analysis, position);
-    if (recordType) {
-      for (const f of recordType.fields) {
+    const host = memberHostBeforeDot(analysis, position);
+    if (host?.kind === 'record') {
+      for (const f of host.fields) {
         add({
           label: f.name,
           kind: 'variable',
           detail: formatType(f.type),
-          documentation: `Field of ${recordType.name}`,
+          documentation: `Field of ${host.name}`,
+        });
+      }
+      return items;
+    }
+    if (host?.kind === 'class') {
+      const { fields, methods } = collectClassMembers(analysis, host);
+      for (const f of fields) {
+        add({
+          label: f.name,
+          kind: 'variable',
+          detail: formatType(f.type),
+          documentation:
+            f.owner === host.name
+              ? `Field of ${host.name}${f.visibility === 'PRIVATE' ? ' (PRIVATE)' : ''}`
+              : `Field inherited from ${f.owner}${f.visibility === 'PRIVATE' ? ' (PRIVATE)' : ''}`,
+        });
+      }
+      for (const m of methods) {
+        const named = findClassMethodParams(analysis, m.owner, m.name);
+        add({
+          label: m.name,
+          kind: m.kind === 'function' ? 'function' : 'procedure',
+          detail: formatCallable(
+            m.name,
+            m.kind === 'function'
+              ? { kind: 'function', params: m.params, returns: m.returns ?? { kind: 'error' } }
+              : { kind: 'procedure', params: m.params },
+            named,
+          ),
+          documentation:
+            m.owner === host.name
+              ? `Method of ${host.name}${m.visibility === 'PRIVATE' ? ' (PRIVATE)' : ''}`
+              : `Method inherited from ${m.owner}${m.visibility === 'PRIVATE' ? ' (PRIVATE)' : ''}`,
         });
       }
       return items;
@@ -499,7 +647,7 @@ export function completion(
   // In-scope symbols (prefer locals / globals from checker).
   for (const s of analysis.symbols) {
     if (s.builtin) continue;
-    if (s.kind === 'field') continue; // offered after `.` only
+    if (s.kind === 'field' || s.kind === 'method') continue; // offered after `.` only
     add({
       label: s.name,
       kind:
@@ -511,7 +659,7 @@ export function completion(
               ? 'constant'
               : s.kind === 'parameter'
                 ? 'parameter'
-                : s.kind === 'type'
+                : s.kind === 'type' || s.kind === 'class'
                   ? 'type'
                   : 'variable',
       detail: formatType(s.type),
@@ -541,12 +689,22 @@ export function completion(
       }
     }
   } else if (/\bDECLARE\b/i.test(linePrefix) || /\bRETURNS\b/i.test(linePrefix)) {
-    for (const t of ['INTEGER', 'REAL', 'STRING', 'BOOLEAN', 'CHAR', 'ARRAY']) {
+    for (const t of [
+      'INTEGER',
+      'REAL',
+      'STRING',
+      'BOOLEAN',
+      'CHAR',
+      'DATE',
+      'ARRAY',
+    ]) {
       add({ label: t, kind: 'type' });
     }
     for (const s of analysis.symbols) {
       if (s.kind === 'type') {
         add({ label: s.name, kind: 'type', detail: 'TYPE' });
+      } else if (s.kind === 'class') {
+        add({ label: s.name, kind: 'type', detail: 'CLASS' });
       }
     }
   } else {
@@ -581,6 +739,13 @@ export function completion(
       'NOT',
       'TRUE',
       'FALSE',
+      'CLASS',
+      'ENDCLASS',
+      'PUBLIC',
+      'PRIVATE',
+      'INHERITS',
+      'SUPER',
+      'NEW',
     ]) {
       add({ label: kw, kind: 'keyword' });
     }
@@ -597,14 +762,81 @@ function linePrefixAt(source: string, position: LsPosition): string {
   return line.slice(0, position.character);
 }
 
+type MemberHost =
+  | Extract<PpType, { kind: 'record' }>
+  | Extract<PpType, { kind: 'class' }>;
+
+/** Look up a CLASS `PpType` by display name via the document's global symbols. */
+function findClassByName(
+  analysis: DocumentAnalysis,
+  name: string,
+): Extract<PpType, { kind: 'class' }> | undefined {
+  const sym = analysis.symbols.find(
+    (s) => s.kind === 'class' && s.name.toLowerCase() === name.toLowerCase(),
+  );
+  return sym && sym.type.kind === 'class' ? sym.type : undefined;
+}
+
+/** Walk a CLASS's inheritance chain (self first) guarding against cycles. */
+function classChain(
+  analysis: DocumentAnalysis,
+  cls: Extract<PpType, { kind: 'class' }>,
+): readonly Extract<PpType, { kind: 'class' }>[] {
+  const chain: Extract<PpType, { kind: 'class' }>[] = [cls];
+  const seen = new Set<string>([cls.name.toLowerCase()]);
+  let current = cls;
+  while (current.inherits && !seen.has(current.inherits.toLowerCase())) {
+    seen.add(current.inherits.toLowerCase());
+    const parent = findClassByName(analysis, current.inherits);
+    if (!parent) break;
+    chain.push(parent);
+    current = parent;
+  }
+  return chain;
+}
+
+/** Find `fieldName` on `cls` or an ancestor (own fields first). */
+function findClassFieldInChain(
+  analysis: DocumentAnalysis,
+  cls: Extract<PpType, { kind: 'class' }>,
+  fieldName: string,
+): ClassFieldInfo | undefined {
+  const key = fieldName.toLowerCase();
+  for (const c of classChain(analysis, cls)) {
+    const found = c.fields.find((f) => f.name.toLowerCase() === key);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** All fields + methods visible on `cls`, own members first, with the declaring CLASS name. */
+function collectClassMembers(
+  analysis: DocumentAnalysis,
+  cls: Extract<PpType, { kind: 'class' }>,
+): {
+  readonly fields: readonly (ClassFieldInfo & { readonly owner: string })[];
+  readonly methods: readonly (ClassMethodInfo & { readonly owner: string })[];
+} {
+  const fields = new Map<string, ClassFieldInfo & { owner: string }>();
+  const methods = new Map<string, ClassMethodInfo & { owner: string }>();
+  // Reverse (ancestor → self) so a child's own field/method overrides its parent's.
+  const chain = [...classChain(analysis, cls)].reverse();
+  for (const c of chain) {
+    for (const f of c.fields) fields.set(f.name.toLowerCase(), { ...f, owner: c.name });
+    for (const m of c.methods) methods.set(m.name.toLowerCase(), { ...m, owner: c.name });
+  }
+  return { fields: [...fields.values()], methods: [...methods.values()] };
+}
+
 /**
- * Resolve the record type of the expression immediately before a trailing `.`
- * so completion can offer fields (e.g. `S.`, `S.Home.`, `Class[1].`).
+ * Resolve the record/class type of the expression immediately before a
+ * trailing `.` so completion can offer fields/methods (e.g. `S.`, `S.Home.`,
+ * `Obj.Field.`, `Class[1].`).
  */
-function recordTypeBeforeDot(
+function memberHostBeforeDot(
   analysis: DocumentAnalysis,
   position: LsPosition,
-): Extract<PpType, { kind: 'record' }> | null {
+): MemberHost | null {
   const prefix = linePrefixAt(analysis.source, position);
   const m =
     /(?:^|[^A-Za-z0-9_])([A-Za-z_][\w]*)((?:\s*(?:\.\s*[A-Za-z_][\w]*|\[[^\]]*\]))*)\s*\.\s*$/.exec(
@@ -636,15 +868,22 @@ function recordTypeBeforeDot(
       continue;
     }
     const fieldName = seg[1]!;
-    if (current.kind !== 'record') return null;
-    const field = current.fields.find(
-      (f) => f.name.toLowerCase() === fieldName.toLowerCase(),
-    );
-    if (!field) return null;
-    current = field.type;
+    if (current.kind === 'record') {
+      const field = current.fields.find(
+        (f) => f.name.toLowerCase() === fieldName.toLowerCase(),
+      );
+      if (!field) return null;
+      current = field.type;
+    } else if (current.kind === 'class') {
+      const field = findClassFieldInChain(analysis, current, fieldName);
+      if (!field) return null;
+      current = field.type;
+    } else {
+      return null;
+    }
   }
 
-  return current.kind === 'record' ? current : null;
+  return current.kind === 'record' || current.kind === 'class' ? current : null;
 }
 
 export function signatureHelp(

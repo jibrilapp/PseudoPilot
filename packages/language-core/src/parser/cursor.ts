@@ -68,7 +68,27 @@ export class TokenCursor {
       kind === TokenKind.Endfunction ||
       kind === TokenKind.Returns ||
       kind === TokenKind.Colon ||
-      kind === TokenKind.Of
+      kind === TokenKind.Of ||
+      // Structural closers / headers — never consume as part of an expression
+      // so a missing ')' does not cascade into "Expected NEXT" etc.
+      kind === TokenKind.Next ||
+      kind === TokenKind.Until ||
+      kind === TokenKind.Endwhile ||
+      kind === TokenKind.Endcase ||
+      kind === TokenKind.Endtype ||
+      kind === TokenKind.Endclass ||
+      kind === TokenKind.Otherwise ||
+      kind === TokenKind.To ||
+      kind === TokenKind.Step ||
+      kind === TokenKind.For ||
+      kind === TokenKind.While ||
+      kind === TokenKind.Repeat ||
+      kind === TokenKind.If ||
+      kind === TokenKind.Case ||
+      kind === TokenKind.Procedure ||
+      kind === TokenKind.Function ||
+      kind === TokenKind.Class ||
+      kind === TokenKind.Type
     );
   }
 }

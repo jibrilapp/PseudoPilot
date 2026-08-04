@@ -97,7 +97,14 @@ export class ExpressionParser {
     return this.parsePrimary();
   }
 
-  private parsePrimary(): Expression | null {
+  /**
+   * Parse a primary expression (literal, identifier, call, NEW, SUPER, …)
+   * plus any postfix `.field` / `[index]` / `.method(...)` chain.
+   * Exposed for the statement parser, which needs to distinguish an
+   * assignment target from a bare call/method-call statement before it
+   * knows whether `←` follows.
+   */
+  parsePrimary(): Expression | null {
     const token = this.cursor.peek();
 
     switch (token.kind) {
@@ -121,6 +128,17 @@ export class ExpressionParser {
         this.cursor.advance();
         return { kind: 'BooleanLiteral', value: token.literal as boolean, span: token.span };
       }
+      case TokenKind.Date: {
+        this.cursor.advance();
+        const parts = token.lexeme.split('/').map(Number);
+        return {
+          kind: 'DateLiteral',
+          day: parts[0]!,
+          month: parts[1]!,
+          year: parts[2]!,
+          span: token.span,
+        };
+      }
       case TokenKind.Identifier: {
         const id = this.parseIdentifier();
         if (!id) return null;
@@ -134,6 +152,29 @@ export class ExpressionParser {
           });
         }
         return this.parsePostfix(id);
+      }
+      case TokenKind.New: {
+        const start = this.cursor.advance(); // NEW
+        const className = this.parseIdentifier();
+        if (!className) return null;
+        if (!this.cursor.match(TokenKind.LParen)) {
+          pushError(this.diagnostics, "Expected '(' after NEW ClassName.", this.cursor.peek());
+          return null;
+        }
+        const args = this.parseArgumentList();
+        return this.parsePostfix({
+          kind: 'NewExpression',
+          className,
+          args,
+          span: span(start.span.start, this.cursor.previous().span.end),
+        });
+      }
+      case TokenKind.Super: {
+        const start = this.cursor.advance(); // SUPER
+        return this.parsePostfix({
+          kind: 'SuperExpression',
+          span: start.span,
+        });
       }
       case TokenKind.FileEof: {
         const start = this.cursor.advance();
@@ -189,8 +230,19 @@ export class ExpressionParser {
         continue;
       }
       if (this.cursor.match(TokenKind.Dot)) {
-        const property = this.parseIdentifier();
+        const property = this.parseMethodOrFieldName();
         if (!property) return expr;
+        if (this.cursor.match(TokenKind.LParen)) {
+          const args = this.parseArgumentList();
+          expr = {
+            kind: 'MethodCallExpression',
+            object: expr,
+            method: property,
+            args,
+            span: span(expr.span.start, this.cursor.previous().span.end),
+          };
+          continue;
+        }
         expr = {
           kind: 'MemberExpression',
           object: expr,
@@ -202,6 +254,16 @@ export class ExpressionParser {
       break;
     }
     return expr;
+  }
+
+  /** Field/method name after `.` — accepts `NEW` so `SUPER.NEW(...)` parses. */
+  private parseMethodOrFieldName(): Identifier | null {
+    const token = this.cursor.peek();
+    if (token.kind === TokenKind.New) {
+      this.cursor.advance();
+      return { kind: 'Identifier', name: 'NEW', span: token.span };
+    }
+    return this.parseIdentifier();
   }
 
   parseIdentifier(): Identifier | null {
@@ -221,6 +283,18 @@ export class ExpressionParser {
     const args: Expression[] = [];
     const first = this.parseExpression();
     if (!first) {
+      while (this.cursor.check(TokenKind.Newline)) {
+        this.cursor.advance();
+      }
+      if (this.isStructuralCloser()) {
+        pushError(
+          this.diagnostics,
+          'Expected ")" to close argument list.',
+          this.cursor.peek(),
+          'E_MISSING_RPAREN',
+        );
+        return args;
+      }
       pushError(this.diagnostics, 'Expected argument expression.', this.cursor.peek());
       this.cursor.match(TokenKind.RParen);
       return args;
@@ -237,6 +311,15 @@ export class ExpressionParser {
         );
         break;
       }
+      if (this.isStructuralCloser()) {
+        pushError(
+          this.diagnostics,
+          'Expected ")" to close argument list.',
+          this.cursor.peek(),
+          'E_MISSING_RPAREN',
+        );
+        return args;
+      }
       const next = this.parseExpression();
       if (!next) {
         pushError(this.diagnostics, 'Expected argument expression after ",".', this.cursor.peek());
@@ -246,9 +329,50 @@ export class ExpressionParser {
     }
 
     if (!this.cursor.match(TokenKind.RParen)) {
-      pushError(this.diagnostics, 'Expected ")" after argument list.', this.cursor.peek());
+      // Skip blank lines so `F(\nNEXT` reports E_MISSING_RPAREN, not a vague E_PARSE.
+      while (this.cursor.check(TokenKind.Newline)) {
+        this.cursor.advance();
+      }
+      pushError(
+        this.diagnostics,
+        'Expected ")" after argument list.',
+        this.cursor.peek(),
+        this.isStructuralCloser() ? 'E_MISSING_RPAREN' : 'E_PARSE',
+      );
     }
     return args;
+  }
+
+  /**
+   * True when the next token starts/ends statement structure — leave it for
+   * the statement parser (do not consume NEXT/ENDIF/… as part of a call).
+   */
+  private isStructuralCloser(): boolean {
+    const kind = this.cursor.peek().kind;
+    return (
+      kind === TokenKind.Next ||
+      kind === TokenKind.Until ||
+      kind === TokenKind.Endwhile ||
+      kind === TokenKind.Endif ||
+      kind === TokenKind.Endcase ||
+      kind === TokenKind.Endtype ||
+      kind === TokenKind.Endclass ||
+      kind === TokenKind.Endprocedure ||
+      kind === TokenKind.Endfunction ||
+      kind === TokenKind.Otherwise ||
+      kind === TokenKind.Else ||
+      kind === TokenKind.To ||
+      kind === TokenKind.Step ||
+      kind === TokenKind.For ||
+      kind === TokenKind.While ||
+      kind === TokenKind.Repeat ||
+      kind === TokenKind.If ||
+      kind === TokenKind.Case ||
+      kind === TokenKind.Procedure ||
+      kind === TokenKind.Function ||
+      kind === TokenKind.Class ||
+      kind === TokenKind.Type
+    );
   }
 
   /** Assumes opening "[" already consumed. Consumes closing "]". */

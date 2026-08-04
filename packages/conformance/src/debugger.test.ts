@@ -134,4 +134,29 @@ OUTPUT Fact(4)
     expect(result.ok).toBe(false);
     expect(result.diagnostics.some((d) => d.code === 'R_CANCELLED')).toBe(true);
   });
+
+  it('exposes readable DATE values in debugger frames', async () => {
+    const host = new MemoryHost();
+    let sawDate = false;
+    const hooks: DebuggerHooks = {
+      onBeforeStatement: async (info: StatementHookInfo) => {
+        for (const b of info.frame.env.snapshot().values()) {
+          if (b.name.toLowerCase() === 'd' && b.value.kind === 'DATE') {
+            sawDate = true;
+          }
+        }
+      },
+    };
+    const result = await runPseudocode(
+      `
+DECLARE D : DATE
+D ← 04/10/2003
+OUTPUT D
+`,
+      { host, debugger: hooks },
+    );
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(sawDate).toBe(true);
+    expect(host.outputs).toEqual(['04/10/2003']);
+  });
 });

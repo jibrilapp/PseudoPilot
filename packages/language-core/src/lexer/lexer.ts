@@ -318,17 +318,43 @@ export function lex(source: string): LexResult {
 
       if (isReal) {
         emit(TokenKind.Real, start, raw, Number(raw));
-      } else {
-        const value = Number(raw);
-        if (!Number.isSafeInteger(value)) {
-          error(
-            `Integer '${raw}' is outside the safe integer range for this runtime.`,
-            start,
-            'E_INT_RANGE',
-          );
-        }
-        emit(TokenKind.Integer, start, raw, value);
+        continue;
       }
+
+      // Cambridge DATE literal dd/mm/yyyy (before emitting bare Integer).
+      if (at() === '/' && isDigit(peek())) {
+        const afterSlash = peekDateRest(source, i + 1);
+        if (afterSlash) {
+          raw += advance(); // /
+          raw += afterSlash.monthRaw;
+          for (let k = 0; k < afterSlash.monthRaw.length; k++) advance();
+          raw += advance(); // /
+          raw += afterSlash.yearRaw;
+          for (let k = 0; k < afterSlash.yearRaw.length; k++) advance();
+          const day = Number(raw.split('/')[0]);
+          const month = Number(afterSlash.monthRaw);
+          const year = Number(afterSlash.yearRaw);
+          if (!isValidCalendarDate(day, month, year)) {
+            error(
+              `Invalid DATE literal '${raw}' (expected a valid calendar date dd/mm/yyyy).`,
+              start,
+              'E_DATE_LITERAL',
+            );
+          }
+          emit(TokenKind.Date, start, raw);
+          continue;
+        }
+      }
+
+      const value = Number(raw);
+      if (!Number.isSafeInteger(value)) {
+        error(
+          `Integer '${raw}' is outside the safe integer range for this runtime.`,
+          start,
+          'E_INT_RANGE',
+        );
+      }
+      emit(TokenKind.Integer, start, raw, value);
       continue;
     }
 
@@ -377,4 +403,40 @@ function isIdentStart(ch: string): boolean {
 
 function isIdentPart(ch: string): boolean {
   return isIdentStart(ch) || isDigit(ch);
+}
+
+/** Peek `mm/yyyy` after the first `/` of a prospective DATE literal. */
+function peekDateRest(
+  source: string,
+  start: number,
+): { monthRaw: string; yearRaw: string } | null {
+  let i = start;
+  let monthRaw = '';
+  while (i < source.length && isDigit(source[i]!)) {
+    monthRaw += source[i]!;
+    i += 1;
+  }
+  if (monthRaw.length < 1 || monthRaw.length > 2) return null;
+  if (source[i] !== '/') return null;
+  i += 1;
+  let yearRaw = '';
+  while (i < source.length && isDigit(source[i]!)) {
+    yearRaw += source[i]!;
+    i += 1;
+  }
+  if (yearRaw.length !== 4) return null;
+  // Don't glue into an identifier (`2003x`).
+  const next = source[i] ?? '';
+  if (isIdentStart(next)) return null;
+  return { monthRaw, yearRaw };
+}
+
+function isValidCalendarDate(day: number, month: number, year: number): boolean {
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return (
+    dt.getUTCFullYear() === year &&
+    dt.getUTCMonth() === month - 1 &&
+    dt.getUTCDate() === day
+  );
 }

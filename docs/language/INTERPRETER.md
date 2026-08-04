@@ -44,7 +44,7 @@ IR remains the **translation** IR only (ADR 0006). A future execution IR would n
 | Component | Role |
 | --- | --- |
 | `RuntimeHost` | Pluggable `readInput` / `writeOutput` (web, tests, CLI) |
-| `RuntimeValue` | INTEGER / REAL / BOOLEAN / STRING / CHAR / ARRAY |
+| `RuntimeValue` | INTEGER / REAL / BOOLEAN / STRING / CHAR / DATE / ARRAY / RECORD / OBJECT |
 | `Environment` | Case-insensitive bindings; parent chain for globals |
 | `StackFrame` / `CallStack` | Global + procedure/function frames |
 | `executeBuiltin` | Registry-driven Core builtins |
@@ -147,7 +147,8 @@ Checker `C_*` diagnostics still gate the run when `semanticCheck: true`.
 - No definite-assignment at runtime beyond undeclared reads
 - Not a security sandbox (instruction/depth/array-size caps only — no memory/CPU isolation, no string-size cap, no untrusted-host isolation)
 - `debugger.pause` aborts rather than suspending
-- BYREF / DATE / OOP / RANDOM files unsupported
+- BYREF / RANDOM files unsupported
+- DATE uses structured `{day,month,year}` values (not Python `datetime` objects); display is `dd/mm/yyyy`
 - Text files use VirtualFileSystem only (see `packages/interpreter/src/files/README.md`)
 - JS `number` precision (INTEGER beyond `Number.MAX_SAFE_INTEGER` is not Cambridge-arbitrary-precision)
 

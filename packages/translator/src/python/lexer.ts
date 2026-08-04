@@ -49,6 +49,7 @@ export enum PyTokenKind {
   Colon = 'Colon',
   Dot = 'Dot',
   At = 'At',
+  Pipe = 'Pipe',
 }
 
 export type PyToken = {
@@ -325,6 +326,11 @@ export function lexPython(source: string): PyLexResult {
     if (ch === '.') {
       advance();
       emit(PyTokenKind.Dot, '.', start);
+      continue;
+    }
+    if (ch === '|') {
+      advance();
+      emit(PyTokenKind.Pipe, '|', start);
       continue;
     }
     if (ch === '@') {

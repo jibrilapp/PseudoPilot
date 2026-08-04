@@ -12,12 +12,36 @@ export type CheckerDiagnostic = {
 };
 
 /** Scalar Cambridge types. */
-export type ScalarTypeName = 'INTEGER' | 'REAL' | 'STRING' | 'BOOLEAN' | 'CHAR';
+export type ScalarTypeName =
+  | 'INTEGER'
+  | 'REAL'
+  | 'STRING'
+  | 'BOOLEAN'
+  | 'CHAR'
+  | 'DATE';
 
 export type RecordFieldInfo = {
   readonly name: string;
   readonly type: PpType;
   readonly span: SourceSpan;
+};
+
+export type ClassFieldInfo = {
+  readonly name: string;
+  readonly type: PpType;
+  readonly visibility: 'PUBLIC' | 'PRIVATE';
+  readonly span: SourceSpan;
+};
+
+export type ClassMethodInfo = {
+  readonly name: string;
+  readonly kind: 'procedure' | 'function';
+  readonly visibility: 'PUBLIC' | 'PRIVATE';
+  readonly params: readonly PpType[];
+  /** null for procedures. */
+  readonly returns: PpType | null;
+  readonly span: SourceSpan;
+  readonly isConstructor: boolean;
 };
 
 export type PpType =
@@ -33,6 +57,17 @@ export type PpType =
       /** Display name from TYPE declaration. */
       readonly name: string;
       readonly fields: readonly RecordFieldInfo[];
+    }
+  | {
+      readonly kind: 'class';
+      /** Display name from CLASS declaration. */
+      readonly name: string;
+      /** Parent class display name, or null when no INHERITS clause. */
+      readonly inherits: string | null;
+      /** Own fields only (not inherited). */
+      readonly fields: readonly ClassFieldInfo[];
+      /** Own methods only (not inherited). */
+      readonly methods: readonly ClassMethodInfo[];
     }
   | {
       readonly kind: 'procedure';
@@ -52,7 +87,9 @@ export type SymbolKind =
   | 'procedure'
   | 'function'
   | 'type'
-  | 'field';
+  | 'field'
+  | 'class'
+  | 'method';
 
 export type SymbolInfo = {
   readonly name: string;

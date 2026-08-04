@@ -7,7 +7,13 @@ import type {
   TypeNameKind,
   TypeReference,
 } from '@pseudopilot/language-core';
-import type { PpType, RecordFieldInfo, ScalarTypeName } from './types.js';
+import type {
+  ClassFieldInfo,
+  ClassMethodInfo,
+  PpType,
+  RecordFieldInfo,
+  ScalarTypeName,
+} from './types.js';
 import { identKey } from './scope.js';
 
 export type TypeTable = ReadonlyMap<string, PpType>;
@@ -25,6 +31,15 @@ export function recordType(
   fields: readonly RecordFieldInfo[],
 ): PpType {
   return { kind: 'record', name, fields };
+}
+
+export function classType(
+  name: string,
+  inherits: string | null,
+  fields: readonly ClassFieldInfo[],
+  methods: readonly ClassMethodInfo[],
+): PpType {
+  return { kind: 'class', name, inherits, fields, methods };
 }
 
 export function lookupRecordField(
@@ -103,6 +118,8 @@ export function formatType(t: PpType): string {
     }
     case 'record':
       return t.name;
+    case 'class':
+      return t.name;
     case 'procedure':
       return `PROCEDURE(${t.params.map(formatType).join(', ')})`;
     case 'function':
@@ -126,6 +143,8 @@ export function typesEqual(a: PpType, b: PpType): boolean {
       );
     case 'record':
       return b.kind === 'record' && identKey(a.name) === identKey(b.name);
+    case 'class':
+      return b.kind === 'class' && identKey(a.name) === identKey(b.name);
     case 'procedure':
       return (
         b.kind === 'procedure' &&
@@ -155,8 +174,17 @@ export function typesEqual(a: PpType, b: PpType): boolean {
  * - CHAR ↔ STRING (distinct)
  * - arrays only when element type and dimensionality match
  * - records only when same TYPE name (case-insensitive)
+ *
+ * Classes: same CLASS name, or `from` is a (transitive) subclass of `to`
+ * (covariance — a variable declared as the parent type may hold a subclass
+ * instance). Walking the inheritance chain requires the TYPE/CLASS table;
+ * without it, only exact-name matches are accepted.
  */
-export function isAssignable(to: PpType, from: PpType): boolean {
+export function isAssignable(
+  to: PpType,
+  from: PpType,
+  typeTable?: TypeTable,
+): boolean {
   if (to.kind === 'error' || from.kind === 'error') return true;
   if (to.kind === 'scalar' && from.kind === 'scalar') {
     if (to.name === from.name) return true;
@@ -170,6 +198,30 @@ export function isAssignable(to: PpType, from: PpType): boolean {
   }
   if (to.kind === 'record' && from.kind === 'record') {
     return identKey(to.name) === identKey(from.name);
+  }
+  if (to.kind === 'class' && from.kind === 'class') {
+    if (identKey(to.name) === identKey(from.name)) return true;
+    if (!typeTable) return false;
+    return isSubclassOf(from, to.name, typeTable);
+  }
+  return false;
+}
+
+/** True when `descendant` is (transitively) a subclass of `ancestorName`. */
+function isSubclassOf(
+  descendant: Extract<PpType, { kind: 'class' }>,
+  ancestorName: string,
+  typeTable: TypeTable,
+): boolean {
+  const target = identKey(ancestorName);
+  let current: Extract<PpType, { kind: 'class' }> | undefined = descendant;
+  const seen = new Set<string>();
+  while (current && current.inherits !== null) {
+    if (identKey(current.inherits) === target) return true;
+    if (seen.has(identKey(current.name))) break;
+    seen.add(identKey(current.name));
+    const parent = typeTable.get(identKey(current.inherits));
+    current = parent && parent.kind === 'class' ? parent : undefined;
   }
   return false;
 }
@@ -199,6 +251,8 @@ export function literalType(expr: Expression): PpType | null {
       return scalar('CHAR');
     case 'BooleanLiteral':
       return scalar('BOOLEAN');
+    case 'DateLiteral':
+      return scalar('DATE');
     case 'UnaryExpression':
       if (
         (expr.operator === '+' || expr.operator === '-') &&

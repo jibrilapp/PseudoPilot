@@ -58,6 +58,118 @@ ENDPROCEDURE
     expect(kinds).toContain('parameter:X');
     expect(kinds).toContain('variable:Y');
   });
+
+  it('collects each name from a Cambridge grouped parameter list', () => {
+    const a = analyzeDocument(
+      URI,
+      `
+FUNCTION F(a, b : INTEGER, c : REAL) RETURNS REAL
+  RETURN a + b + c
+ENDFUNCTION
+`,
+    );
+    const kinds = a.symbols.map((s) => `${s.kind}:${s.name}`).sort();
+    expect(kinds).toContain('function:F');
+    expect(kinds).toContain('parameter:a');
+    expect(kinds).toContain('parameter:b');
+    expect(kinds).toContain('parameter:c');
+  });
+});
+
+describe('grouped parameter IDE features', () => {
+  const source = `
+FUNCTION Mix(a, b : INTEGER, scale : REAL) RETURNS REAL
+  RETURN (a + b) * scale
+ENDFUNCTION
+OUTPUT Mix(1, 2, 3.0)
+`;
+
+  it('hover on a grouped parameter shows its type', () => {
+    const ls = open(source);
+    const tip = ls.hover(URI, identPos(source, 'b', 0));
+    expect(tip?.contents ?? '').toMatch(/INTEGER/i);
+    expect(tip?.contents ?? '').toMatch(/\bb\b/);
+  });
+
+  it('completion inside the function body includes grouped parameters', () => {
+    const bodySrc = `
+FUNCTION Mix(a, b : INTEGER) RETURNS INTEGER
+  RETURN 
+ENDFUNCTION
+`;
+    const ls = open(bodySrc);
+    const atReturn = identPos(bodySrc, 'RETURN', 0);
+    // Character after RETURN + space
+    const items = ls.completion(URI, {
+      line: atReturn.line,
+      character: atReturn.character + 'RETURN '.length,
+    });
+    expect(items.some((i) => i.label === 'a')).toBe(true);
+    expect(items.some((i) => i.label === 'b')).toBe(true);
+  });
+
+  it('go to definition on a use finds the grouped parameter declaration', () => {
+    const ls = open(source);
+    // Second `a` is the use in RETURN (a + b)
+    const loc = ls.definition(URI, identPos(source, 'a', 1));
+    expect(loc).not.toBeNull();
+    expect(loc!.range.start.line).toBe(identPos(source, 'a', 0).line);
+  });
+
+  it('finds references for a grouped parameter', () => {
+    const ls = open(source);
+    const refs = ls.references(URI, identPos(source, 'a', 0));
+    expect(refs.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renames a grouped parameter across declaration and uses', () => {
+    const ls = open(source);
+    const result = ls.rename(URI, identPos(source, 'b', 0), 'beta');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.edit.edits.length).toBeGreaterThanOrEqual(2);
+      expect(result.edit.edits.every((e) => e.newText === 'beta')).toBe(true);
+    }
+  });
+});
+
+describe('DATE language service', () => {
+  const source = `
+DECLARE D : DATE
+D ← 04/10/2003
+OUTPUT YEAR(D)
+`;
+
+  it('offers DATE in DECLARE completion', () => {
+    const src = `DECLARE X : `;
+    const ls = open(src);
+    const items = ls.completion(URI, { line: 0, character: src.length });
+    expect(items.some((i) => i.label === 'DATE')).toBe(true);
+    expect(items.some((i) => i.label === 'TIME')).toBe(false);
+  });
+
+  it('hovers DATE variables', () => {
+    const ls = open(source);
+    const dHover = ls.hover(URI, identPos(source, 'D', 0));
+    expect(dHover?.contents ?? '').toMatch(/DATE/i);
+  });
+
+  it('go to definition / references / rename for DATE variables', () => {
+    const ls = open(source);
+    const def = ls.definition(URI, identPos(source, 'D', 1));
+    expect(def).not.toBeNull();
+    const refs = ls.references(URI, identPos(source, 'D', 0));
+    expect(refs.length).toBeGreaterThanOrEqual(2);
+    const renamed = ls.rename(URI, identPos(source, 'D', 0), 'Birth');
+    expect(renamed.ok).toBe(true);
+  });
+
+  it('lists DATE variables in document symbols and classifyAt', () => {
+    const ls = open(source);
+    const syms = ls.documentSymbols(URI);
+    expect(syms.some((s) => s.name === 'D')).toBe(true);
+    expect(ls.classifyAt(URI, identPos(source, 'D', 1))?.kind).toBe('variable');
+  });
 });
 
 describe('hover', () => {

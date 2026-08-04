@@ -1,10 +1,15 @@
 import type {
   AssignTarget,
+  ClassDeclaration,
+  ClassFunctionDeclaration,
+  ClassProcedureDeclaration,
   Expression,
   FunctionDeclaration,
+  Identifier,
   Parameter,
   ProcedureDeclaration,
   Program,
+  SourceSpan,
   Statement,
   TypeReference,
 } from '@pseudopilot/language-core';
@@ -32,6 +37,7 @@ import type {
   CheckerDiagnostic,
   CheckOptions,
   CheckResult,
+  ClassMethodInfo,
   PpType,
   ScalarTypeName,
 } from './types.js';
@@ -44,6 +50,12 @@ import {
   registerTypeDeclarations,
   resolveUserTypeRef,
 } from './records.js';
+import {
+  findClassFieldOwner,
+  findClassMethodOwner,
+  isAccessible,
+  registerClassDeclarations,
+} from './classes.js';
 
 const BUILTIN_SPAN = {
   start: { offset: 0, line: 1, column: 1 },
@@ -59,6 +71,8 @@ type Ctx = {
   functionReturn: PpType | null;
   /** True when inside a PROCEDURE (RETURN forbidden — parser also checks). */
   inProcedure: boolean;
+  /** Display name of the enclosing CLASS when checking a method body (implicit `this`). */
+  currentClass: string | null;
   /**
    * Best-effort open-file map keyed by string-literal path.
    * Files are process-global in Cambridge; not scoped to procedures.
@@ -171,6 +185,7 @@ export function check(
     scope: global,
     functionReturn: null,
     inProcedure: false,
+    currentClass: null,
     openFiles: new Map(),
     symbols,
     typeTable,
@@ -179,19 +194,34 @@ export function check(
   // Seed Core builtins before user routines (soft-reserved names).
   injectBuiltins(ctx);
 
+  const fieldSymbolSink = (symbol: import('./types.js').SymbolInfo): void => {
+    const withContainer =
+      symbol.containerName !== undefined
+        ? symbol
+        : { ...symbol, containerName: ctx.scope.name };
+    ctx.symbols.push(withContainer);
+  };
+
   // Pass 0 — TYPE … ENDTYPE (before routines so params/returns can use them).
   registerTypeDeclarations(
     {
       typeTable: ctx.typeTable,
       diag: (partial) => diag(ctx, partial),
       defineSymbol: (symbol) => defineSymbol(ctx, symbol),
-      recordFieldSymbol: (symbol) => {
-        const withContainer =
-          symbol.containerName !== undefined
-            ? symbol
-            : { ...symbol, containerName: ctx.scope.name };
-        ctx.symbols.push(withContainer);
-      },
+      recordFieldSymbol: fieldSymbolSink,
+    },
+    program,
+  );
+
+  // Pass 0b — CLASS … ENDCLASS (records must be registered first so class
+  // fields may reference TYPE names; CLASS/TYPE share one name table).
+  registerClassDeclarations(
+    {
+      typeTable: ctx.typeTable,
+      diag: (partial) => diag(ctx, partial),
+      defineSymbol: (symbol) => defineSymbol(ctx, symbol),
+      recordFieldSymbol: fieldSymbolSink,
+      classMethodSymbol: fieldSymbolSink,
     },
     program,
   );
@@ -373,8 +403,8 @@ function checkStatement(ctx: Ctx, stmt: Statement): void {
           if (
             disc.kind !== 'error' &&
             lt.kind !== 'error' &&
-            !isAssignable(disc, lt) &&
-            !isAssignable(lt, disc)
+            !isAssignable(disc, lt, ctx.typeTable) &&
+            !isAssignable(lt, disc, ctx.typeTable)
           ) {
             diag(ctx, {
               severity: 'warning',
@@ -416,7 +446,34 @@ function checkStatement(ctx: Ctx, stmt: Statement): void {
       checkRoutineBody(ctx, stmt, 'function');
       return;
     }
+    case 'ClassDeclaration': {
+      checkClassBody(ctx, stmt);
+      return;
+    }
+    case 'ExpressionStatement': {
+      const expr = stmt.expression;
+      if (expr.kind === 'MethodCallExpression') {
+        checkMethodCallCore(ctx, expr.object, expr.method, expr.args, expr.span, 'call-stmt');
+      } else if (expr.kind === 'CallExpression') {
+        checkCall(ctx, expr.callee.name, expr.args, expr.callee.span, 'call-stmt');
+      } else {
+        // Parser only ever produces MethodCallExpression / CallExpression here.
+        inferExpr(ctx, expr);
+      }
+      return;
+    }
     case 'CallStatement': {
+      if (stmt.callee.kind === 'MemberExpression') {
+        checkMethodCallCore(
+          ctx,
+          stmt.callee.object,
+          stmt.callee.property,
+          stmt.args,
+          stmt.span,
+          'call-stmt',
+        );
+        return;
+      }
       checkCall(
         ctx,
         stmt.callee.name,
@@ -439,7 +496,7 @@ function checkStatement(ctx: Ctx, stmt: Statement): void {
         return;
       }
       const vt = inferExpr(ctx, stmt.value);
-      if (!isAssignable(ctx.functionReturn, vt)) {
+      if (!isAssignable(ctx.functionReturn, vt, ctx.typeTable)) {
         diag(ctx, {
           code: 'C_RETURN_TYPE',
           message: `RETURN type ${formatType(vt)} is not assignable to FUNCTION return type ${formatType(ctx.functionReturn)}.`,
@@ -679,6 +736,309 @@ function bindParameter(ctx: Ctx, p: Parameter): void {
   );
 }
 
+/**
+ * Validate a CLASS body: ARRAY bound expressions on properties (fields
+ * themselves were already bound in {@link registerClassDeclarations}), then
+ * check each method body with `currentClass` set for implicit-`this` field
+ * resolution and PRIVATE access checks.
+ */
+function checkClassBody(ctx: Ctx, decl: ClassDeclaration): void {
+  for (const member of decl.members) {
+    if (member.kind === 'ClassPropertyDeclaration') {
+      checkTypeRefBounds(ctx, member.typeRef);
+    }
+  }
+
+  const classT = ctx.typeTable.get(identKey(decl.name.name));
+  if (!classT || classT.kind !== 'class') return; // duplicate CLASS — already diagnosed
+
+  for (const member of decl.members) {
+    if (
+      member.kind === 'ClassProcedureDeclaration' ||
+      member.kind === 'ClassFunctionDeclaration'
+    ) {
+      checkMethodBody(ctx, decl.name.name, member);
+    }
+  }
+}
+
+function checkMethodBody(
+  ctx: Ctx,
+  className: string,
+  member: ClassProcedureDeclaration | ClassFunctionDeclaration,
+): void {
+  const child = new Scope(ctx.scope, `${className}.${member.name.name}`);
+  const prevScope = ctx.scope;
+  const prevRet = ctx.functionReturn;
+  const prevProc = ctx.inProcedure;
+  const prevClass = ctx.currentClass;
+  const prevOpenFiles = ctx.openFiles;
+  ctx.openFiles = new Map();
+  ctx.scope = child;
+  ctx.currentClass = className;
+  const isFunction = member.kind === 'ClassFunctionDeclaration';
+  ctx.inProcedure = !isFunction;
+  ctx.functionReturn = isFunction
+    ? resolveUserTypeRef(member.returnType, ctx.typeTable, (partial) => diag(ctx, partial))
+    : null;
+
+  try {
+    for (const p of member.parameters) bindParameter(ctx, p);
+    for (const s of member.body) checkStatement(ctx, s);
+    const sawReturn = bodyContainsReturn(member.body);
+
+    if (isFunction && !sawReturn) {
+      diag(ctx, {
+        code: 'C_FUNC_NO_RETURN',
+        message: `Method '${member.name.name}' has no RETURN statement.`,
+        span: member.span,
+        help: 'Every FUNCTION method must include at least one RETURN.',
+      });
+    }
+
+    flagUnreachableAfterReturn(ctx, member.body);
+  } finally {
+    ctx.scope = prevScope;
+    ctx.functionReturn = prevRet;
+    ctx.inProcedure = prevProc;
+    ctx.currentClass = prevClass;
+    ctx.openFiles = prevOpenFiles;
+  }
+}
+
+/**
+ * Resolve a bare identifier to an implicit `this.<field>` inside a class
+ * method. Returns `undefined` when no such field exists (caller should then
+ * report the identifier as undeclared) and `errorType()` when the field
+ * exists but is not accessible (PRIVATE in a different class) — a
+ * C_PRIVATE_ACCESS diagnostic is already reported in that case.
+ */
+function resolveImplicitClassField(
+  ctx: Ctx,
+  name: string,
+  span: SourceSpan,
+): PpType | undefined {
+  if (!ctx.currentClass) return undefined;
+  const selfType = ctx.typeTable.get(identKey(ctx.currentClass));
+  if (!selfType || selfType.kind !== 'class') return undefined;
+  const found = findClassFieldOwner(selfType, name, ctx.typeTable);
+  if (!found) return undefined;
+  if (!isAccessible(found.field.visibility, found.owner, ctx.currentClass)) {
+    diag(ctx, {
+      code: 'C_PRIVATE_ACCESS',
+      message: `Field '${found.field.name}' is PRIVATE to CLASS '${found.owner}'.`,
+      span,
+    });
+    return errorType();
+  }
+  return found.field.type;
+}
+
+/** Shared argument-count / argument-type checking for calls, methods, and NEW. */
+function checkArgTypes(
+  ctx: Ctx,
+  params: readonly PpType[],
+  args: Expression[],
+  span: SourceSpan,
+  label: string,
+): void {
+  if (args.length !== params.length) {
+    diag(ctx, {
+      code: 'C_ARG_COUNT',
+      message: `${label} expects ${params.length} argument(s) but got ${args.length}.`,
+      span,
+    });
+  }
+  const n = Math.max(args.length, params.length);
+  for (let i = 0; i < n; i++) {
+    if (i >= args.length || i >= params.length) {
+      if (i < args.length) inferExpr(ctx, args[i]!);
+      continue;
+    }
+    const at = inferExpr(ctx, args[i]!);
+    const pt = params[i]!;
+    if (!isAssignable(pt, at, ctx.typeTable)) {
+      diag(ctx, {
+        code: 'C_ARG_TYPE',
+        message: `Argument ${i + 1} of ${label} has type ${formatType(at)}; expected ${formatType(pt)}.`,
+        span: args[i]!.span,
+      });
+    }
+  }
+}
+
+/**
+ * Type-checks `<object>.<method>(<args>)` regardless of whether it appears as
+ * a `MethodCallExpression`, a `CALL Obj.Method(...)` statement, or a bare
+ * `Obj.Method(...)` statement. `SUPER.Method(...)` is special-cased.
+ */
+function checkMethodCallCore(
+  ctx: Ctx,
+  object: Expression,
+  method: Identifier,
+  args: Expression[],
+  span: SourceSpan,
+  mode: 'call-stmt' | 'call-expr',
+): PpType {
+  if (object.kind === 'SuperExpression') {
+    return checkSuperCall(ctx, method, args, span);
+  }
+
+  const objType = inferExpr(ctx, object);
+  if (objType.kind === 'error') {
+    for (const a of args) inferExpr(ctx, a);
+    return errorType();
+  }
+  if (objType.kind !== 'class') {
+    diag(ctx, {
+      code: 'C_NOT_CLASS',
+      message: `Cannot call a method on non-class type ${formatType(objType)}.`,
+      span: object.span,
+      help: 'Method calls require a CLASS instance (see NEW).',
+    });
+    for (const a of args) inferExpr(ctx, a);
+    return errorType();
+  }
+
+  const found = findClassMethodOwner(objType, method.name, ctx.typeTable);
+  if (!found) {
+    diag(ctx, {
+      code: 'C_UNKNOWN_METHOD',
+      message: `Unknown method '${method.name}' on CLASS '${objType.name}'.`,
+      span: method.span,
+      help: 'Method names are case-insensitive.',
+    });
+    for (const a of args) inferExpr(ctx, a);
+    return errorType();
+  }
+
+  const { method: m, owner } = found;
+  if (!isAccessible(m.visibility, owner, ctx.currentClass)) {
+    diag(ctx, {
+      code: 'C_PRIVATE_ACCESS',
+      message: `Method '${m.name}' is PRIVATE to CLASS '${owner}'.`,
+      span: method.span,
+    });
+  }
+
+  checkArgTypes(ctx, m.params, args, span, `Method '${m.name}'`);
+
+  if (mode === 'call-expr' && m.kind === 'procedure') {
+    diag(ctx, {
+      code: 'C_PROC_AS_EXPR',
+      message: `PROCEDURE method '${m.name}' cannot be used as an expression.`,
+      span,
+    });
+    return errorType();
+  }
+
+  return m.kind === 'function' ? (m.returns ?? errorType()) : errorType();
+}
+
+function checkSuperCall(
+  ctx: Ctx,
+  method: Identifier,
+  args: Expression[],
+  span: SourceSpan,
+): PpType {
+  if (!ctx.currentClass) {
+    diag(ctx, {
+      code: 'C_SUPER_OUTSIDE',
+      message: 'SUPER is only valid inside a CLASS method.',
+      span,
+    });
+    for (const a of args) inferExpr(ctx, a);
+    return errorType();
+  }
+
+  const selfType = ctx.typeTable.get(identKey(ctx.currentClass));
+  if (!selfType || selfType.kind !== 'class' || selfType.inherits === null) {
+    diag(ctx, {
+      code: 'C_SUPER_OUTSIDE',
+      message: `CLASS '${ctx.currentClass}' has no parent CLASS; SUPER is not valid here.`,
+      span,
+      help: 'SUPER can only be used inside a subclass (CLASS … INHERITS …).',
+    });
+    for (const a of args) inferExpr(ctx, a);
+    return errorType();
+  }
+
+  const parent = ctx.typeTable.get(identKey(selfType.inherits));
+  if (!parent || parent.kind !== 'class') {
+    for (const a of args) inferExpr(ctx, a);
+    return errorType();
+  }
+
+  const found = findClassMethodOwner(parent, method.name, ctx.typeTable);
+  if (!found) {
+    diag(ctx, {
+      code: 'C_UNKNOWN_METHOD',
+      message: `Unknown method '${method.name}' on CLASS '${parent.name}'.`,
+      span: method.span,
+      help: 'Method names are case-insensitive.',
+    });
+    for (const a of args) inferExpr(ctx, a);
+    return errorType();
+  }
+
+  const { method: m, owner } = found;
+  if (!isAccessible(m.visibility, owner, ctx.currentClass)) {
+    diag(ctx, {
+      code: 'C_PRIVATE_ACCESS',
+      message: `Method '${m.name}' is PRIVATE to CLASS '${owner}'.`,
+      span: method.span,
+    });
+  }
+
+  checkArgTypes(ctx, m.params, args, span, `Method '${m.name}'`);
+  return m.kind === 'function' ? (m.returns ?? errorType()) : errorType();
+}
+
+function checkNewExpression(
+  ctx: Ctx,
+  expr: Extract<Expression, { kind: 'NewExpression' }>,
+): PpType {
+  const key = identKey(expr.className.name);
+  const classT = ctx.typeTable.get(key);
+  if (!classT || classT.kind !== 'class') {
+    diag(ctx, {
+      code: 'C_INVALID_NEW',
+      message: `Unknown CLASS '${expr.className.name}' in NEW expression.`,
+      span: expr.className.span,
+      help: 'Declare CLASS … ENDCLASS before using NEW.',
+    });
+    for (const a of expr.args) inferExpr(ctx, a);
+    return errorType();
+  }
+
+  const ctor: ClassMethodInfo | undefined = findClassMethodOwner(
+    classT,
+    'NEW',
+    ctx.typeTable,
+  )?.method;
+
+  if (!ctor) {
+    if (expr.args.length !== 0) {
+      diag(ctx, {
+        code: 'C_ARG_COUNT',
+        message: `CLASS '${classT.name}' has no constructor; NEW ${classT.name}(...) must have 0 arguments.`,
+        span: expr.span,
+      });
+    }
+    for (const a of expr.args) inferExpr(ctx, a);
+    return classT;
+  }
+
+  checkArgTypes(
+    ctx,
+    ctor.params,
+    expr.args,
+    expr.span,
+    `Constructor of CLASS '${classT.name}'`,
+  );
+  return classT;
+}
+
 /** True if any RETURN appears in this statement list (nested control flow included). */
 function bodyContainsReturn(statements: readonly Statement[]): boolean {
   for (const s of statements) {
@@ -777,7 +1137,7 @@ function checkCall(
     }
     const at = inferExpr(ctx, args[i]!);
     const pt = sig.params[i]!;
-    if (!isAssignable(pt, at)) {
+    if (!isAssignable(pt, at, ctx.typeTable)) {
       diag(ctx, {
         code: 'C_ARG_TYPE',
         message: `Argument ${i + 1} of '${name}' has type ${formatType(at)}; expected ${formatType(pt)}.`,
@@ -858,6 +1218,8 @@ function checkAssignableTarget(
   if (target.kind === 'Identifier') {
     const sym = ctx.scope.lookup(target.name);
     if (!sym) {
+      const implicit = resolveImplicitClassField(ctx, target.name, target.span);
+      if (implicit) return implicit;
       diag(ctx, {
         code: 'C_UNDECL_IDENT',
         message: `Undeclared identifier '${target.name}'.`,
@@ -882,10 +1244,15 @@ function checkAssignableTarget(
       });
       return errorType();
     }
-    if (sym.kind === 'type' || sym.kind === 'field') {
+    if (
+      sym.kind === 'type' ||
+      sym.kind === 'field' ||
+      sym.kind === 'class' ||
+      sym.kind === 'method'
+    ) {
       diag(ctx, {
         code: 'C_ASSIGN_TO_TYPE',
-        message: `Cannot ${what} to TYPE/field name '${target.name}'.`,
+        message: `Cannot ${what} to TYPE/CLASS/field/method name '${target.name}'.`,
         span,
       });
       return errorType();
@@ -956,6 +1323,29 @@ function inferMemberAccess(
 ): PpType {
   const objType = inferExpr(ctx, expr.object);
   if (objType.kind === 'error') return errorType();
+
+  if (objType.kind === 'class') {
+    const found = findClassFieldOwner(objType, expr.property.name, ctx.typeTable);
+    if (!found) {
+      diag(ctx, {
+        code: 'C_UNKNOWN_FIELD',
+        message: `Unknown property '${expr.property.name}' on CLASS '${objType.name}'.`,
+        span: expr.property.span,
+        help: 'Property names are case-insensitive.',
+      });
+      return errorType();
+    }
+    if (!isAccessible(found.field.visibility, found.owner, ctx.currentClass)) {
+      diag(ctx, {
+        code: 'C_PRIVATE_ACCESS',
+        message: `Property '${found.field.name}' is PRIVATE to CLASS '${found.owner}'.`,
+        span: expr.property.span,
+      });
+      return errorType();
+    }
+    return found.field.type;
+  }
+
   if (objType.kind !== 'record') {
     diag(ctx, {
       code: 'C_NOT_RECORD',
@@ -988,7 +1378,7 @@ function checkAssignment(
 ): void {
   const lhs = checkAssignableTarget(ctx, target, span, 'assign');
   if (lhs.kind === 'error' || valueType.kind === 'error') return;
-  if (!isAssignable(lhs, valueType)) {
+  if (!isAssignable(lhs, valueType, ctx.typeTable)) {
     const help =
       lhs.kind === 'scalar' &&
       lhs.name === 'INTEGER' &&
@@ -1043,7 +1433,7 @@ function comparableTypes(left: PpType, right: PpType): boolean {
 }
 
 function isCompositeType(t: PpType): boolean {
-  return t.kind === 'array' || t.kind === 'record';
+  return t.kind === 'array' || t.kind === 'record' || t.kind === 'class';
 }
 
 function isStringy(t: PpType): boolean {
@@ -1057,10 +1447,13 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
     case 'StringLiteral':
     case 'CharLiteral':
     case 'BooleanLiteral':
+    case 'DateLiteral':
       return literalType(expr) ?? errorType();
     case 'Identifier': {
       const sym = ctx.scope.lookup(expr.name);
       if (!sym) {
+        const implicit = resolveImplicitClassField(ctx, expr.name, expr.span);
+        if (implicit) return implicit;
         diag(ctx, {
           code: 'C_UNDECL_IDENT',
           message: `Undeclared identifier '${expr.name}'.`,
@@ -1086,19 +1479,19 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
         });
         return errorType();
       }
-      if (sym.kind === 'type') {
+      if (sym.kind === 'type' || sym.kind === 'class') {
         diag(ctx, {
           code: 'C_TYPE_AS_VALUE',
-          message: `TYPE '${expr.name}' cannot be used as a value.`,
+          message: `${sym.kind === 'class' ? 'CLASS' : 'TYPE'} '${expr.name}' cannot be used as a value.`,
           span: expr.span,
           help: `DECLARE a variable of type ${expr.name} first.`,
         });
         return errorType();
       }
-      if (sym.kind === 'field') {
+      if (sym.kind === 'field' || sym.kind === 'method') {
         diag(ctx, {
           code: 'C_FIELD_AS_VALUE',
-          message: `Field '${expr.name}' must be accessed on a record (e.g. S.${expr.name}).`,
+          message: `${sym.kind === 'method' ? 'Method' : 'Field'} '${expr.name}' must be accessed on an object (e.g. Obj.${expr.name}).`,
           span: expr.span,
         });
         return errorType();
@@ -1310,6 +1703,19 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
         expr.fileName,
         expr.span,
       );
+    case 'MethodCallExpression':
+      return checkMethodCallCore(ctx, expr.object, expr.method, expr.args, expr.span, 'call-expr');
+    case 'NewExpression':
+      return checkNewExpression(ctx, expr);
+    case 'SuperExpression':
+      diag(ctx, {
+        code: 'C_SUPER_OUTSIDE',
+        message: ctx.currentClass
+          ? 'SUPER can only be used as SUPER.<Method>(...).'
+          : 'SUPER is only valid inside a CLASS method.',
+        span: expr.span,
+      });
+      return errorType();
     default: {
       const _exhaustive: never = expr;
       return _exhaustive;

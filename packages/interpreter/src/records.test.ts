@@ -56,7 +56,7 @@ OUTPUT S.Home.Zip
     expect(host.outputs).toEqual(['Cambridge', '12345']);
   });
 
-  it('supports arrays of records with nested field access (Class[1].Home.City)', async () => {
+  it('supports arrays of records with nested field access (Cohort[1].Home.City)', async () => {
     const { result, host } = await run(`
 TYPE Address
   DECLARE City : STRING
@@ -65,15 +65,15 @@ TYPE Student
   DECLARE Name : STRING
   DECLARE Home : Address
 ENDTYPE
-DECLARE Class : ARRAY[1:2] OF Student
-Class[1].Name ← "Ann"
-Class[1].Home.City ← "London"
-Class[2].Name ← "Zed"
-Class[2].Home.City ← "Paris"
-OUTPUT Class[1].Name
-OUTPUT Class[1].Home.City
-OUTPUT Class[2].Name
-OUTPUT Class[2].Home.City
+DECLARE Cohort : ARRAY[1:2] OF Student
+Cohort[1].Name ← "Ann"
+Cohort[1].Home.City ← "London"
+Cohort[2].Name ← "Zed"
+Cohort[2].Home.City ← "Paris"
+OUTPUT Cohort[1].Name
+OUTPUT Cohort[1].Home.City
+OUTPUT Cohort[2].Name
+OUTPUT Cohort[2].Home.City
 `);
     expect(result.ok).toBe(true);
     expect(host.outputs).toEqual(['Ann', 'London', 'Zed', 'Paris']);
@@ -103,11 +103,11 @@ NEXT I
 TYPE Student
   DECLARE Marks : ARRAY[1:2] OF INTEGER
 ENDTYPE
-DECLARE Class : ARRAY[1:2] OF Student
-Class[1].Marks[1] ← 1
-Class[2].Marks[1] ← 2
-OUTPUT Class[1].Marks[1]
-OUTPUT Class[2].Marks[1]
+DECLARE Cohort : ARRAY[1:2] OF Student
+Cohort[1].Marks[1] ← 1
+Cohort[2].Marks[1] ← 2
+OUTPUT Cohort[1].Marks[1]
+OUTPUT Cohort[2].Marks[1]
 `);
     expect(result.ok).toBe(true);
     expect(host.outputs).toEqual(['1', '2']);

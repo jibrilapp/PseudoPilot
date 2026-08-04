@@ -11,8 +11,10 @@ PseudoPilot targets the **Cambridge International AS & A Level Computer Science 
 | [PARSER_COVERAGE.md](./PARSER_COVERAGE.md) | What `@pseudopilot/language-core` can parse today |
 | [IMPLEMENTATION_CHECKLIST.md](./IMPLEMENTATION_CHECKLIST.md) | Parser + checker + translator + runtime progress |
 | [SEMANTICS.md](./SEMANTICS.md) | Semantic checker: scopes, types, diagnostics (`C_*`) |
+| [TYPE_SYSTEM.md](./TYPE_SYSTEM.md) | `TYPE … ENDTYPE` records: fields, defaults, value semantics |
+| [OBJECT_ORIENTED_PROGRAMMING.md](./OBJECT_ORIENTED_PROGRAMMING.md) | `CLASS … ENDCLASS` OOP: inheritance, visibility, `NEW`, `SUPER`, reference semantics |
 | [SPEC_REVIEW.md](./SPEC_REVIEW.md) | Production readiness review of this suite (errata + priorities) |
-| [TRANSLATION.md](./TRANSLATION.md) | Translation engine architecture and V10 mapping |
+| [TRANSLATION.md](./TRANSLATION.md) | Translation engine architecture and V14 mapping |
 | [LANGUAGE_SERVICE.md](./LANGUAGE_SERVICE.md) | IDE language service (hover, refs, rename, …) — no execute/translate |
 | [INCREMENTAL_COMPILATION.md](./INCREMENTAL_COMPILATION.md) | Document / AST / semantic caches + invalidation |
 

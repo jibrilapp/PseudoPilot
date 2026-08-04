@@ -13,6 +13,14 @@ import {
   nextDocumentVersion,
 } from './index';
 import {
+  KEYWORDS,
+  TYPES,
+  INDENT_INCREASE_PATTERN,
+  INDENT_DECREASE_PATTERN,
+  FOLDING_START_PATTERN,
+  FOLDING_END_PATTERN,
+} from './registerPseudocode';
+import {
   getIdeLanguageService,
   IDE_DOCUMENT_URI,
   resetIdeLanguageServiceForTests,
@@ -96,6 +104,38 @@ describe('monaco provider adapters', () => {
     expect(markers[0]?.severity).toBe(MARKER_SEVERITY_ERROR);
     expect(markers[0]?.startLineNumber).toBe(2);
     expect(markers[0]?.startColumn).toBe(8);
+  });
+});
+
+describe('monaco pseudocode language — CLASS/OOP', () => {
+  it('keyword list includes CLASS/OOP vocabulary', () => {
+    for (const kw of ['CLASS', 'ENDCLASS', 'PUBLIC', 'PRIVATE', 'INHERITS', 'SUPER', 'NEW']) {
+      expect(KEYWORDS).toContain(kw);
+    }
+  });
+
+  it('type list includes DATE but not TIME', () => {
+    expect(TYPES).toContain('DATE');
+    expect(TYPES).not.toContain('TIME');
+    expect(KEYWORDS).not.toContain('TIME');
+  });
+
+  it('increase-indent pattern matches CLASS (like TYPE)', () => {
+    expect(INDENT_INCREASE_PATTERN.test('CLASS Animal')).toBe(true);
+    expect(INDENT_INCREASE_PATTERN.test('  CLASS Animal INHERITS Base')).toBe(true);
+  });
+
+  it('decrease-indent pattern matches ENDCLASS (like ENDTYPE)', () => {
+    expect(INDENT_DECREASE_PATTERN.test('ENDCLASS')).toBe(true);
+    expect(INDENT_DECREASE_PATTERN.test('  ENDCLASS')).toBe(true);
+  });
+
+  it('folding markers wrap CLASS … ENDCLASS (like TYPE … ENDTYPE)', () => {
+    expect(FOLDING_START_PATTERN.test('CLASS Animal')).toBe(true);
+    expect(FOLDING_END_PATTERN.test('ENDCLASS')).toBe(true);
+    // Word-boundary check: a line starting with a longer identifier that
+    // merely begins with "CLASS" must not be treated as a fold boundary.
+    expect(FOLDING_START_PATTERN.test('CLASSIFIED ← TRUE')).toBe(false);
   });
 });
 

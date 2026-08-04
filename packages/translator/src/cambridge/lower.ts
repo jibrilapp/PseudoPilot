@@ -1,5 +1,7 @@
 import type {
   AssignTarget,
+  ClassDeclaration,
+  ClassMember,
   Expression,
   Program,
   SimpleType,
@@ -13,13 +15,16 @@ import {
   type IrAssignTarget,
   type IrCaseArm,
   type IrCaseLabel,
+  type IrClassMember,
   type IrElseIfClause,
   type IrExpression,
   type IrProgram,
   type IrSimpleType,
   type IrStatement,
   type IrTypeField,
+  type IrTypeName,
   type IrTypeReference,
+  type IrVisibility,
 } from '../ir/nodes.js';
 import { cambridgeBinaryToIr, cambridgeUnaryToIr } from '../rules/operators.js';
 import {
@@ -36,11 +41,23 @@ export type LowerResult = {
 
 type BindingKind = 'var' | 'const';
 
-/** Cambridge composite shapes for by-value Python emit + field casing. */
+/**
+ * Cambridge composite shapes for by-value Python emit + field casing.
+ * `class` is intentionally excluded from {@link isCompositeShape} — CLASS
+ * instances are Cambridge 9618 reference types and must never be deep-copied.
+ */
 type ValueShape =
-  | { readonly kind: 'scalar' }
+  | { readonly kind: 'scalar'; readonly typeName: IrTypeName | null }
   | { readonly kind: 'record'; readonly typeKey: string }
-  | { readonly kind: 'array'; readonly element: ValueShape };
+  | { readonly kind: 'class'; readonly typeKey: string }
+  | {
+      readonly kind: 'array';
+      readonly element: ValueShape;
+      readonly dimensions: readonly {
+        readonly lower: IrExpression;
+        readonly upper: IrExpression;
+      }[];
+    };
 
 type ScopeBinding = {
   readonly kind: BindingKind;
@@ -61,7 +78,31 @@ type LowerCtx = {
   readonly recordFieldShapes: Map<string, Map<string, ValueShape>>;
   /** routineKey → parameter shapes (for by-value arg copies) */
   readonly routineParams: Map<string, readonly ValueShape[]>;
+  /** classKey set — distinguishes CLASS NamedType refs from TYPE (record) refs. */
+  readonly classNames: Set<string>;
+  /** classKey → declared display-case name (for canonicalizing NamedType refs). */
+  readonly classCanonicalName: Map<string, string>;
+  /** classKey → parent classKey, or null (single level, not yet walked). */
+  readonly classParent: Map<string, string | null>;
+  /** classKey → (fieldKey → declared casing), own + inherited (child wins). */
+  readonly classFields: Map<string, Map<string, string>>;
+  /** classKey → (fieldKey → value shape), own + inherited. */
+  readonly classFieldShapes: Map<string, Map<string, ValueShape>>;
+  /** classKey → (methodKey(lowercase) → declared casing), own + inherited (child overrides win). */
+  readonly classMethods: Map<string, Map<string, string>>;
+  /**
+   * Own + inherited field names of the CLASS whose method body is currently
+   * being lowered — bare identifiers matching one of these rewrite to
+   * `self.Field`. `null` outside a class method body.
+   */
+  currentClassFields: Map<string, string> | null;
+  /** Display-case name of the CLASS whose method body is currently being lowered. */
+  currentClassName: string | null;
 };
+
+function scalarShape(typeName: IrTypeName | null = null): ValueShape {
+  return { kind: 'scalar', typeName };
+}
 
 /** Cambridge identifiers are case-insensitive — match checker binding. */
 function bindingKey(name: string): string {
@@ -76,18 +117,23 @@ function popScope(ctx: LowerCtx): void {
   ctx.scopes.pop();
 }
 
+/** Like {@link resolveName}, but returns `null` when `name` isn't bound in any scope. */
+function tryResolveScopedName(ctx: LowerCtx, name: string): string | null {
+  const key = bindingKey(name);
+  for (let i = ctx.scopes.length - 1; i >= 0; i--) {
+    const found = ctx.scopes[i]!.bindings.get(key);
+    if (found) return found.canonical;
+  }
+  return null;
+}
+
 /**
  * Resolve an identifier to first-declaration casing in the nearest scope.
  * Python is case-sensitive; Cambridge is not — without this, `Count`/`count`
  * become different Python names and crash at runtime.
  */
 function resolveName(ctx: LowerCtx, name: string): string {
-  const key = bindingKey(name);
-  for (let i = ctx.scopes.length - 1; i >= 0; i--) {
-    const found = ctx.scopes[i]!.bindings.get(key);
-    if (found) return found.canonical;
-  }
-  return name;
+  return tryResolveScopedName(ctx, name) ?? name;
 }
 
 /** Register a binding; keeps first-seen casing within the current frame. */
@@ -95,7 +141,7 @@ function registerBinding(
   ctx: LowerCtx,
   name: string,
   kind: BindingKind,
-  shape: ValueShape = { kind: 'scalar' },
+  shape: ValueShape = scalarShape(),
 ): string {
   const key = bindingKey(name);
   const frame = ctx.scopes[ctx.scopes.length - 1]!;
@@ -107,7 +153,7 @@ function registerBinding(
 
 /** Register a name (routine) without treating it as assignable storage. */
 function registerName(ctx: LowerCtx, name: string): string {
-  return registerBinding(ctx, name, 'var', { kind: 'scalar' });
+  return registerBinding(ctx, name, 'var', scalarShape());
 }
 
 function lookupShape(ctx: LowerCtx, name: string): ValueShape {
@@ -116,27 +162,185 @@ function lookupShape(ctx: LowerCtx, name: string): ValueShape {
     const found = ctx.scopes[i]!.bindings.get(key);
     if (found) return found.shape;
   }
-  return { kind: 'scalar' };
+  return scalarShape();
 }
 
 function isCompositeShape(shape: ValueShape): boolean {
   return shape.kind === 'record' || shape.kind === 'array';
 }
 
-function shapeFromTypeRef(typeRef: TypeReference): ValueShape {
-  if (typeRef.kind === 'TypeName') return { kind: 'scalar' };
+/** NamedType → 'class' shape when the name is a known CLASS, else 'record' (TYPE). */
+function namedTypeShape(ctx: LowerCtx, name: string): ValueShape {
+  const key = bindingKey(name);
+  return ctx.classNames.has(key)
+    ? { kind: 'class', typeKey: key }
+    : { kind: 'record', typeKey: key };
+}
+
+function shapeFromTypeRef(typeRef: TypeReference, ctx: LowerCtx): ValueShape {
+  if (typeRef.kind === 'TypeName') return scalarShape(typeRef.name);
   if (typeRef.kind === 'NamedType') {
-    return { kind: 'record', typeKey: bindingKey(typeRef.name) };
+    return namedTypeShape(ctx, typeRef.name);
+  }
+  const dimensions: { lower: IrExpression; upper: IrExpression }[] = [];
+  for (const dim of typeRef.dimensions) {
+    const lower = lowerExpression(dim.lower, ctx);
+    const upper = lowerExpression(dim.upper, ctx);
+    if (!lower || !upper) {
+      return {
+        kind: 'array',
+        element: shapeFromSimpleType(typeRef.elementType, ctx),
+        dimensions: [],
+      };
+    }
+    dimensions.push({ lower, upper });
   }
   return {
     kind: 'array',
-    element: shapeFromSimpleType(typeRef.elementType),
+    element: shapeFromSimpleType(typeRef.elementType, ctx),
+    dimensions,
   };
 }
 
-function shapeFromSimpleType(t: SimpleType): ValueShape {
-  if (t.kind === 'TypeName') return { kind: 'scalar' };
-  return { kind: 'record', typeKey: bindingKey(t.name) };
+function shapeFromSimpleType(t: SimpleType, ctx: LowerCtx): ValueShape {
+  if (t.kind === 'TypeName') return scalarShape(t.name);
+  return namedTypeShape(ctx, t.name);
+}
+
+/** Depth guard against pathological/undetected inheritance cycles. */
+const MAX_INHERITANCE_DEPTH = 64;
+
+type ClassRegistry = {
+  readonly classNames: Set<string>;
+  readonly canonicalName: Map<string, string>;
+  readonly parent: Map<string, string | null>;
+  readonly fields: Map<string, Map<string, string>>;
+  readonly fieldShapes: Map<string, Map<string, ValueShape>>;
+  readonly methods: Map<string, Map<string, string>>;
+};
+
+/**
+ * Two-pass scan of all top-level CLASS declarations (forward references
+ * between classes are valid Cambridge — mirrors `@pseudopilot/checker`'s
+ * `registerClassDeclarations`). Produces combined (own + inherited) field
+ * and method casing tables used for `self.Field` rewriting and for
+ * resolving field/method casing on member/method-call expressions.
+ */
+function buildClassRegistry(program: Program): ClassRegistry {
+  const decls = program.body.filter(
+    (s): s is ClassDeclaration => s.kind === 'ClassDeclaration',
+  );
+
+  const classNames = new Set<string>();
+  const canonicalName = new Map<string, string>();
+  for (const decl of decls) {
+    const key = bindingKey(decl.name.name);
+    classNames.add(key);
+    canonicalName.set(key, decl.name.name);
+  }
+
+  const parent = new Map<string, string | null>();
+  const ownFields = new Map<string, Map<string, string>>();
+  const ownFieldShapes = new Map<string, Map<string, ValueShape>>();
+  const ownMethods = new Map<string, Map<string, string>>();
+
+  // Local shape resolver — mirrors `namedTypeShape` but only needs the name
+  // set built above (own/field types may forward-reference a later CLASS).
+  const shapeOf = (typeRef: TypeReference): ValueShape => {
+    if (typeRef.kind === 'TypeName') return scalarShape(typeRef.name);
+    if (typeRef.kind === 'NamedType') {
+      const key = bindingKey(typeRef.name);
+      return classNames.has(key)
+        ? { kind: 'class', typeKey: key }
+        : { kind: 'record', typeKey: key };
+    }
+    // Dimensions filled later when the CLASS field is registered via shapeFromTypeRef
+    // in a full lower context; registry only needs element kind for copy decisions.
+    const dims = typeRef.dimensions.map((d) => ({
+      lower: { kind: 'IrIntegerLiteral' as const, value: 0 },
+      upper: { kind: 'IrIntegerLiteral' as const, value: 0 },
+    }));
+    // Prefer real bounds when they are integer literals (common exam case).
+    for (let i = 0; i < typeRef.dimensions.length; i++) {
+      const d = typeRef.dimensions[i]!;
+      const lo = d.lower.kind === 'IntegerLiteral' ? d.lower.value : null;
+      const hi = d.upper.kind === 'IntegerLiteral' ? d.upper.value : null;
+      if (lo !== null) dims[i] = { ...dims[i]!, lower: { kind: 'IrIntegerLiteral', value: lo } };
+      if (hi !== null) dims[i] = { ...dims[i]!, upper: { kind: 'IrIntegerLiteral', value: hi } };
+    }
+    const elem = typeRef.elementType;
+    if (elem.kind === 'TypeName') {
+      return { kind: 'array', element: scalarShape(elem.name), dimensions: dims };
+    }
+    const elemKey = bindingKey(elem.name);
+    return {
+      kind: 'array',
+      element: classNames.has(elemKey)
+        ? { kind: 'class', typeKey: elemKey }
+        : { kind: 'record', typeKey: elemKey },
+      dimensions: dims,
+    };
+  };
+
+  for (const decl of decls) {
+    const key = bindingKey(decl.name.name);
+    parent.set(key, decl.inherits ? bindingKey(decl.inherits.name) : null);
+    const fields = new Map<string, string>();
+    const fieldShapes = new Map<string, ValueShape>();
+    const methods = new Map<string, string>();
+    for (const member of decl.members) {
+      if (member.kind === 'ClassPropertyDeclaration') {
+        const shape = shapeOf(member.typeRef);
+        for (const id of member.names) {
+          const fk = bindingKey(id.name);
+          if (!fields.has(fk)) {
+            fields.set(fk, id.name);
+            fieldShapes.set(fk, shape);
+          }
+        }
+      } else {
+        const mk = bindingKey(member.name.name);
+        if (!methods.has(mk)) methods.set(mk, member.name.name);
+      }
+    }
+    ownFields.set(key, fields);
+    ownFieldShapes.set(key, fieldShapes);
+    ownMethods.set(key, methods);
+  }
+
+  function combine<T>(
+    key: string,
+    own: Map<string, Map<string, T>>,
+    cache: Map<string, Map<string, T>>,
+    visiting: Set<string>,
+  ): Map<string, T> {
+    const cached = cache.get(key);
+    if (cached) return cached;
+    if (visiting.has(key) || visiting.size >= MAX_INHERITANCE_DEPTH) {
+      return own.get(key) ?? new Map();
+    }
+    visiting.add(key);
+    const ownMap = own.get(key) ?? new Map();
+    const parentKey = parent.get(key) ?? null;
+    const parentMap =
+      parentKey && own.has(parentKey)
+        ? combine(parentKey, own, cache, visiting)
+        : new Map<string, T>();
+    const result = new Map<string, T>([...parentMap, ...ownMap]);
+    cache.set(key, result);
+    return result;
+  }
+
+  const fields = new Map<string, Map<string, string>>();
+  const fieldShapes = new Map<string, Map<string, ValueShape>>();
+  const methods = new Map<string, Map<string, string>>();
+  for (const key of classNames) {
+    fields.set(key, combine(key, ownFields, fields, new Set()));
+    fieldShapes.set(key, combine(key, ownFieldShapes, fieldShapes, new Set()));
+    methods.set(key, combine(key, ownMethods, methods, new Set()));
+  }
+
+  return { classNames, canonicalName, parent, fields, fieldShapes, methods };
 }
 
 function exprShape(ctx: LowerCtx, expr: Expression): ValueShape {
@@ -145,30 +349,38 @@ function exprShape(ctx: LowerCtx, expr: Expression): ValueShape {
       return lookupShape(ctx, expr.name);
     case 'MemberExpression': {
       const obj = exprShape(ctx, expr.object);
-      if (obj.kind !== 'record') return { kind: 'scalar' };
-      // Field shape from TYPE table is not stored on IR; look up via recorded fields
-      // only for casing. For copy decisions, treat unknown fields as scalar unless
-      // the field name maps to a known nested record via type table — we store
-      // field→shape in recordFieldShapes.
-      const nested = ctx.recordFieldShapes
-        .get(obj.typeKey)
-        ?.get(bindingKey(expr.property.name));
-      return nested ?? { kind: 'scalar' };
+      // Field shape from TYPE/CLASS tables is not stored on IR; look up via
+      // recorded fields only for casing. For copy decisions, treat unknown
+      // fields as scalar unless the field name maps to a known nested
+      // record/class via the type table.
+      if (obj.kind === 'record') {
+        const nested = ctx.recordFieldShapes
+          .get(obj.typeKey)
+          ?.get(bindingKey(expr.property.name));
+        return nested ?? scalarShape();
+      }
+      if (obj.kind === 'class') {
+        const nested = ctx.classFieldShapes
+          .get(obj.typeKey)
+          ?.get(bindingKey(expr.property.name));
+        return nested ?? scalarShape();
+      }
+      return scalarShape();
     }
     case 'IndexExpression': {
       const arr = exprShape(ctx, expr.array);
-      if (arr.kind !== 'array') return { kind: 'scalar' };
+      if (arr.kind !== 'array') return scalarShape();
       return arr.element;
     }
     case 'CallExpression': {
       // Function return shapes aren't tracked for all cases; assignment still
       // deep-copies when the *target* is composite.
-      return { kind: 'scalar' };
+      return scalarShape();
     }
     case 'GroupingExpression':
       return exprShape(ctx, expr.expression);
     default:
-      return { kind: 'scalar' };
+      return scalarShape();
   }
 }
 
@@ -188,7 +400,7 @@ function bindName(
   kind: BindingKind,
   span: Statement['span'],
   what: 'DECLARE' | 'CONSTANT',
-  shape: ValueShape = { kind: 'scalar' },
+  shape: ValueShape = scalarShape(),
 ): string | null {
   // Language duplicate / type rules live in `@pseudopilot/checker`.
   // Lower only enforces Python-target name constraints.
@@ -271,7 +483,13 @@ function resolveFieldName(
       ?.get(bindingKey(property));
     if (canonical) return canonical;
   }
-  // Fall back: unique field name across all TYPEs.
+  if (shape.kind === 'class') {
+    const canonical = ctx.classFields
+      .get(shape.typeKey)
+      ?.get(bindingKey(property));
+    if (canonical) return canonical;
+  }
+  // Fall back: unique field name across all TYPEs/CLASSes.
   let found: string | undefined;
   for (const fields of ctx.recordFields.values()) {
     const c = fields.get(bindingKey(property));
@@ -280,7 +498,56 @@ function resolveFieldName(
       found = c;
     }
   }
+  for (const fields of ctx.classFields.values()) {
+    const c = fields.get(bindingKey(property));
+    if (c) {
+      if (found && found !== c) return property;
+      found = c;
+    }
+  }
   return found ?? property;
+}
+
+/**
+ * Resolve declared casing for `<object>.<method>(...)` / `SUPER.<method>(...)`.
+ * For SUPER, resolves against the parent of the CLASS currently being lowered
+ * (lexical parent, not the object's runtime type). Falls back to the written
+ * casing when the owning CLASS can't be determined (e.g. unresolved shape).
+ */
+function resolveMethodName(
+  ctx: LowerCtx,
+  object: Expression,
+  method: string,
+): string {
+  if (object.kind === 'SuperExpression') {
+    if (bindingKey(method) === 'new') return method;
+    const currentKey = ctx.currentClassName ? bindingKey(ctx.currentClassName) : null;
+    const parentKey = currentKey ? ctx.classParent.get(currentKey) ?? null : null;
+    if (parentKey) {
+      const canonical = ctx.classMethods.get(parentKey)?.get(bindingKey(method));
+      if (canonical) return canonical;
+    }
+    return method;
+  }
+  const shape = exprShape(ctx, object);
+  if (shape.kind === 'class') {
+    const canonical = ctx.classMethods.get(shape.typeKey)?.get(bindingKey(method));
+    if (canonical) return canonical;
+  }
+  let found: string | undefined;
+  for (const methods of ctx.classMethods.values()) {
+    const c = methods.get(bindingKey(method));
+    if (c) {
+      if (found && found !== c) return method;
+      found = c;
+    }
+  }
+  return found ?? method;
+}
+
+/** Canonicalize a NamedType reference to its declared CLASS casing, if known. */
+function canonicalTypeName(ctx: LowerCtx, name: string): string {
+  return ctx.classCanonicalName.get(bindingKey(name)) ?? name;
 }
 
 function lowerExpression(
@@ -299,8 +566,30 @@ function lowerExpression(
       return { kind: 'IrCharLiteral', value: expr.value };
     case 'BooleanLiteral':
       return { kind: 'IrBooleanLiteral', value: expr.value };
-    case 'Identifier':
-      return { kind: 'IrIdentifier', name: resolveName(ctx, expr.name) };
+    case 'DateLiteral':
+      return {
+        kind: 'IrDateLiteral',
+        day: expr.day,
+        month: expr.month,
+        year: expr.year,
+      };
+    case 'Identifier': {
+      const scoped = tryResolveScopedName(ctx, expr.name);
+      if (scoped !== null) return { kind: 'IrIdentifier', name: scoped };
+      // Unbound inside a class method body and matches a known field
+      // (own or inherited) → implicit `self.Field` (Cambridge has no `self`).
+      if (ctx.currentClassFields) {
+        const canonical = ctx.currentClassFields.get(bindingKey(expr.name));
+        if (canonical) {
+          return {
+            kind: 'IrMemberExpression',
+            object: { kind: 'IrIdentifier', name: 'self' },
+            property: canonical,
+          };
+        }
+      }
+      return { kind: 'IrIdentifier', name: expr.name };
+    }
     case 'IndexExpression': {
       const array = lowerExpression(expr.array, ctx);
       if (!array) return null;
@@ -310,7 +599,17 @@ function lowerExpression(
         if (!lowered) return null;
         indices.push(lowered);
       }
-      return { kind: 'IrIndexExpression', array, indices };
+      const shape = exprShape(ctx, expr.array);
+      const lowers =
+        shape.kind === 'array' && shape.dimensions.length === indices.length
+          ? shape.dimensions.map((d) => d.lower)
+          : undefined;
+      return {
+        kind: 'IrIndexExpression',
+        array,
+        indices,
+        ...(lowers ? { lowers } : {}),
+      };
     }
     case 'MemberExpression': {
       const object = lowerExpression(expr.object, ctx);
@@ -379,6 +678,48 @@ function lowerExpression(
       if (!fileName) return null;
       return { kind: 'IrEofExpression', fileName };
     }
+    case 'NewExpression': {
+      const className = canonicalTypeName(ctx, expr.className.name);
+      const args: IrExpression[] = [];
+      for (const a of expr.args) {
+        let lowered = lowerExpression(a, ctx);
+        if (!lowered) return null;
+        lowered = maybeDeepCopy(ctx, lowered, exprShape(ctx, a));
+        args.push(lowered);
+      }
+      return { kind: 'IrNewExpression', className, args };
+    }
+    case 'MethodCallExpression': {
+      const args: IrExpression[] = [];
+      for (const a of expr.args) {
+        let lowered = lowerExpression(a, ctx);
+        if (!lowered) return null;
+        lowered = maybeDeepCopy(ctx, lowered, exprShape(ctx, a));
+        args.push(lowered);
+      }
+      const method = resolveMethodName(ctx, expr.object, expr.method.name);
+      if (expr.object.kind === 'SuperExpression') {
+        return {
+          kind: 'IrMethodCallExpression',
+          object: { kind: 'IrSuperExpression' },
+          method,
+          args,
+        };
+      }
+      const object = lowerExpression(expr.object, ctx);
+      if (!object) return null;
+      return { kind: 'IrMethodCallExpression', object, method, args };
+    }
+    case 'SuperExpression':
+      // Bare SUPER only makes sense as the object of a method call; the
+      // checker requires `SUPER.Method(...)`, so this path is defensive.
+      diagnostics.push({
+        severity: 'error',
+        code: 'T_SUPER_INVALID',
+        message: "SUPER is only valid as 'SUPER.Method(...)'.",
+        span: expr.span,
+      });
+      return null;
     default: {
       const _exhaustive: never = expr;
       return _exhaustive;
@@ -401,11 +742,11 @@ function lowerBlock(
   return out;
 }
 
-function lowerSimpleType(typeRef: SimpleType): IrSimpleType {
+function lowerSimpleType(typeRef: SimpleType, ctx: LowerCtx): IrSimpleType {
   if (typeRef.kind === 'TypeName') {
     return { kind: 'IrScalarType', name: typeRef.name };
   }
-  return { kind: 'IrNamedType', name: typeRef.name };
+  return { kind: 'IrNamedType', name: canonicalTypeName(ctx, typeRef.name) };
 }
 
 function lowerTypeRef(
@@ -413,7 +754,7 @@ function lowerTypeRef(
   ctx: LowerCtx,
 ): IrTypeReference | null {
   if (typeRef.kind === 'TypeName' || typeRef.kind === 'NamedType') {
-    return lowerSimpleType(typeRef);
+    return lowerSimpleType(typeRef, ctx);
   }
   const dimensions: IrArrayDimension[] = [];
   for (const dim of typeRef.dimensions) {
@@ -425,7 +766,7 @@ function lowerTypeRef(
   return {
     kind: 'IrArrayType',
     dimensions,
-    elementType: lowerSimpleType(typeRef.elementType),
+    elementType: lowerSimpleType(typeRef.elementType, ctx),
   };
 }
 
@@ -468,6 +809,98 @@ function validateRoutineBinding(
   return true;
 }
 
+/**
+ * Lower one CLASS member (property, PROCEDURE, or FUNCTION). Assumes the
+ * caller has already set `ctx.currentClassFields` / `ctx.currentClassName`
+ * for the enclosing CLASS so bare identifiers in method bodies rewrite to
+ * `self.Field`.
+ */
+function lowerClassMember(
+  member: ClassMember,
+  ctx: LowerCtx,
+): IrClassMember | null {
+  const diagnostics = ctx.diagnostics;
+  const visibility: IrVisibility = member.visibility ?? 'PUBLIC';
+
+  if (member.kind === 'ClassPropertyDeclaration') {
+    const typeRef = lowerTypeRef(member.typeRef, ctx);
+    if (!typeRef) return null;
+    for (const id of member.names) {
+      if (isPythonSyntaxKeyword(id.name)) {
+        diagnostics.push({
+          severity: 'error',
+          code: 'T_DECL_PY_KEYWORD',
+          message: `Property name '${id.name}' is a Python keyword and cannot be translated ('self.${id.name}' is invalid Python).`,
+          span: id.span,
+        });
+        return null;
+      }
+    }
+    return {
+      kind: 'IrClassProperty',
+      names: member.names.map((id) => id.name),
+      typeRef,
+      visibility,
+    };
+  }
+
+  // ClassProcedureDeclaration | ClassFunctionDeclaration
+  const isConstructor = bindingKey(member.name.name) === 'new';
+  if (!isConstructor && isPythonSyntaxKeyword(member.name.name)) {
+    diagnostics.push({
+      severity: 'error',
+      code: 'T_PROC_PY_KEYWORD',
+      message: `Method name '${member.name.name}' is a Python keyword and cannot be translated.`,
+      span: member.name.span,
+    });
+    return null;
+  }
+  for (const p of member.parameters) {
+    if (isPythonSyntaxKeyword(p.name.name)) {
+      diagnostics.push({
+        severity: 'error',
+        code: 'T_PROC_PY_KEYWORD',
+        message: `Parameter name '${p.name.name}' is a Python keyword and cannot be translated.`,
+        span: p.name.span,
+      });
+      return null;
+    }
+  }
+
+  pushScope(ctx);
+  const parameters = member.parameters.map((p) => {
+    const shape = shapeFromSimpleType(p.typeName, ctx);
+    const pname =
+      bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape) ??
+      p.name.name;
+    return {
+      kind: 'IrParameter' as const,
+      name: pname,
+      typeName: lowerSimpleType(p.typeName, ctx),
+    };
+  });
+  const body = lowerBlock(member.body, ctx);
+  popScope(ctx);
+
+  if (member.kind === 'ClassProcedureDeclaration') {
+    return {
+      kind: 'IrClassProcedure',
+      name: member.name.name,
+      parameters,
+      body,
+      visibility,
+    };
+  }
+  return {
+    kind: 'IrClassFunction',
+    name: member.name.name,
+    parameters,
+    returnType: lowerSimpleType(member.returnType, ctx),
+    body,
+    visibility,
+  };
+}
+
 function lowerStatement(
   stmt: Statement,
   ctx: LowerCtx,
@@ -497,12 +930,16 @@ function lowerStatement(
       if (!checkAssignToConstant(ctx, stmt.target)) return null;
       const target = lowerTarget(stmt.target, ctx);
       if (!target) return null;
+      const shape = exprShape(ctx, stmt.target);
+      const valueType =
+        shape.kind === 'scalar' && shape.typeName ? shape.typeName : null;
       return {
         span: stmt.span,
         ir: withEmptyTrivia({
           kind: 'IrInput' as const,
           target,
           prompt: null,
+          valueType,
         }),
       };
     }
@@ -634,7 +1071,7 @@ function lowerStatement(
     case 'DeclareStatement': {
       const typeRef = lowerTypeRef(stmt.typeRef, ctx);
       if (!typeRef) return null;
-      const shape = shapeFromTypeRef(stmt.typeRef);
+      const shape = shapeFromTypeRef(stmt.typeRef, ctx);
       const names: string[] = [];
       for (const id of stmt.names) {
         const canonical = bindName(
@@ -666,7 +1103,7 @@ function lowerStatement(
       for (const fieldDecl of stmt.fields) {
         const typeRef = lowerTypeRef(fieldDecl.typeRef, ctx);
         if (!typeRef) return null;
-        const fshape = shapeFromTypeRef(fieldDecl.typeRef);
+        const fshape = shapeFromTypeRef(fieldDecl.typeRef, ctx);
         const names: string[] = [];
         for (const id of fieldDecl.names) {
           const fk = bindingKey(id.name);
@@ -722,7 +1159,7 @@ function lowerStatement(
       pushScope(ctx);
       const paramShapes: ValueShape[] = [];
       const parameters = stmt.parameters.map((p) => {
-        const shape = shapeFromSimpleType(p.typeName);
+        const shape = shapeFromSimpleType(p.typeName, ctx);
         paramShapes.push(shape);
         const pname =
           bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape) ??
@@ -730,7 +1167,7 @@ function lowerStatement(
         return {
           kind: 'IrParameter' as const,
           name: pname,
-          typeName: lowerSimpleType(p.typeName),
+          typeName: lowerSimpleType(p.typeName, ctx),
         };
       });
       ctx.routineParams.set(bindingKey(procName), paramShapes);
@@ -761,7 +1198,7 @@ function lowerStatement(
       pushScope(ctx);
       const paramShapes: ValueShape[] = [];
       const parameters = stmt.parameters.map((p) => {
-        const shape = shapeFromSimpleType(p.typeName);
+        const shape = shapeFromSimpleType(p.typeName, ctx);
         paramShapes.push(shape);
         const pname =
           bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape) ??
@@ -769,7 +1206,7 @@ function lowerStatement(
         return {
           kind: 'IrParameter' as const,
           name: pname,
-          typeName: lowerSimpleType(p.typeName),
+          typeName: lowerSimpleType(p.typeName, ctx),
         };
       });
       ctx.routineParams.set(bindingKey(fnName), paramShapes);
@@ -782,12 +1219,31 @@ function lowerStatement(
           kind: 'IrFunctionDeclaration' as const,
           name: fnName,
           parameters,
-          returnType: lowerSimpleType(stmt.returnType),
+          returnType: lowerSimpleType(stmt.returnType, ctx),
           body,
         }),
       };
     }
     case 'CallStatement': {
+      if (stmt.callee.kind === 'MemberExpression') {
+        const object = lowerExpression(stmt.callee.object, ctx);
+        if (!object) return null;
+        const method = resolveMethodName(ctx, stmt.callee.object, stmt.callee.property.name);
+        const args: IrExpression[] = [];
+        for (const a of stmt.args) {
+          let lowered = lowerExpression(a, ctx);
+          if (!lowered) return null;
+          lowered = maybeDeepCopy(ctx, lowered, exprShape(ctx, a));
+          args.push(lowered);
+        }
+        return {
+          span: stmt.span,
+          ir: withEmptyTrivia({
+            kind: 'IrExpressionStatement' as const,
+            expression: { kind: 'IrMethodCallExpression', object, method, args },
+          }),
+        };
+      }
       const calleeRaw = stmt.callee.name;
       if (isPythonSyntaxKeyword(calleeRaw)) {
         diagnostics.push({
@@ -880,6 +1336,56 @@ function lowerStatement(
         }),
       };
     }
+    case 'ClassDeclaration': {
+      if (isPythonSyntaxKeyword(stmt.name.name)) {
+        diagnostics.push({
+          severity: 'error',
+          code: 'T_DECL_PY_KEYWORD',
+          message: `CLASS name '${stmt.name.name}' is a Python keyword and cannot be translated.`,
+          span: stmt.name.span,
+        });
+        return null;
+      }
+      const classKey = bindingKey(stmt.name.name);
+      const savedFields = ctx.currentClassFields;
+      const savedName = ctx.currentClassName;
+      ctx.currentClassFields = ctx.classFields.get(classKey) ?? new Map();
+      ctx.currentClassName = stmt.name.name;
+
+      const members: IrClassMember[] = [];
+      for (const member of stmt.members) {
+        const lowered = lowerClassMember(member, ctx);
+        if (lowered) members.push(lowered);
+      }
+
+      ctx.currentClassFields = savedFields;
+      ctx.currentClassName = savedName;
+
+      const inherits = stmt.inherits
+        ? canonicalTypeName(ctx, stmt.inherits.name)
+        : null;
+
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrClassDeclaration' as const,
+          name: stmt.name.name,
+          inherits,
+          members,
+        }),
+      };
+    }
+    case 'ExpressionStatement': {
+      const expression = lowerExpression(stmt.expression, ctx);
+      if (!expression) return null;
+      return {
+        span: stmt.span,
+        ir: withEmptyTrivia({
+          kind: 'IrExpressionStatement' as const,
+          expression,
+        }),
+      };
+    }
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
@@ -897,12 +1403,21 @@ export function lowerCambridgeProgram(
   preserveTrivia: boolean,
 ): LowerResult {
   const diagnostics: TranslateDiagnostic[] = [];
+  const classRegistry = buildClassRegistry(program);
   const ctx: LowerCtx = {
     diagnostics,
     scopes: [{ bindings: new Map() }],
     recordFields: new Map(),
     recordFieldShapes: new Map(),
     routineParams: new Map(),
+    classNames: classRegistry.classNames,
+    classCanonicalName: classRegistry.canonicalName,
+    classParent: classRegistry.parent,
+    classFields: classRegistry.fields,
+    classFieldShapes: classRegistry.fieldShapes,
+    classMethods: classRegistry.methods,
+    currentClassFields: null,
+    currentClassName: null,
   };
 
   // Hoist routine names so CALL-before-def still emits first-declaration casing.

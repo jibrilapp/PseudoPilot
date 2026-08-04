@@ -97,6 +97,47 @@ export const CORE_BUILTINS: readonly BuiltinSpec[] = [
     returns: 'REAL',
     summary: 'Pseudo-random REAL in [0, x).',
   },
+  // Cambridge Paper 2 insert — DATE helpers (dd/mm/yyyy).
+  {
+    name: 'DAY',
+    params: [{ name: 'ThisDate', accept: ['DATE'] }],
+    returns: 'INTEGER',
+    summary: 'Day number from a DATE.',
+  },
+  {
+    name: 'MONTH',
+    params: [{ name: 'ThisDate', accept: ['DATE'] }],
+    returns: 'INTEGER',
+    summary: 'Month number from a DATE.',
+  },
+  {
+    name: 'YEAR',
+    params: [{ name: 'ThisDate', accept: ['DATE'] }],
+    returns: 'INTEGER',
+    summary: 'Year number from a DATE.',
+  },
+  {
+    name: 'DAYINDEX',
+    params: [{ name: 'ThisDate', accept: ['DATE'] }],
+    returns: 'INTEGER',
+    summary: 'Weekday index from a DATE (Sunday = 1 … Saturday = 7).',
+  },
+  {
+    name: 'SETDATE',
+    params: [
+      { name: 'Day', accept: ['INTEGER'] },
+      { name: 'Month', accept: ['INTEGER'] },
+      { name: 'Year', accept: ['INTEGER'] },
+    ],
+    returns: 'DATE',
+    summary: 'Construct a DATE from day, month, year.',
+  },
+  {
+    name: 'TODAY',
+    params: [],
+    returns: 'DATE',
+    summary: 'Current calendar DATE.',
+  },
 ] as const;
 
 const BY_KEY: ReadonlyMap<string, BuiltinSpec> = new Map(

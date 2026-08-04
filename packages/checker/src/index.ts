@@ -31,7 +31,18 @@ export {
   lookupRecordField,
   scalar,
   recordType,
+  classType,
 } from './type-system.js';
-export type { RecordFieldInfo } from './types.js';
+export type { RecordFieldInfo, ClassFieldInfo, ClassMethodInfo } from './types.js';
 
 export { Scope, makeSymbol, identKey, lookupSymbol } from './scope.js';
+export {
+  registerClassDeclarations,
+  lookupClassField,
+  lookupClassMethod,
+  findClassFieldOwner,
+  findClassMethodOwner,
+  collectInheritedFields,
+  isAccessible,
+  type ClassCheckHost,
+} from './classes.js';

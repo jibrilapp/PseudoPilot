@@ -4,15 +4,23 @@ import type {
   AssignmentStatement,
   ArrayDimension,
   ArrayType,
+  ClassDeclaration,
+  ClassFunctionDeclaration,
+  ClassMember,
+  ClassProcedureDeclaration,
+  ClassPropertyDeclaration,
   CloseFileStatement,
   ConstantStatement,
   DeclareStatement,
   ElseIfClause,
   Expression,
+  ExpressionStatement,
   FileMode,
   FunctionDeclaration,
+  Identifier,
   IfStatement,
   InputStatement,
+  MemberExpression,
   OpenFileStatement,
   OutputStatement,
   Parameter,
@@ -33,6 +41,7 @@ import type {
   NamedType,
   SimpleType,
   TypeReference,
+  Visibility,
   WhileStatement,
   WriteFileStatement,
 } from '../ast/nodes.js';
@@ -40,7 +49,7 @@ import { isFileModeToken, isTypeToken, TokenKind, type Token } from '../lexer/to
 import { pushError, TokenCursor } from './cursor.js';
 import { ExpressionParser } from './expression.js';
 
-type BodyContext = 'program' | 'procedure' | 'function';
+type BodyContext = 'program' | 'procedure' | 'function' | 'class';
 
 /**
  * Recursive-descent parser for program / statements.
@@ -104,7 +113,21 @@ export class Parser {
     if (token.kind === TokenKind.Readfile) return this.parseReadFile();
     if (token.kind === TokenKind.Writefile) return this.parseWriteFile();
     if (token.kind === TokenKind.Closefile) return this.parseCloseFile();
-    if (token.kind === TokenKind.Identifier) return this.parseAssignment();
+    if (token.kind === TokenKind.Class) return this.parseClassDeclaration();
+    if (token.kind === TokenKind.Identifier || token.kind === TokenKind.Super) {
+      return this.parseAssignmentOrExpressionStatement();
+    }
+
+    if (token.kind === TokenKind.Public || token.kind === TokenKind.Private) {
+      pushError(
+        this.diagnostics,
+        `'${token.lexeme}' is only allowed inside a CLASS body.`,
+        token,
+        'E_VISIBILITY_OUTSIDE_CLASS',
+      );
+      this.cursor.advance();
+      return null;
+    }
 
     if (isUnexpectedStructuralKeyword(token.kind)) {
       pushError(
@@ -236,50 +259,330 @@ export class Parser {
   }
 
   /**
+   * CLASS Name [INHERITS Parent]
+   *   { property | PROCEDURE … ENDPROCEDURE | FUNCTION … ENDFUNCTION }
+   * ENDCLASS
+   *
+   * Cambridge 9618 OOP: properties default PUBLIC visibility is written
+   * explicitly in the guide's examples; `DECLARE` before a property is
+   * optional. The constructor is a PROCEDURE named `NEW`.
+   */
+  private parseClassDeclaration(): ClassDeclaration | null {
+    if (this.bodyContext !== 'program') {
+      pushError(
+        this.diagnostics,
+        'Nested CLASS declarations are not allowed.',
+        this.cursor.peek(),
+        'E_NESTED_CLASS',
+      );
+      this.cursor.advance();
+      return null;
+    }
+
+    const startToken = this.cursor.advance(); // CLASS
+    const name = this.expressions().parseIdentifier();
+    if (!name) return null;
+
+    let inherits: Identifier | null = null;
+    if (this.cursor.match(TokenKind.Inherits)) {
+      inherits = this.expressions().parseIdentifier();
+      if (!inherits) return null;
+    }
+
+    this.skipNewlines();
+
+    const previousBodyContext = this.bodyContext;
+    this.bodyContext = 'class';
+
+    const members: ClassMember[] = [];
+    while (!this.cursor.check(TokenKind.Endclass) && !this.cursor.isAtEnd()) {
+      const before = this.cursor.index;
+      const member = this.parseClassMember();
+      if (member) {
+        members.push(member);
+      } else if (this.cursor.index === before) {
+        this.cursor.advance();
+      }
+      this.skipNewlines();
+    }
+
+    this.bodyContext = previousBodyContext;
+
+    if (!this.cursor.match(TokenKind.Endclass)) {
+      pushError(this.diagnostics, "Expected 'ENDCLASS'.", this.cursor.peek(), 'E_CLASS_END');
+      return null;
+    }
+
+    return {
+      kind: 'ClassDeclaration',
+      name,
+      inherits,
+      members,
+      span: span(startToken.span.start, this.cursor.previous().span.end),
+    };
+  }
+
+  private parseClassMember(): ClassMember | null {
+    const memberStart = this.cursor.peek();
+    let visibility: Visibility | null = null;
+    if (this.cursor.match(TokenKind.Public)) visibility = 'PUBLIC';
+    else if (this.cursor.match(TokenKind.Private)) visibility = 'PRIVATE';
+
+    const token = this.cursor.peek();
+
+    if (token.kind === TokenKind.Class) {
+      pushError(
+        this.diagnostics,
+        'Nested CLASS declarations are not allowed.',
+        token,
+        'E_NESTED_CLASS',
+      );
+      this.cursor.advance();
+      return null;
+    }
+    if (token.kind === TokenKind.Procedure) {
+      return this.parseClassProcedure(visibility, memberStart);
+    }
+    if (token.kind === TokenKind.Function) {
+      return this.parseClassFunction(visibility, memberStart);
+    }
+    if (token.kind === TokenKind.Declare || token.kind === TokenKind.Identifier) {
+      return this.parseClassProperty(visibility, memberStart);
+    }
+
+    if (isUnexpectedStructuralKeyword(token.kind)) {
+      pushError(this.diagnostics, `Unexpected '${token.lexeme}'.`, token, 'E_UNEXPECTED_KW');
+      this.cursor.advance();
+      return null;
+    }
+
+    pushError(
+      this.diagnostics,
+      'Expected a class member (property, PUBLIC/PRIVATE, PROCEDURE, or FUNCTION).',
+      token,
+      'E_CLASS_MEMBER',
+    );
+    this.cursor.advance();
+    return null;
+  }
+
+  /** `[DECLARE] Name [, Name]* : Type` — DECLARE is optional in class bodies. */
+  private parseClassProperty(
+    visibility: Visibility | null,
+    startToken: Token,
+  ): ClassPropertyDeclaration | null {
+    this.cursor.match(TokenKind.Declare); // optional
+
+    const names: Identifier[] = [];
+    const first = this.expressions().parseIdentifier();
+    if (!first) return null;
+    names.push(first);
+
+    while (this.cursor.match(TokenKind.Comma)) {
+      const next = this.expressions().parseIdentifier();
+      if (!next) return null;
+      names.push(next);
+    }
+
+    if (!this.cursor.match(TokenKind.Colon)) {
+      pushError(
+        this.diagnostics,
+        "Expected ':' in class property declaration.",
+        this.cursor.peek(),
+      );
+      return null;
+    }
+
+    const typeRef = this.parseTypeReference();
+    if (!typeRef) return null;
+
+    return {
+      kind: 'ClassPropertyDeclaration',
+      visibility,
+      names,
+      typeRef,
+      span: span(startToken.span.start, typeRef.span.end),
+    };
+  }
+
+  private parseClassProcedure(
+    visibility: Visibility | null,
+    startToken: Token,
+  ): ClassProcedureDeclaration | null {
+    this.cursor.advance(); // PROCEDURE
+    const name = this.parseClassMethodName();
+    if (!name) return null;
+
+    const parameters = this.parseParameterListOptional();
+    this.skipNewlines();
+
+    const previous = this.bodyContext;
+    this.bodyContext = 'procedure';
+    const body = this.parseBlock(() => this.cursor.check(TokenKind.Endprocedure));
+    this.bodyContext = previous;
+
+    if (!this.cursor.match(TokenKind.Endprocedure)) {
+      pushError(this.diagnostics, "Expected 'ENDPROCEDURE'.", this.cursor.peek());
+      return null;
+    }
+
+    return {
+      kind: 'ClassProcedureDeclaration',
+      visibility,
+      name,
+      parameters,
+      body,
+      span: span(startToken.span.start, this.cursor.previous().span.end),
+    };
+  }
+
+  private parseClassFunction(
+    visibility: Visibility | null,
+    startToken: Token,
+  ): ClassFunctionDeclaration | null {
+    this.cursor.advance(); // FUNCTION
+    const name = this.parseClassMethodName();
+    if (!name) return null;
+
+    const parameters = this.parseParameterListOptional();
+
+    if (!this.cursor.match(TokenKind.Returns)) {
+      pushError(
+        this.diagnostics,
+        "Expected 'RETURNS' after FUNCTION parameter list.",
+        this.cursor.peek(),
+      );
+      return null;
+    }
+
+    const returnType = this.parseTypeName();
+    if (!returnType) return null;
+
+    this.skipNewlines();
+
+    const previous = this.bodyContext;
+    this.bodyContext = 'function';
+    const body = this.parseBlock(() => this.cursor.check(TokenKind.Endfunction));
+    this.bodyContext = previous;
+
+    if (!this.cursor.match(TokenKind.Endfunction)) {
+      pushError(this.diagnostics, "Expected 'ENDFUNCTION'.", this.cursor.peek());
+      return null;
+    }
+
+    return {
+      kind: 'ClassFunctionDeclaration',
+      visibility,
+      name,
+      parameters,
+      returnType,
+      body,
+      span: span(startToken.span.start, this.cursor.previous().span.end),
+    };
+  }
+
+  /** Method name after PROCEDURE/FUNCTION — accepts `NEW` for the constructor. */
+  private parseClassMethodName(): Identifier | null {
+    const token = this.cursor.peek();
+    if (token.kind === TokenKind.New) {
+      this.cursor.advance();
+      return { kind: 'Identifier', name: 'NEW', span: token.span };
+    }
+    return this.expressions().parseIdentifier();
+  }
+
+  /**
    * Optional `(…)` list. Bare `PROCEDURE Foo` and `PROCEDURE Foo()` both allowed.
+   *
+   * Cambridge allows grouped parameters sharing one type:
+   *   `(a, b : INTEGER, c : REAL)` → three individual {@link Parameter} nodes.
+   * Newlines inside the parentheses are skipped (multiline parameter lists).
    */
   private parseParameterListOptional(): Parameter[] {
     if (!this.cursor.match(TokenKind.LParen)) return [];
+    this.skipNewlines();
     if (this.cursor.match(TokenKind.RParen)) return [];
 
     const parameters: Parameter[] = [];
-    const first = this.parseParameter();
+    const first = this.parseParameterGroup();
     if (!first) {
       this.cursor.match(TokenKind.RParen);
       return parameters;
     }
-    parameters.push(first);
+    parameters.push(...first);
 
     while (this.cursor.match(TokenKind.Comma)) {
-      const next = this.parseParameter();
+      this.skipNewlines();
+      const next = this.parseParameterGroup();
       if (!next) break;
-      parameters.push(next);
+      parameters.push(...next);
     }
 
+    this.skipNewlines();
     if (!this.cursor.match(TokenKind.RParen)) {
       pushError(this.diagnostics, 'Expected ")" after parameter list.', this.cursor.peek());
     }
     return parameters;
   }
 
-  private parseParameter(): Parameter | null {
-    const name = this.expressions().parseIdentifier();
-    if (!name) return null;
+  /**
+   * One Cambridge parameter group: `Ident { "," Ident } ":" TypeName`.
+   * Expanded into one {@link Parameter} per identifier (shared type / span end).
+   */
+  private parseParameterGroup(): Parameter[] | null {
+    this.skipNewlines();
+    const names = [];
+    const first = this.expressions().parseIdentifier();
+    if (!first) return null;
+    names.push(first);
 
+    while (this.cursor.match(TokenKind.Comma)) {
+      this.skipNewlines();
+      // `a, : INTEGER` — comma must introduce another identifier, not the colon.
+      if (this.cursor.check(TokenKind.Colon)) {
+        pushError(
+          this.diagnostics,
+          "Expected identifier after ',' in parameter list.",
+          this.cursor.peek(),
+        );
+        return null;
+      }
+      // `a,, b : INTEGER` or trailing `a,)` before a type — empty name slot.
+      if (
+        this.cursor.check(TokenKind.Comma) ||
+        this.cursor.check(TokenKind.RParen)
+      ) {
+        pushError(
+          this.diagnostics,
+          "Expected identifier after ',' in parameter list.",
+          this.cursor.peek(),
+        );
+        return null;
+      }
+      const next = this.expressions().parseIdentifier();
+      if (!next) return null;
+      names.push(next);
+    }
+
+    this.skipNewlines();
     if (!this.cursor.match(TokenKind.Colon)) {
-      pushError(this.diagnostics, "Expected ':' after parameter name.", this.cursor.peek());
+      pushError(
+        this.diagnostics,
+        "Expected ':' after parameter name.",
+        this.cursor.peek(),
+      );
       return null;
     }
 
     const typeName = this.parseTypeName();
     if (!typeName) return null;
 
-    return {
-      kind: 'Parameter',
+    return names.map((name) => ({
+      kind: 'Parameter' as const,
       name,
       typeName,
       span: span(name.span.start, typeName.span.end),
-    };
+    }));
   }
 
   private parseDeclare(): DeclareStatement | null {
@@ -603,7 +906,7 @@ export class Parser {
     }
     pushError(
       this.diagnostics,
-      'Expected a type name (INTEGER, REAL, STRING, BOOLEAN, CHAR, or a TYPE name).',
+      'Expected a type name (INTEGER, REAL, STRING, BOOLEAN, CHAR, DATE, or a TYPE name).',
       token,
     );
     return null;
@@ -700,8 +1003,20 @@ export class Parser {
 
   private parseCallStatement(): CallStatement | null {
     const startToken = this.cursor.advance(); // CALL
-    const callee = this.expressions().parseIdentifier();
-    if (!callee) return null;
+    const id = this.expressions().parseIdentifier();
+    if (!id) return null;
+
+    let callee: Identifier | MemberExpression = id;
+    if (this.cursor.match(TokenKind.Dot)) {
+      const property = this.expressions().parseIdentifier();
+      if (!property) return null;
+      callee = {
+        kind: 'MemberExpression',
+        object: id,
+        property,
+        span: span(id.span.start, property.span.end),
+      };
+    }
 
     let args: Expression[] = [];
     if (this.cursor.match(TokenKind.LParen)) {
@@ -1247,38 +1562,57 @@ export class Parser {
     return fallback;
   }
 
-  private parseAssignment(): AssignmentStatement | null {
+  /**
+   * Statements starting with an identifier or `SUPER` are ambiguous until we
+   * see whether `←` follows: `Total ← A + B` is an assignment, while
+   * `Player.SetAttempts(5)` and `SUPER.NEW(GivenName)` are call statements
+   * (no `CALL` keyword — Cambridge OOP syntax).
+   */
+  private parseAssignmentOrExpressionStatement(): AssignmentStatement | ExpressionStatement | null {
     const expr = this.expressions();
-    const target = expr.parseAssignTarget();
-    if (!target) return null;
+    const base = expr.parsePrimary();
+    if (!base) return null;
 
-    if (target.kind === 'Identifier' && this.cursor.check(TokenKind.LParen)) {
-      pushError(
-        this.diagnostics,
-        'Cannot assign to a function call. Use a variable or CALL a procedure.',
-        this.cursor.peek(),
-      );
-      return null;
+    if (this.cursor.match(TokenKind.Assign)) {
+      if (
+        base.kind !== 'Identifier' &&
+        base.kind !== 'IndexExpression' &&
+        base.kind !== 'MemberExpression'
+      ) {
+        pushError(
+          this.diagnostics,
+          'Invalid assignment target.',
+          this.cursor.previous(),
+          'E_ASSIGN_TARGET',
+        );
+        return null;
+      }
+
+      const value = expr.parseExpression();
+      if (!value) return null;
+
+      return {
+        kind: 'AssignmentStatement',
+        target: base,
+        value,
+        span: span(base.span.start, value.span.end),
+      };
     }
 
-    if (!this.cursor.match(TokenKind.Assign)) {
-      pushError(
-        this.diagnostics,
-        "Expected '←' (or '<-') after identifier in assignment.",
-        this.cursor.peek(),
-      );
-      return null;
+    if (base.kind === 'MethodCallExpression' || base.kind === 'CallExpression') {
+      return {
+        kind: 'ExpressionStatement',
+        expression: base,
+        span: base.span,
+      };
     }
 
-    const value = expr.parseExpression();
-    if (!value) return null;
-
-    return {
-      kind: 'AssignmentStatement',
-      target,
-      value,
-      span: span(target.span.start, value.span.end),
-    };
+    pushError(
+      this.diagnostics,
+      "Expected '←' (or '<-') after identifier, or a procedure/method call.",
+      this.cursor.peek(),
+    );
+    return null;
   }
 
   private parseInput(): InputStatement | null {
@@ -1388,6 +1722,7 @@ function isUnexpectedStructuralKeyword(kind: TokenKind): boolean {
     kind === TokenKind.Endprocedure ||
     kind === TokenKind.Endfunction ||
     kind === TokenKind.Endtype ||
+    kind === TokenKind.Endclass ||
     kind === TokenKind.Returns
   );
 }
@@ -1416,6 +1751,8 @@ function exprKey(expr: Expression): string {
       return `'${expr.value}'`;
     case 'BooleanLiteral':
       return expr.value ? 'TRUE' : 'FALSE';
+    case 'DateLiteral':
+      return `${expr.day}/${expr.month}/${expr.year}`;
     case 'Identifier':
       return expr.name;
     case 'UnaryExpression':
@@ -1432,6 +1769,12 @@ function exprKey(expr: Expression): string {
       return `${expr.callee.name}(${expr.args.map(exprKey).join(', ')})`;
     case 'EofExpression':
       return `EOF(${exprKey(expr.fileName)})`;
+    case 'SuperExpression':
+      return 'SUPER';
+    case 'NewExpression':
+      return `NEW ${expr.className.name}(${expr.args.map(exprKey).join(', ')})`;
+    case 'MethodCallExpression':
+      return `${exprKey(expr.object)}.${expr.method.name}(${expr.args.map(exprKey).join(', ')})`;
     default: {
       const _exhaustive: never = expr;
       return String(_exhaustive);

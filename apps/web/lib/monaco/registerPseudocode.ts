@@ -7,7 +7,7 @@ import { PSEUDOCODE_LANGUAGE_ID } from './protocol';
 
 let registered = false;
 
-const KEYWORDS = [
+export const KEYWORDS = [
   'DECLARE',
   'CONSTANT',
   'TYPE',
@@ -49,9 +49,26 @@ const KEYWORDS = [
   'READFILE',
   'WRITEFILE',
   'CLOSEFILE',
+  'CLASS',
+  'ENDCLASS',
+  'PUBLIC',
+  'PRIVATE',
+  'INHERITS',
+  'SUPER',
+  'NEW',
 ];
 
-const TYPES = ['INTEGER', 'REAL', 'STRING', 'BOOLEAN', 'CHAR', 'ARRAY'];
+export const TYPES = ['INTEGER', 'REAL', 'STRING', 'BOOLEAN', 'CHAR', 'DATE', 'ARRAY'];
+
+/** Exported for unit tests — must stay in sync with `setLanguageConfiguration` below. */
+export const INDENT_INCREASE_PATTERN =
+  /^\s*(IF|ELSE|ELSEIF|WHILE|FOR|REPEAT|CASE|PROCEDURE|FUNCTION|TYPE|CLASS|OTHERWISE)\b/i;
+export const INDENT_DECREASE_PATTERN =
+  /^\s*(ENDIF|ENDWHILE|NEXT|UNTIL|ENDCASE|ENDPROCEDURE|ENDFUNCTION|ENDTYPE|ENDCLASS|ELSE|ELSEIF|OTHERWISE)\b/i;
+export const FOLDING_START_PATTERN =
+  /^\s*(IF|WHILE|FOR|REPEAT|CASE|PROCEDURE|FUNCTION|TYPE|CLASS)\b/i;
+export const FOLDING_END_PATTERN =
+  /^\s*(ENDIF|ENDWHILE|NEXT|UNTIL|ENDCASE|ENDPROCEDURE|ENDFUNCTION|ENDTYPE|ENDCLASS)\b/i;
 
 export function ensurePseudocodeLanguage(monaco: typeof Monaco): void {
   if (registered) return;
@@ -78,15 +95,13 @@ export function ensurePseudocodeLanguage(monaco: typeof Monaco): void {
       { open: "'", close: "'" },
     ],
     indentationRules: {
-      increaseIndentPattern:
-        /^\s*(IF|ELSE|ELSEIF|WHILE|FOR|REPEAT|CASE|PROCEDURE|FUNCTION|TYPE|OTHERWISE)\b/i,
-      decreaseIndentPattern:
-        /^\s*(ENDIF|ENDWHILE|NEXT|UNTIL|ENDCASE|ENDPROCEDURE|ENDFUNCTION|ENDTYPE|ELSE|ELSEIF|OTHERWISE)\b/i,
+      increaseIndentPattern: INDENT_INCREASE_PATTERN,
+      decreaseIndentPattern: INDENT_DECREASE_PATTERN,
     },
     folding: {
       markers: {
-        start: /^\s*(IF|WHILE|FOR|REPEAT|CASE|PROCEDURE|FUNCTION|TYPE)\b/i,
-        end: /^\s*(ENDIF|ENDWHILE|NEXT|UNTIL|ENDCASE|ENDPROCEDURE|ENDFUNCTION|ENDTYPE)\b/i,
+        start: FOLDING_START_PATTERN,
+        end: FOLDING_END_PATTERN,
       },
     },
   });
@@ -142,6 +157,12 @@ export function ensurePseudocodeLanguage(monaco: typeof Monaco): void {
       'INT',
       'RAND',
       'EOF',
+      'DAY',
+      'MONTH',
+      'YEAR',
+      'DAYINDEX',
+      'SETDATE',
+      'TODAY',
     ],
   });
 

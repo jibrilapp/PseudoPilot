@@ -18,7 +18,7 @@ Define exactly what PseudoPilot accepts as Cambridge-style pseudocode: keywords,
 | Tier | Contents | Product intent |
 | --- | --- | --- |
 | **Core (Paper 2)** | Declarations, constants, arrays, I/O, expressions, IF, CASE, FOR/WHILE/REPEAT, PROCEDURE/FUNCTION, text files, string/numeric builtins | Primary student IDE path |
-| **Extended (A Level)** | `TYPE` / `ENDTYPE` (record, enum, pointer, set), random files, OOP (`CLASS` / `INHERITS` / `NEW`) | Supported in the language document; implement after Core |
+| **Extended (A Level)** | `TYPE` / `ENDTYPE` (record, enum, pointer, set), random files, OOP (`CLASS` / `INHERITS` / `NEW`) | Record `TYPE` and OOP `CLASS` implemented; enum/pointer/set `TYPE` and random files remain |
 | **Exam-insert only** | Extra functions printed on a paper insert (e.g. `ASC`, `CHR`, `TO_UPPER`) | Accepted when registered as library stubs; not part of fixed dialect |
 
 ### 0.3 Presentation conventions (Cambridge §1)
@@ -48,7 +48,7 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | `CHAR` | Type name | ✅ | |
 | `STRING` | Type name | ✅ | |
 | `BOOLEAN` | Type name | ✅ | |
-| `DATE` | Type name | ❌ | |
+| `DATE` | Type name | ✅ | `dd/mm/yyyy` (Cambridge). There is **no** standalone `TIME` datatype in Cambridge 9618. |
 | `ARRAY` | Array type constructor | ✅ | |
 | `OF` | Part of `ARRAY[…] OF Type` and `CASE OF` | ✅ | |
 | `TYPE` | User-defined record type | ✅ records | Extended (enum/pointer/set ❌) |
@@ -158,13 +158,16 @@ These are identifiers with special semantics; PseudoPilot treats them as **built
 
 | Keyword | Role | Parser |
 | --- | --- | --- |
-| `CLASS` | Class definition | ❌ |
-| `ENDCLASS` | End class | ❌ |
-| `PUBLIC` | Access | ❌ |
-| `PRIVATE` | Access | ❌ |
-| `INHERITS` | Inheritance | ❌ |
-| `SUPER` | Parent call | ❌ |
-| `NEW` | Constructor / instantiation | ❌ |
+| `CLASS` | Class definition | ✅ |
+| `ENDCLASS` | End class | ✅ |
+| `PUBLIC` | Access | ✅ |
+| `PRIVATE` | Access | ✅ |
+| `INHERITS` | Inheritance | ✅ |
+| `SUPER` | Parent call | ✅ |
+| `NEW` | Constructor / instantiation | ✅ |
+
+See [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md) for the full model
+(single inheritance only, `PRIVATE` scoped to the defining class, reference semantics).
 
 ### 1.11 Complete reserved word index (alphabetical)
 
@@ -269,7 +272,9 @@ From highest to lowest (PseudoPilot Pratt table):
 | `CHAR` | Single character | ✅ |
 | `STRING` | Character sequence | ✅ |
 | `BOOLEAN` | `TRUE` / `FALSE` | ✅ |
-| `DATE` | Calendar date | ❌ |
+| `DATE` | Calendar date (`dd/mm/yyyy`) | ✅ |
+
+Cambridge 9618 does **not** define a standalone `TIME` datatype; PseudoPilot does not invent one.
 
 ### 3.2 Array types
 
@@ -286,7 +291,9 @@ See §6. Fixed-length, homogeneous elements, consecutive integer indices.
 
 ### 3.4 Class types (Extended / OOP)
 
-`CLASS` … `ENDCLASS` with `PUBLIC` / `PRIVATE` members — ❌
+`CLASS` … `ENDCLASS` with `PUBLIC` / `PRIVATE` members, single-inheritance `INHERITS`,
+`SUPER`, and `NEW` instantiation — ✅. See
+[`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md).
 
 ---
 
@@ -312,11 +319,24 @@ See §6. Fixed-length, homogeneous elements, consecutive integer indices.
 - `LCASE` / `UCASE` in the teacher guide take **CHAR**; exams sometimes allow STRING via insert — see §13.
 - There is **no** standard `LEFT` in the teacher guide index; if an exam provides it, treat as insert.
 
-### 4.2 Exam-insert builtins
+### 4.2 DATE helpers (Cambridge Paper 2 insert)
+
+These are the Cambridge DATE insert builtins. There is no `TIME` datatype or clock-of-day insert pack in this dialect.
+
+| Signature | Description | Parser | Runtime |
+| --- | --- | --- | --- |
+| `DAY(ThisDate : DATE) RETURNS INTEGER` | Day number | ✅ | ✅ |
+| `MONTH(ThisDate : DATE) RETURNS INTEGER` | Month number | ✅ | ✅ |
+| `YEAR(ThisDate : DATE) RETURNS INTEGER` | Year number | ✅ | ✅ |
+| `DAYINDEX(ThisDate : DATE) RETURNS INTEGER` | Weekday (Sunday = 1 … Saturday = 7) | ✅ | ✅ |
+| `SETDATE(Day, Month, Year : INTEGER) RETURNS DATE` | Construct a DATE | ✅ | ✅ |
+| `TODAY() RETURNS DATE` | Current calendar DATE | ✅ | ✅ |
+
+### 4.3 Exam-insert builtins
 
 Paper 2 inserts may define additional functions (`ASC`, `CHR`, `IS_NUM`, `TO_UPPER`, …). PseudoPilot will:
 
-1. Ship a **builtin registry** for the fixed dialect (§4.1).
+1. Ship a **builtin registry** for the fixed dialect (§4.1) and DATE helpers (§4.2).
 2. Allow an exam/library pack to register extra names with signatures.
 3. Never invent undocumented builtins in generated translation by default.
 
@@ -409,7 +429,7 @@ CALL <Name>                    // empty args — Cambridge allows CALL Name()
 
 | Rule | PseudoPilot |
 | --- | --- |
-| Parameters typed `Name : Type` | ✅ |
+| Parameters typed `Name : Type` or `Name1, Name2 : Type` (expanded) | ✅ |
 | Nested procedure declarations | ❌ Rejected (`E_NESTED_ROUTINE`) |
 | `RETURN` inside procedure | ❌ Rejected |
 | Default parameter mode | By value (Cambridge) |
@@ -434,12 +454,21 @@ ENDFUNCTION
 ### 7.3 Parameters
 
 ```
-paramList = param ("," param)*
-param     = ["BYVAL" | "BYREF"] Ident ":" TypeName
+paramList  = paramGroup ("," paramGroup)*
+paramGroup = Ident ("," Ident)* ":" TypeName
 ```
 
-Today: only `Ident ":" TypeName` ✅  
-`BYVAL`/`BYREF` ❌
+Cambridge allows several identifiers to share one type annotation, e.g.
+`FUNCTION F(a, b : INTEGER, c : REAL)`. The parser **expands** each group into
+individual `Parameter` AST nodes (`a : INTEGER`, `b : INTEGER`, `c : REAL`) —
+there is no grouped-parameter node.
+
+| Form | Parser |
+| --- | --- |
+| `Ident ":" TypeName` | ✅ |
+| `Ident ("," Ident)+ ":" TypeName` | ✅ (expanded) |
+| Mixed groups in one list | ✅ |
+| `BYVAL` / `BYREF` | ❌ |
 
 ### 7.4 DECLARE scope
 
@@ -604,7 +633,7 @@ An expression is one of:
 | String | `"…"` double quotes; `""` empty | ✅ | Escape policy: minimal (`\\`, `\"`) TBD |
 | Char | `'x'` single quotes | ❌ | Not yet distinct from identifiers/strings |
 | Boolean | `TRUE`, `FALSE` | ✅ | |
-| Date | typically `dd/mm/yyyy` | ❌ | Prefer `DECLARE d : DATE` + explicit format comments |
+| Date | typically `dd/mm/yyyy` | ✅ | Lexed as a single DATE literal (not division) |
 
 ---
 

@@ -202,6 +202,19 @@ describe('CompilerService façade', () => {
   it('returns null hover without feature provider', () => {
     const cs = new CompilerService();
     cs.openDocument(URI, SMALL, 1);
-    expect(cs.getHover(URI, { line: 1, character: 0 })).toBeNull();
+    expect(cs.getHover(URI, { line: 0, character: 8 })).toBeNull();
+  });
+
+  it('parses and checks DATE declarations', () => {
+    const cs = new CompilerService();
+    const source = `
+DECLARE D : DATE
+D ← 04/10/2003
+OUTPUT YEAR(D)
+`;
+    cs.openDocument(URI, source, 1);
+    expect(cs.getDiagnostics(URI).filter((d) => d.severity === 'error')).toEqual([]);
+    expect(cs.getSymbols(URI).some((s) => s.name === 'D')).toBe(true);
+    expect(cs.getAst(URI)).not.toBeNull();
   });
 });

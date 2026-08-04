@@ -1,6 +1,7 @@
 import type {
   IrAssignTarget,
   IrBinaryExpression,
+  IrClassMember,
   IrExpression,
   IrIndexExpression,
   IrMemberExpression,
@@ -38,6 +39,11 @@ function printIndex(expr: IrIndexExpression): string {
 }
 
 function printMember(expr: IrMemberExpression): string {
+  // `self.Field` is a lowering artifact (Cambridge class bodies reference
+  // their own fields bare, with no `self`/`this`) — strip it back to `Field`.
+  if (expr.object.kind === 'IrIdentifier' && expr.object.name === 'self') {
+    return expr.property;
+  }
   return `${printExpr(expr.object, POSTFIX_PRECEDENCE)}.${expr.property}`;
 }
 
@@ -68,6 +74,8 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return `'${escapeCambridgeChar(expr.value)}'`;
     case 'IrBooleanLiteral':
       return formatBooleanCambridge(expr.value);
+    case 'IrDateLiteral':
+      return `${String(expr.day).padStart(2, '0')}/${String(expr.month).padStart(2, '0')}/${String(expr.year).padStart(4, '0')}`;
     case 'IrIdentifier':
       return expr.name;
     case 'IrIndexExpression':
@@ -87,6 +95,17 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return printUnary(expr, parentPrec);
     case 'IrBinaryExpression':
       return printBinary(expr, parentPrec);
+    case 'IrNewExpression':
+      return `NEW ${expr.className}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
+    case 'IrMethodCallExpression': {
+      const obj =
+        expr.object.kind === 'IrSuperExpression'
+          ? 'SUPER'
+          : printExpr(expr.object, POSTFIX_PRECEDENCE);
+      return `${obj}.${expr.method}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
+    }
+    case 'IrSuperExpression':
+      return 'SUPER';
     default: {
       const _exhaustive: never = expr;
       return _exhaustive;
@@ -139,6 +158,35 @@ function printBlock(
   for (const stmt of statements) {
     lines.push(...printStatement(stmt, arrow, level));
   }
+  return lines;
+}
+
+function printClassMember(
+  member: IrClassMember,
+  arrow: string,
+  level: number,
+): string[] {
+  const p = pad(level);
+  const vis = member.visibility;
+  if (member.kind === 'IrClassProperty') {
+    return [
+      `${p}${vis} ${member.names.join(', ')} : ${printTypeRef(member.typeRef)}`,
+    ];
+  }
+  const params = member.parameters
+    .map((param) => `${param.name} : ${printSimpleType(param.typeName)}`)
+    .join(', ');
+  if (member.kind === 'IrClassProcedure') {
+    const lines = [`${p}${vis} PROCEDURE ${member.name}(${params})`];
+    lines.push(...printBlock(member.body, arrow, level + 1));
+    lines.push(`${p}ENDPROCEDURE`);
+    return lines;
+  }
+  const lines = [
+    `${p}${vis} FUNCTION ${member.name}(${params}) RETURNS ${printSimpleType(member.returnType)}`,
+  ];
+  lines.push(...printBlock(member.body, arrow, level + 1));
+  lines.push(`${p}ENDFUNCTION`);
   return lines;
 }
 
@@ -290,6 +338,18 @@ function printStatement(
     case 'IrCloseFileStatement':
       lines.push(`${p}CLOSEFILE ${printExpr(stmt.fileName, 0)}`);
       break;
+    case 'IrClassDeclaration': {
+      const inheritsPart = stmt.inherits ? ` INHERITS ${stmt.inherits}` : '';
+      lines.push(`${p}CLASS ${stmt.name}${inheritsPart}`);
+      for (const member of stmt.members) {
+        lines.push(...printClassMember(member, arrow, level + 1));
+      }
+      lines.push(`${p}ENDCLASS`);
+      break;
+    }
+    case 'IrExpressionStatement':
+      lines.push(`${p}${printExpr(stmt.expression, 0)}`);
+      break;
     default: {
       const _exhaustive: never = stmt;
       return _exhaustive;
@@ -308,6 +368,7 @@ function printStatement(
     stmt.kind !== 'IrProcedureDeclaration' &&
     stmt.kind !== 'IrFunctionDeclaration' &&
     stmt.kind !== 'IrTypeDeclaration' &&
+    stmt.kind !== 'IrClassDeclaration' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('//')
   ) {

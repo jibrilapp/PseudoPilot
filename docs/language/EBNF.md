@@ -68,7 +68,7 @@ block           = { NL } { ( statement | NL ) } ;
 routine_decl    = procedure_decl                          (* ✅ *)
                 | function_decl                           (* ✅ *)
                 | type_decl                               (* ❌ Extended *)
-                | class_decl                              (* ❌ Extended *)
+                | class_decl                              (* ✅ Extended *)
                 ;
 
 procedure_decl  = "PROCEDURE" identifier [ param_list ] NL
@@ -82,10 +82,15 @@ function_decl   = "FUNCTION" identifier [ param_list ]
                   "ENDFUNCTION"                           (* ✅ *)
                 ;
 
-param_list      = "(" [ param { "," param } ] ")" ;       (* ✅ *)
+param_list      = "(" [ param_group { "," param_group } ] ")" ;  (* ✅ *)
 
+param_group     = identifier { "," identifier } ":" type_name ;
+                  (* Expanded to one Parameter AST node per identifier.
+                     BYVAL/BYREF ❌; grouped Ident list ✅ Cambridge 9618 *)
+
+(* Legacy alias — each expanded param is still Ident ":" TypeName in the AST. *)
 param           = [ "BYVAL" | "BYREF" ] identifier ":" type_name ;
-                  (* BYVAL/BYREF ❌; Ident:Type ✅ *)
+                  (* BYVAL/BYREF ❌; produced by expanding param_group *)
 
 declare_stmt    = "DECLARE" identifier { "," identifier }
                   ":" type_ref ;                          (* ✅ *)
@@ -97,8 +102,8 @@ type_ref        = type_name                               (* ✅ *)
                 ;
 
 type_name       = "INTEGER" | "REAL" | "CHAR" | "STRING"
-                | "BOOLEAN" | "DATE"                      (* DATE ❌ *)
-                | identifier                              (* user type ❌ *)
+                | "BOOLEAN" | "DATE"                      (* ✅; no TIME datatype *)
+                | identifier                              (* user type / CLASS *)
                 ;
 
 array_type      = "ARRAY" "[" dimension { "," dimension } "]"
@@ -263,7 +268,7 @@ literal         = integer_lit                             (* ✅ *)
                 | string_lit                              (* ✅ *)
                 | char_lit                                (* ❌ *)
                 | "TRUE" | "FALSE"                        (* ✅ *)
-                | date_lit                                (* ❌ *)
+                | date_lit                                (* ✅ dd/mm/yyyy *)
                 ;
 
 index_expr      = identifier "[" expression { "," expression } "]" ;
@@ -277,7 +282,7 @@ User function calls share the `identifier "(" … ")"` postfix form with builtin
 
 ---
 
-## 6. Extended: TYPE and CLASS (❌)
+## 6. Extended: TYPE and CLASS
 
 ```ebnf
 type_decl       = enum_type
@@ -286,29 +291,43 @@ type_decl       = enum_type
                 | set_type ;
 
 enum_type       = "TYPE" identifier "="
-                  "(" identifier { "," identifier } ")" ;
+                  "(" identifier { "," identifier } ")" ;                (* ❌ *)
 
-pointer_type    = "TYPE" identifier "=" "^" type_name ;
+pointer_type    = "TYPE" identifier "=" "^" type_name ;                  (* ❌ *)
 
 record_type     = "TYPE" identifier NL
                   { declare_stmt NL }
-                  "ENDTYPE" ;                             (* ✅ records *)
+                  "ENDTYPE" ;                                            (* ✅ records *)
 
 set_type        = "TYPE" identifier "=" "SET" "OF" type_name NL
                   "DEFINE" identifier
-                  "(" literal { "," literal } ")" ":" identifier ;
+                  "(" literal { "," literal } ")" ":" identifier ;       (* ❌ *)
 
 class_decl      = "CLASS" identifier [ "INHERITS" identifier ] NL
                   { class_member }
-                  "ENDCLASS" ;
+                  "ENDCLASS" ;                                           (* ✅ *)
 
-class_member    = [ "PUBLIC" | "PRIVATE" ]
-                  ( declare_stmt
-                  | procedure_decl
-                  | function_decl
-                  ) ;
+class_member    = class_property
+                | class_procedure
+                | class_function ;
 
-(* Instantiation: target ← NEW ClassName ( args )  — ❌ *)
+(* DECLARE is optional before a class property — unlike record_type's
+   declare_stmt, Cambridge's own OOP examples omit it. *)
+class_property  = [ "PUBLIC" | "PRIVATE" ] [ "DECLARE" ]
+                  identifier { "," identifier } ":" type_name ;          (* ✅ *)
+
+class_procedure = [ "PUBLIC" | "PRIVATE" ] "PROCEDURE" identifier
+                  "(" [ param_list ] ")" NL
+                  { statement }
+                  "ENDPROCEDURE" ;                                       (* ✅ — NEW is a valid name *)
+
+class_function  = [ "PUBLIC" | "PRIVATE" ] "FUNCTION" identifier
+                  "(" [ param_list ] ")" "RETURNS" type_name NL
+                  { statement }
+                  "ENDFUNCTION" ;                                        (* ✅ *)
+
+(* Instantiation: target ← NEW ClassName "(" [ arg_list ] ")"            (* ✅ *)
+   Super call:    SUPER "." identifier "(" [ arg_list ] ")"              (* ✅ — NEW or any inherited method *) *)
 ```
 
 ---
@@ -333,8 +352,9 @@ class_member    = [ "PUBLIC" | "PRIVATE" ]
 | Core expression operators | ✅ |
 | `&` concat | ✅ |
 | Builtins LENGTH/RIGHT/… | ✅ |
-| CHAR / DATE literals | ❌ / ❌ |
+| CHAR / DATE literals | ✅ / ✅ |
 | TYPE records / member access | ✅ |
-| TYPE enum / pointer / set / CLASS | ❌ |
+| TYPE enum / pointer / set | ❌ |
+| CLASS / ENDCLASS / PUBLIC / PRIVATE / INHERITS / SUPER / NEW | ✅ |
 
 Exact itemised checklists: [PARSER_COVERAGE.md](./PARSER_COVERAGE.md).

@@ -16,7 +16,8 @@ export type AstNode =
   | TypeName
   | NamedType
   | ArrayType
-  | ArrayDimension;
+  | ArrayDimension
+  | ClassMember;
 
 export type Program = {
   readonly kind: 'Program';
@@ -43,9 +44,17 @@ export type Statement =
   | OpenFileStatement
   | ReadFileStatement
   | WriteFileStatement
-  | CloseFileStatement;
+  | CloseFileStatement
+  | ClassDeclaration
+  | ExpressionStatement;
 
-export type TypeNameKind = 'INTEGER' | 'REAL' | 'STRING' | 'BOOLEAN' | 'CHAR';
+export type TypeNameKind =
+  | 'INTEGER'
+  | 'REAL'
+  | 'STRING'
+  | 'BOOLEAN'
+  | 'CHAR'
+  | 'DATE';
 
 /** Builtin scalar type (INTEGER, REAL, …). */
 export type TypeName = {
@@ -149,8 +158,18 @@ export type FunctionDeclaration = {
 
 export type CallStatement = {
   readonly kind: 'CallStatement';
-  readonly callee: Identifier;
+  readonly callee: Identifier | MemberExpression;
   readonly args: Expression[];
+  readonly span: SourceSpan;
+};
+
+/**
+ * Standalone method/procedure call used as a statement, e.g.
+ * `Player.SetAttempts(5)` or `DoSomething(1)` — no `CALL` keyword.
+ */
+export type ExpressionStatement = {
+  readonly kind: 'ExpressionStatement';
+  readonly expression: Expression;
   readonly span: SourceSpan;
 };
 
@@ -284,12 +303,67 @@ export type CloseFileStatement = {
   readonly span: SourceSpan;
 };
 
+export type Visibility = 'PUBLIC' | 'PRIVATE';
+
+/**
+ * Class property: `PRIVATE Name : STRING` (DECLARE keyword optional).
+ * `visibility` is `null` when omitted (Cambridge defaults members to public,
+ * though the guide's examples always specify PUBLIC/PRIVATE explicitly).
+ */
+export type ClassPropertyDeclaration = {
+  readonly kind: 'ClassPropertyDeclaration';
+  readonly visibility: Visibility | null;
+  readonly names: Identifier[];
+  readonly typeRef: TypeReference;
+  readonly span: SourceSpan;
+};
+
+/** Class method with no return value. `name` is `NEW` for the constructor. */
+export type ClassProcedureDeclaration = {
+  readonly kind: 'ClassProcedureDeclaration';
+  readonly visibility: Visibility | null;
+  readonly name: Identifier;
+  readonly parameters: Parameter[];
+  readonly body: Statement[];
+  readonly span: SourceSpan;
+};
+
+/** Class method returning a value. */
+export type ClassFunctionDeclaration = {
+  readonly kind: 'ClassFunctionDeclaration';
+  readonly visibility: Visibility | null;
+  readonly name: Identifier;
+  readonly parameters: Parameter[];
+  readonly returnType: SimpleType;
+  readonly body: Statement[];
+  readonly span: SourceSpan;
+};
+
+export type ClassMember =
+  | ClassPropertyDeclaration
+  | ClassProcedureDeclaration
+  | ClassFunctionDeclaration;
+
+/**
+ * CLASS Name [INHERITS Parent]
+ *   { property | PROCEDURE … ENDPROCEDURE | FUNCTION … ENDFUNCTION }
+ * ENDCLASS
+ */
+export type ClassDeclaration = {
+  readonly kind: 'ClassDeclaration';
+  readonly name: Identifier;
+  readonly inherits: Identifier | null;
+  readonly members: ClassMember[];
+  readonly span: SourceSpan;
+};
+
 export type Expression =
   | IntegerLiteral
   | RealLiteral
   | StringLiteral
   | CharLiteral
   | BooleanLiteral
+  | DateLiteral
   | Identifier
   | UnaryExpression
   | BinaryExpression
@@ -297,7 +371,10 @@ export type Expression =
   | CallExpression
   | IndexExpression
   | MemberExpression
-  | EofExpression;
+  | EofExpression
+  | SuperExpression
+  | NewExpression
+  | MethodCallExpression;
 
 export type CallExpression = {
   readonly kind: 'CallExpression';
@@ -332,6 +409,29 @@ export type EofExpression = {
   readonly span: SourceSpan;
 };
 
+/** `SUPER` — only meaningful as the object of a `SUPER.NEW(...)` method call. */
+export type SuperExpression = {
+  readonly kind: 'SuperExpression';
+  readonly span: SourceSpan;
+};
+
+/** `NEW ClassName(args)` — instantiates a class. */
+export type NewExpression = {
+  readonly kind: 'NewExpression';
+  readonly className: Identifier;
+  readonly args: Expression[];
+  readonly span: SourceSpan;
+};
+
+/** `Object.Method(args)` / `SUPER.NEW(args)` — method call without `CALL`. */
+export type MethodCallExpression = {
+  readonly kind: 'MethodCallExpression';
+  readonly object: Expression;
+  readonly method: Identifier;
+  readonly args: Expression[];
+  readonly span: SourceSpan;
+};
+
 export type IntegerLiteral = {
   readonly kind: 'IntegerLiteral';
   readonly value: number;
@@ -360,6 +460,15 @@ export type CharLiteral = {
 export type BooleanLiteral = {
   readonly kind: 'BooleanLiteral';
   readonly value: boolean;
+  readonly span: SourceSpan;
+};
+
+/** Cambridge DATE literal `dd/mm/yyyy`. */
+export type DateLiteral = {
+  readonly kind: 'DateLiteral';
+  readonly day: number;
+  readonly month: number;
+  readonly year: number;
   readonly span: SourceSpan;
 };
 

@@ -24,11 +24,11 @@ Bidirectional **Cambridge International Computer Science (9618) pseudocode ↔ P
 | `apps/web` | Student IDE: **Monaco** editor, Run / Debug / Console / Variables — interpreter in a **Web Worker**; VFS for files |
 | AI coach / remote OS sandbox | Not yet |
 
-**Interpreter supported subset:** assignment, I/O (host), expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, arrays (bounds-checked), builtins, `&`, text file I/O (VFS).
+**Interpreter supported subset:** assignment, I/O (host), expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, arrays (bounds-checked), builtins, `&`, text file I/O (VFS), `TYPE` records, and `CLASS` OOP (single inheritance, `PUBLIC`/`PRIVATE`, `SUPER`, `NEW`).
 
-**Translator supported subset (V12):** same Core surface for translation including text file I/O (no BYREF / DATE / OOP / RANDOM files).
+**Translator supported subset (V14):** same Core surface for translation including text file I/O, `TYPE` records, and `CLASS` → Python class (forward only — no BYREF / DATE / RANDOM files / enum-pointer-SET TYPE).
 
-Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`TYPE_SYSTEM.md`](./docs/language/TYPE_SYSTEM.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md), [`LANGUAGE_SERVICE.md`](./docs/language/LANGUAGE_SERVICE.md), [`INCREMENTAL_COMPILATION.md`](./docs/language/INCREMENTAL_COMPILATION.md)). Testing: [`docs/TESTING.md`](./docs/TESTING.md). IDE Monaco: [`docs/ide/MONACO.md`](./docs/ide/MONACO.md). IDE runtime: [`apps/web/lib/runtime/README.md`](./apps/web/lib/runtime/README.md). Execution worker: [`apps/web/lib/worker/README.md`](./apps/web/lib/worker/README.md). Debugger: [`apps/web/lib/debugger/README.md`](./apps/web/lib/debugger/README.md). Files: [`packages/interpreter/src/files/README.md`](./packages/interpreter/src/files/README.md).
+Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`TYPE_SYSTEM.md`](./docs/language/TYPE_SYSTEM.md), [`OBJECT_ORIENTED_PROGRAMMING.md`](./docs/language/OBJECT_ORIENTED_PROGRAMMING.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md), [`LANGUAGE_SERVICE.md`](./docs/language/LANGUAGE_SERVICE.md), [`INCREMENTAL_COMPILATION.md`](./docs/language/INCREMENTAL_COMPILATION.md)). Testing: [`docs/TESTING.md`](./docs/TESTING.md). IDE Monaco: [`docs/ide/MONACO.md`](./docs/ide/MONACO.md). IDE runtime: [`apps/web/lib/runtime/README.md`](./apps/web/lib/runtime/README.md). Execution worker: [`apps/web/lib/worker/README.md`](./apps/web/lib/worker/README.md). Debugger: [`apps/web/lib/debugger/README.md`](./apps/web/lib/debugger/README.md). Files: [`packages/interpreter/src/files/README.md`](./packages/interpreter/src/files/README.md).
 
 ---
 

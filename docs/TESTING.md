@@ -74,7 +74,7 @@ Shared fixtures placeholder: `tests/corpus/` (points authors at the conformance 
 
 ## Known exclusions
 
-- `BYREF` / `BYVAL`, DATE, OOP, RANDOM files
+- `BYREF` / `BYVAL`, RANDOM files
 - Full Py→Cam fidelity for every builtin print form (see `skipRoundTrip`)
 - Cryptographic fuzz / property-based infinite generation
 - Real browser Worker flakiness (use `inProcess: true` in CI)

@@ -30,7 +30,11 @@ type BuiltinPythonEmit =
   | { readonly kind: 'slice_mid' }
   | { readonly kind: 'method'; readonly method: 'lower' | 'upper' }
   | { readonly kind: 'int' }
-  | { readonly kind: 'rand' };
+  | { readonly kind: 'rand' }
+  | { readonly kind: 'attr'; readonly attr: string }
+  | { readonly kind: 'date_ctor' }
+  | { readonly kind: 'today' }
+  | { readonly kind: 'dayindex' };
 
 /** Python emit strategy keyed by Cambridge builtin name (uppercase). */
 const PYTHON_EMIT: Readonly<Record<string, BuiltinPythonEmit>> = {
@@ -42,6 +46,12 @@ const PYTHON_EMIT: Readonly<Record<string, BuiltinPythonEmit>> = {
   UCASE: { kind: 'method', method: 'upper' },
   INT: { kind: 'int' },
   RAND: { kind: 'rand' },
+  DAY: { kind: 'attr', attr: 'day' },
+  MONTH: { kind: 'attr', attr: 'month' },
+  YEAR: { kind: 'attr', attr: 'year' },
+  DAYINDEX: { kind: 'dayindex' },
+  SETDATE: { kind: 'date_ctor' },
+  TODAY: { kind: 'today' },
 };
 
 /**
@@ -102,6 +112,18 @@ function emitPython(
     case 'rand':
       // Parenthesize with `*` precedence: RAND(n+1) → random.random() * (n + 1)
       return `random.random() * ${printExpr(args[0]!, BINARY_PRECEDENCE['*'])}`;
+    case 'attr':
+      return `${parenIfNeeded(args[0]!, printExpr)}.${emit.attr}`;
+    case 'date_ctor':
+      // Cambridge SETDATE(Day, Month, Year) → Python date(year, month, day)
+      return `date(${printExpr(args[2]!, 0)}, ${printExpr(args[1]!, 0)}, ${printExpr(args[0]!, 0)})`;
+    case 'today':
+      return 'date.today()';
+    case 'dayindex': {
+      // Sunday=1 … Saturday=7. Python weekday(): Monday=0 … Sunday=6.
+      const d = parenIfNeeded(args[0]!, printExpr);
+      return `((${d}.weekday() + 1) % 7 + 1)`;
+    }
     default: {
       const _exhaustive: never = emit;
       return _exhaustive;

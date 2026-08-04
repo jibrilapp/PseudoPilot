@@ -63,6 +63,7 @@ Lexer (TYPE, ENDTYPE, `.`)
 | STRING | `""` |
 | BOOLEAN | `FALSE` |
 | CHAR | `' '` |
+| DATE | `01/01/1900` |
 | nested record | fresh default instance |
 | ARRAY | allocated bounds, each slot defaulted |
 
@@ -78,18 +79,24 @@ The Python translator emits `copy.deepcopy(...)` for composite stores and call a
 ## Limitations
 
 - No enum / pointer / SET TYPE forms
-- No `CLASS` / OOP (next milestone)
+- `TYPE` itself remains records-only (no visibility, no methods, no inheritance) — see
+  [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md) for `CLASS`, which is
+  a separate, implemented construct
 - No `GETRECORD` / `PUTRECORD` file ops yet
 - Recursive records are forbidden (pointers deferred)
 - Whole-record / whole-array relational comparison is rejected (`C_COMPARE_TYPE`); compare fields or elements
 - Python→Cambridge reverse recovers `list[…]` TYPE fields when a `# ARRAY[l:u]` comment is present (PseudoPilot emit); hand-written lambdas without that comment get placeholder `1:1` bounds
 
-## Future OOP relationship
+## Relationship to `CLASS` (OOP)
 
-`TYPE` record symbols, member lookup (`MemberExpression`), and type resolution are designed so a future `CLASS` milestone can reuse:
+`CLASS` is implemented and reuses this `TYPE` infrastructure rather than duplicating it:
 
-- the same member-access AST
-- checker field / method lookup patterns
-- interpreter place resolution for `obj.member`
+- the same member-access AST (`MemberExpression`)
+- the same case-insensitive name table (`TYPE`/`CLASS` names collide: `C_DUP_TYPE`/`C_DUP_CLASS`)
+- the same field-symbol shape (`kind: 'field'`, `containerName`)
+- the same interpreter place resolution for `obj.member`
 
-Do **not** implement `CLASS` in this milestone.
+`TYPE` itself is unchanged by this — it remains a plain, value-semantics record with no
+visibility, no methods, and no inheritance. See
+[`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md) for the full `CLASS`
+model, including how object reference semantics differ from `TYPE`'s value semantics.

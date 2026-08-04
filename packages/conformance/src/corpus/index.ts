@@ -207,8 +207,6 @@ OUTPUT UCASE("AbC")
 OUTPUT INT(3.9)
 `,
     expectOutput: ['ABC', 'EF', 'BCD', 'abc', 'ABC', '3'],
-    // Py→Cam round-trip of nested builtin print forms is a known soft spot.
-    skipRoundTrip: true,
     tags: ['builtin', 'string'],
   },
   {
@@ -255,6 +253,68 @@ CALL Show(4)
 `,
     expectOutput: ['2', '4'],
     tags: ['procedure', 'for', 'if'],
+  },
+  {
+    id: 'type-record',
+    title: 'TYPE record field access',
+    source: `
+TYPE Point
+  DECLARE X : INTEGER
+  DECLARE Y : INTEGER
+ENDTYPE
+DECLARE P : Point
+P.X ← 3
+P.Y ← 4
+OUTPUT P.X + P.Y
+`,
+    expectOutput: ['7'],
+    tags: ['type', 'record'],
+  },
+  {
+    id: 'class-inherit',
+    title: 'CLASS with inheritance and method call',
+    source: `
+CLASS Pet
+  PRIVATE Name : STRING
+  PUBLIC PROCEDURE NEW(GivenName : STRING)
+    Name ← GivenName
+  ENDPROCEDURE
+  PUBLIC FUNCTION GetName() RETURNS STRING
+    RETURN Name
+  ENDFUNCTION
+ENDCLASS
+CLASS Cat INHERITS Pet
+  PRIVATE Breed : STRING
+  PUBLIC PROCEDURE NEW(GivenName : STRING, GivenBreed : STRING)
+    SUPER.NEW(GivenName)
+    Breed ← GivenBreed
+  ENDPROCEDURE
+ENDCLASS
+DECLARE MyCat : Cat
+MyCat ← NEW Cat("Kitty", "Shorthaired")
+OUTPUT MyCat.GetName()
+`,
+    expectOutput: ['Kitty'],
+    tags: ['class', 'oop', 'inheritance'],
+  },
+  {
+    id: 'date-basics',
+    title: 'DATE declare, compare, builtins',
+    source: `
+DECLARE D : DATE
+D ← SETDATE(4, 10, 2003)
+OUTPUT YEAR(D)
+OUTPUT MONTH(D)
+OUTPUT DAY(D)
+IF D = 04/10/2003 THEN
+  OUTPUT "date-match"
+ENDIF
+IF D < SETDATE(5, 10, 2003) THEN
+  OUTPUT "date-before"
+ENDIF
+`,
+    expectOutput: ['2003', '10', '4', 'date-match', 'date-before'],
+    tags: ['date'],
   },
 ];
 

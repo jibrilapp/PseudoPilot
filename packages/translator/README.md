@@ -2,16 +2,18 @@
 
 Bidirectional **Cambridge 9618 pseudocode ↔ Python** translation via a canonical IR.
 
-**Version:** `0.12.0` · **Subset id:** `v12-assign-io-expr-control-procedure-function-declare-check-builtins-files`
+**Version:** `0.14.0` · **Subset id:** `v14-assign-io-expr-control-procedure-function-declare-check-builtins-files-type-class`
 
 ## Supported subset (current)
 
 | Supported | Not supported |
 | --- | --- |
 | Assignment (`←` / `<-` / Python `=`) including `A[i]` / `A[i, j]` | BYREF / BYVAL |
-| `INPUT` / `OUTPUT` (incl. indexed targets) | DATE / OOP / Extended |
+| `INPUT` / `OUTPUT` (incl. indexed targets) | DATE / Extended beyond Cambridge Core |
 | Control flow, PROCEDURE/FUNCTION, DECLARE/CONSTANT | RANDOM files / REWRITE |
-| **Text file I/O** (`OPENFILE` / `READFILE` / `WRITEFILE` / `CLOSEFILE` / `EOF`) | |
+| **Text file I/O** (`OPENFILE` / `READFILE` / `WRITEFILE` / `CLOSEFILE` / `EOF`) | General Python (`lambda`, `async`, `with`, `try`, comprehensions as stmts, …) |
+| **`TYPE` / `ENDTYPE`** ↔ `@dataclass` (both directions) | |
+| **`CLASS` / `ENDCLASS`** ↔ plain `class` (both directions, PseudoPilot emit shape) | |
 | **Semantic check** via `@pseudopilot/checker` | |
 | **Builtins:** LENGTH, LEFT, RIGHT, MID, LCASE, UCASE, INT, RAND | |
 | **`&` string concatenation** | |
@@ -35,19 +37,24 @@ See [`docs/language/SEMANTICS.md`](../../docs/language/SEMANTICS.md) and [`docs/
 ## Usage
 
 ```ts
-import { translatePseudocodeToPython } from '@pseudopilot/translator';
+import {
+  translatePseudocodeToPython,
+  translatePythonToPseudocode,
+} from '@pseudopilot/translator';
 
 const py = translatePseudocodeToPython(`
 DECLARE Name : STRING
 OUTPUT UCASE(LEFT(Name, 3)) & "!"
 `);
+
+const cam = translatePythonToPseudocode(py.code);
 ```
 
-Pipeline: **parse → semantic check (default) → lower → print**.
+Pipeline: **parse → semantic check (default, Cambridge→Python) → lower → print**.  
+Reverse: **Python subset parse → IR → Cambridge print**.
 
 ## Test
 
 ```bash
 pnpm --filter @pseudopilot/translator test
-pnpm --filter @pseudopilot/checker test
 ```

@@ -36,7 +36,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | STRING literal | ✅ | ✅ | ✅ | ✅ | ✅ |
 | CHAR literal `'x'` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | BOOLEAN `TRUE`/`FALSE` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| DATE type + literal | ❌ | ❌ | ❌ | ❌ | ❌ |
+| DATE type + literal | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Type names in DECLARE / params | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
@@ -107,7 +107,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | --- | --- | --- | --- | --- | --- |
 | PROCEDURE definition | ✅ | ✅ | ✅ | ✅ | ✅ |
 | FUNCTION + RETURNS | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Typed parameters | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Typed parameters (incl. grouped `a, b : T`) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `BYVAL` / `BYREF` | ❌ | ❌ | ❌ | ❌ | ❌ |
 | `CALL` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `RETURN` | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -158,7 +158,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | Enum / pointer / set `TYPE` | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Record `TYPE` … `ENDTYPE` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Random files SEEK/GET/PUT | ❌ | ❌ | ❌ | ❌ | ❌ |
-| OOP CLASS / INHERITS / NEW | ❌ | ❌ | ❌ | ❌ | ❌ |
+| OOP CLASS / INHERITS / NEW | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -166,7 +166,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 
 | Feature | Status |
 | --- | --- |
-| Pseudocode ↔ Python translator | 🟡 | Control flow + routines + DECLARE/CONSTANT + check + builtins/`&` + **text files**; no BYREF |
+| Pseudocode ↔ Python translator | 🟢 | Control flow + routines + DECLARE/CONSTANT + check + builtins/`&` + text files + **TYPE** + **CLASS** (bidirectional for PseudoPilot emit shapes); no BYREF / general Python |
 | **Cambridge interpreter** | ✅ | AST execution via `@pseudopilot/interpreter` — see [`INTERPRETER.md`](./INTERPRETER.md) |
 | **Web IDE Run integration** | ✅ | `apps/web/lib/runtime` — Run/Stop/Restart, Console INPUT, Variables |
 | **Web IDE Debugger** | ✅ | `apps/web/lib/debugger` — breakpoints, pause/continue, step into/over/out |
@@ -189,7 +189,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 1. ✅ Iteration: `WHILE` ✅, `REPEAT` ✅, `FOR` ✅ (+ `STEP`)
 2. ✅ String `&` + builtins `LENGTH` / `LEFT` / `RIGHT` / `MID` / `LCASE` / `UCASE`
 3. ✅ Numeric builtins `INT` / `RAND`
-4. ✅ `CONSTANT` (literal values); DATE still ❌
+4. ✅ `CONSTANT` (literal values); ✅ `DATE`
 5. ✅ `CASE OF`
 6. ❌ `BYVAL` / `BYREF`
 7. ✅ Semantic checker (scopes, types, calls, builtins) — see [`SEMANTICS.md`](./SEMANTICS.md)
@@ -200,7 +200,8 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 12. ✅ Conformance & reliability suite — see [`../TESTING.md`](../TESTING.md)
 13. ✅ Monaco IDE editor — see [`../ide/MONACO.md`](../ide/MONACO.md)
 14. ✅ Record TYPE … ENDTYPE — see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md)
-15. ❌ Extended enum/pointer/SET TYPE / RANDOM files / OOP / OS sandbox
+15. ✅ OOP CLASS / INHERITS / NEW — see [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md)
+16. ❌ Extended enum/pointer/SET TYPE / RANDOM files / OS sandbox
 
 **Gate for “run in IDE” milestone:** ✅ `RuntimeController` + Run/Stop/INPUT wired in `apps/web`.  
 **Gate for “worker execution” milestone:** ✅ Web Worker + message protocol (`apps/web/lib/worker`) — UI thread does not execute pseudocode.
