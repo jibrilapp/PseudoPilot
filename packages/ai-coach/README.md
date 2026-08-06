@@ -1,5 +1,7 @@
 # @pseudopilot/ai-coach
 
-LLM provider abstraction, prompt builders, and grounded explanation pipelines.
+Educational AI Coach — provider abstraction, grounded prompts, and
+`AICoachService`. See [`docs/ai/AI_COACH.md`](../../docs/ai/AI_COACH.md).
 
-**Status:** foundation stub — no product features in Milestone 1.
+Never authoritative for runtime (ADR 0005). Default offline provider:
+`HeuristicAIProvider`.

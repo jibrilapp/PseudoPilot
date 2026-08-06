@@ -8,11 +8,13 @@ import type {
   TypeReference,
 } from '@pseudopilot/language-core';
 import type {
+  ArrayBound,
   ClassFieldInfo,
   ClassMethodInfo,
   PpType,
   RecordFieldInfo,
   ScalarTypeName,
+  TypeDefaultHint,
 } from './types.js';
 import { identKey } from './scope.js';
 
@@ -42,6 +44,39 @@ export function classType(
   return { kind: 'class', name, inherits, fields, methods };
 }
 
+export function enumType(
+  name: string,
+  members: readonly string[],
+): PpType {
+  return { kind: 'enum', name, members };
+}
+
+export function pointerType(name: string, target: PpType): PpType {
+  return { kind: 'pointer', name, target };
+}
+
+/** Anonymous pointer from `^place` (name is empty). */
+export function addressOfType(target: PpType): PpType {
+  return { kind: 'pointer', name: '', target };
+}
+
+export function setType(name: string, element: PpType): PpType {
+  return { kind: 'set', name, element };
+}
+
+/**
+ * Checker defaults for enum / pointer / set DECLARE.
+ * Scalar / record / array defaults live in the interpreter.
+ */
+export function typeDefaultHint(t: PpType): TypeDefaultHint | null {
+  if (t.kind === 'enum' && t.members.length > 0) {
+    return { kind: 'enumFirst', member: t.members[0]! };
+  }
+  if (t.kind === 'pointer') return { kind: 'pointerNil' };
+  if (t.kind === 'set') return { kind: 'emptySet' };
+  return null;
+}
+
 export function lookupRecordField(
   record: Extract<PpType, { kind: 'record' }>,
   fieldName: string,
@@ -52,6 +87,49 @@ export function lookupRecordField(
 
 export function typeFromTypeName(t: TypeName): PpType {
   return scalar(t.name);
+}
+
+/**
+ * When every ARRAY dimension bound is an integer literal (or ±literal),
+ * return concrete inclusive bounds; otherwise undefined.
+ */
+export function literalArrayBounds(
+  ref: ArrayType,
+): readonly ArrayBound[] | undefined {
+  const bounds: ArrayBound[] = [];
+  for (const dim of ref.dimensions) {
+    const lower = integerLiteralValue(dim.lower);
+    const upper = integerLiteralValue(dim.upper);
+    if (lower === null || upper === null) return undefined;
+    bounds.push({ lower, upper });
+  }
+  return bounds;
+}
+
+function integerLiteralValue(expr: Expression): number | null {
+  if (expr.kind === 'IntegerLiteral') return expr.value;
+  if (
+    expr.kind === 'UnaryExpression' &&
+    (expr.operator === '+' || expr.operator === '-') &&
+    expr.argument.kind === 'IntegerLiteral'
+  ) {
+    return expr.operator === '-' ? -expr.argument.value : expr.argument.value;
+  }
+  return null;
+}
+
+function arrayBoundsEqual(
+  a: readonly ArrayBound[] | undefined,
+  b: readonly ArrayBound[] | undefined,
+): boolean {
+  if (!a || !b) return true; // incomplete bounds → cannot prove mismatch
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i]!.lower !== b[i]!.lower || a[i]!.upper !== b[i]!.upper) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -66,10 +144,12 @@ export function resolveTypeRef(ref: TypeReference, types: TypeTable): PpType {
     return found;
   }
   const element = resolveSimpleType(ref.elementType, types);
+  const bounds = literalArrayBounds(ref);
   return {
     kind: 'array',
     element,
     dimensions: ref.dimensions.length,
+    ...(bounds ? { bounds } : {}),
   };
 }
 
@@ -89,10 +169,12 @@ export function typeFromTypeRef(ref: TypeReference): PpType {
       dimensions: ref.dimensions.length,
     };
   }
+  const bounds = literalArrayBounds(ref);
   return {
     kind: 'array',
     element: scalar(ref.elementType.name),
     dimensions: ref.dimensions.length,
+    ...(bounds ? { bounds } : {}),
   };
 }
 
@@ -113,12 +195,24 @@ export function formatType(t: PpType): string {
     case 'scalar':
       return t.name;
     case 'array': {
+      if (t.bounds && t.bounds.length === t.dimensions) {
+        const dims = t.bounds
+          .map((b) => `${b.lower}:${b.upper}`)
+          .join(', ');
+        return `ARRAY[${dims}] OF ${formatType(t.element)}`;
+      }
       const stars = Array.from({ length: t.dimensions }, () => '*').join(', ');
       return `ARRAY[${stars}] OF ${formatType(t.element)}`;
     }
     case 'record':
       return t.name;
     case 'class':
+      return t.name;
+    case 'enum':
+      return t.name;
+    case 'pointer':
+      return t.name || `^${formatType(t.target)}`;
+    case 'set':
       return t.name;
     case 'procedure':
       return `PROCEDURE(${t.params.map(formatType).join(', ')})`;
@@ -139,12 +233,26 @@ export function typesEqual(a: PpType, b: PpType): boolean {
       return (
         b.kind === 'array' &&
         a.dimensions === b.dimensions &&
-        typesEqual(a.element, b.element)
+        typesEqual(a.element, b.element) &&
+        arrayBoundsEqual(a.bounds, b.bounds)
       );
     case 'record':
       return b.kind === 'record' && identKey(a.name) === identKey(b.name);
     case 'class':
       return b.kind === 'class' && identKey(a.name) === identKey(b.name);
+    case 'enum':
+      return b.kind === 'enum' && identKey(a.name) === identKey(b.name);
+    case 'pointer':
+      return (
+        b.kind === 'pointer' &&
+        identKey(a.name) === identKey(b.name) &&
+        // Anonymous address-of pointers compare by target.
+        (a.name === '' || b.name === ''
+          ? typesEqual(a.target, b.target)
+          : true)
+      );
+    case 'set':
+      return b.kind === 'set' && identKey(a.name) === identKey(b.name);
     case 'procedure':
       return (
         b.kind === 'procedure' &&
@@ -172,8 +280,10 @@ export function typesEqual(a: PpType, b: PpType): boolean {
  * Not allowed:
  * - REAL → INTEGER
  * - CHAR ↔ STRING (distinct)
- * - arrays only when element type and dimensionality match
+ * - arrays only when element type, dimensionality, and (when known) bounds match
  * - records only when same TYPE name (case-insensitive)
+ * - enums / named pointers / sets only when same TYPE name
+ * - anonymous address-of (`^place`) → named pointer when place type matches target
  *
  * Classes: same CLASS name, or `from` is a (transitive) subclass of `to`
  * (covariance — a variable declared as the parent type may hold a subclass
@@ -193,7 +303,9 @@ export function isAssignable(
   }
   if (to.kind === 'array' && from.kind === 'array') {
     return (
-      to.dimensions === from.dimensions && typesEqual(to.element, from.element)
+      to.dimensions === from.dimensions &&
+      typesEqual(to.element, from.element) &&
+      arrayBoundsEqual(to.bounds, from.bounds)
     );
   }
   if (to.kind === 'record' && from.kind === 'record') {
@@ -203,6 +315,31 @@ export function isAssignable(
     if (identKey(to.name) === identKey(from.name)) return true;
     if (!typeTable) return false;
     return isSubclassOf(from, to.name, typeTable);
+  }
+  if (to.kind === 'enum' && from.kind === 'enum') {
+    return identKey(to.name) === identKey(from.name);
+  }
+  if (to.kind === 'pointer' && from.kind === 'pointer') {
+    // Named pointer ← same named pointer
+    if (
+      to.name !== '' &&
+      from.name !== '' &&
+      identKey(to.name) === identKey(from.name)
+    ) {
+      return true;
+    }
+    // Named pointer ← ^place when place type matches the pointer target
+    if (to.name !== '' && from.name === '') {
+      return typesEqual(to.target, from.target);
+    }
+    // Anonymous ← anonymous (same target)
+    if (to.name === '' && from.name === '') {
+      return typesEqual(to.target, from.target);
+    }
+    return false;
+  }
+  if (to.kind === 'set' && from.kind === 'set') {
+    return identKey(to.name) === identKey(from.name);
   }
   return false;
 }
@@ -237,6 +374,10 @@ export function isNumeric(t: PpType): boolean {
 
 export function isBoolean(t: PpType): boolean {
   return t.kind === 'scalar' && t.name === 'BOOLEAN';
+}
+
+export function isEnum(t: PpType): t is Extract<PpType, { kind: 'enum' }> {
+  return t.kind === 'enum';
 }
 
 export function literalType(expr: Expression): PpType | null {
@@ -298,6 +439,23 @@ export function binaryResultType(
     return errorType();
   }
   if (op === '+' || op === '-' || op === '*' || op === '/') {
+    // Cambridge ordinal arithmetic: enum ± INTEGER → same enum
+    if (
+      (op === '+' || op === '-') &&
+      left.kind === 'enum' &&
+      right.kind === 'scalar' &&
+      right.name === 'INTEGER'
+    ) {
+      return left;
+    }
+    if (
+      (op === '+' || op === '-') &&
+      right.kind === 'enum' &&
+      left.kind === 'scalar' &&
+      left.name === 'INTEGER'
+    ) {
+      return right;
+    }
     if (isNumeric(left) && isNumeric(right)) {
       if (
         (left.kind === 'scalar' && left.name === 'REAL') ||
@@ -334,6 +492,7 @@ export function recordDeps(t: PpType, out: Set<string>): void {
   } else if (t.kind === 'array') {
     recordDeps(t.element, out);
   }
+  // Pointer / set / enum / class do not create record containment edges.
 }
 
 export function namedTypeRef(name: string, span: NamedType['span']): NamedType {

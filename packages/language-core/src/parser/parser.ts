@@ -17,6 +17,7 @@ import type {
   ExpressionStatement,
   FileMode,
   FunctionDeclaration,
+  GetRecordStatement,
   Identifier,
   IfStatement,
   InputStatement,
@@ -24,8 +25,10 @@ import type {
   OpenFileStatement,
   OutputStatement,
   Parameter,
+  ParameterMode,
   ProcedureDeclaration,
   Program,
+  PutRecordStatement,
   CallStatement,
   CaseArm,
   CaseLabel,
@@ -34,8 +37,13 @@ import type {
   ForStatement,
   RepeatStatement,
   ReturnStatement,
+  SeekStatement,
   Statement,
   TypeDeclaration,
+  EnumTypeDeclaration,
+  PointerTypeDeclaration,
+  SetTypeDeclaration,
+  DefineStatement,
   TypeName,
   TypeNameKind,
   NamedType,
@@ -104,6 +112,7 @@ export class Parser {
     if (token.kind === TokenKind.For) return this.parseFor();
     if (token.kind === TokenKind.Declare) return this.parseDeclare();
     if (token.kind === TokenKind.Type) return this.parseTypeDeclaration();
+    if (token.kind === TokenKind.Define) return this.parseDefine();
     if (token.kind === TokenKind.Constant) return this.parseConstant();
     if (token.kind === TokenKind.Call) return this.parseCallStatement();
     if (token.kind === TokenKind.Return) return this.parseReturn();
@@ -113,6 +122,9 @@ export class Parser {
     if (token.kind === TokenKind.Readfile) return this.parseReadFile();
     if (token.kind === TokenKind.Writefile) return this.parseWriteFile();
     if (token.kind === TokenKind.Closefile) return this.parseCloseFile();
+    if (token.kind === TokenKind.Seek) return this.parseSeek();
+    if (token.kind === TokenKind.Getrecord) return this.parseGetRecord();
+    if (token.kind === TokenKind.Putrecord) return this.parsePutRecord();
     if (token.kind === TokenKind.Class) return this.parseClassDeclaration();
     if (token.kind === TokenKind.Identifier || token.kind === TokenKind.Super) {
       return this.parseAssignmentOrExpressionStatement();
@@ -484,9 +496,15 @@ export class Parser {
   /** Method name after PROCEDURE/FUNCTION — accepts `NEW` for the constructor. */
   private parseClassMethodName(): Identifier | null {
     const token = this.cursor.peek();
+    // NEW is a keyword used as the constructor name; SET may appear as a
+    // method name in classroom OOP examples (Cambridge keyword otherwise).
     if (token.kind === TokenKind.New) {
       this.cursor.advance();
       return { kind: 'Identifier', name: 'NEW', span: token.span };
+    }
+    if (token.kind === TokenKind.Set) {
+      this.cursor.advance();
+      return { kind: 'Identifier', name: token.lexeme, span: token.span };
     }
     return this.expressions().parseIdentifier();
   }
@@ -496,6 +514,8 @@ export class Parser {
    *
    * Cambridge allows grouped parameters sharing one type:
    *   `(a, b : INTEGER, c : REAL)` → three individual {@link Parameter} nodes.
+   * Guide §8.3: optional `BYVAL`/`BYREF` before a group; when omitted, the
+   * previous group's mode sticks (default BYVAL for the first group).
    * Newlines inside the parentheses are skipped (multiline parameter lists).
    */
   private parseParameterListOptional(): Parameter[] {
@@ -504,18 +524,22 @@ export class Parser {
     if (this.cursor.match(TokenKind.RParen)) return [];
 
     const parameters: Parameter[] = [];
-    const first = this.parseParameterGroup();
+    // Sticky mode across groups (Cambridge SWAP example: BYREF X : INTEGER, Y : INTEGER).
+    let currentMode: ParameterMode = 'BYVAL';
+    const first = this.parseParameterGroup(currentMode);
     if (!first) {
       this.cursor.match(TokenKind.RParen);
       return parameters;
     }
-    parameters.push(...first);
+    currentMode = first.mode;
+    parameters.push(...first.params);
 
     while (this.cursor.match(TokenKind.Comma)) {
       this.skipNewlines();
-      const next = this.parseParameterGroup();
+      const next = this.parseParameterGroup(currentMode);
       if (!next) break;
-      parameters.push(...next);
+      currentMode = next.mode;
+      parameters.push(...next.params);
     }
 
     this.skipNewlines();
@@ -526,18 +550,60 @@ export class Parser {
   }
 
   /**
-   * One Cambridge parameter group: `Ident { "," Ident } ":" TypeName`.
-   * Expanded into one {@link Parameter} per identifier (shared type / span end).
+   * One Cambridge parameter group: `[BYVAL|BYREF] Ident { "," Ident } ":" TypeName`.
+   * Expanded into one {@link Parameter} per identifier (shared type / mode / span end).
+   * When the mode keyword is omitted, `stickyMode` from the previous group applies.
    */
-  private parseParameterGroup(): Parameter[] | null {
+  private parseParameterGroup(
+    stickyMode: ParameterMode,
+  ): { params: Parameter[]; mode: ParameterMode } | null {
     this.skipNewlines();
+    let mode = stickyMode;
+    let modeExplicit = false;
+    if (this.cursor.check(TokenKind.Byval) || this.cursor.check(TokenKind.Byref)) {
+      mode = this.cursor.check(TokenKind.Byval) ? 'BYVAL' : 'BYREF';
+      this.cursor.advance();
+      modeExplicit = true;
+      this.skipNewlines();
+    }
+
     const names = [];
     const first = this.expressions().parseIdentifier();
-    if (!first) return null;
+    if (!first) {
+      if (modeExplicit) {
+        pushError(
+          this.diagnostics,
+          `Expected parameter name after ${mode}.`,
+          this.cursor.peek(),
+        );
+      }
+      return null;
+    }
     names.push(first);
 
     while (this.cursor.match(TokenKind.Comma)) {
       this.skipNewlines();
+      // Next group may start with BYVAL/BYREF — leave the comma for the list loop.
+      if (this.cursor.check(TokenKind.Byval) || this.cursor.check(TokenKind.Byref)) {
+        // Put the comma back conceptually: we already consumed it. The outer
+        // list loop expects to consume commas between groups, so we cannot
+        // peek a mode here after eating a comma meant for another name.
+        // Cambridge groups names before `:` — a mode keyword after `,` starts
+        // a new group. Re-parse by returning what we have only if we already
+        // saw `:`, which we haven't — so treat mode-after-comma as end of
+        // this name list without a type (error) unless we support
+        // `A, BYREF B : T`. Guide form is `BYREF X : INTEGER, Y : INTEGER`
+        // (mode at group start) or `BYREF X, Y : INTEGER`. Mode mid-list
+        // after comma without completing the type is a new group: roll back
+        // by requiring type first. Practically: after comma, if BYVAL/BYREF,
+        // that is invalid inside a name list — error.
+        pushError(
+          this.diagnostics,
+          `Unexpected ${this.cursor.peek().lexeme.toUpperCase()} inside a parameter name list; place BYVAL/BYREF before the first name of a group.`,
+          this.cursor.peek(),
+        );
+        return null;
+      }
       // `a, : INTEGER` — comma must introduce another identifier, not the colon.
       if (this.cursor.check(TokenKind.Colon)) {
         pushError(
@@ -577,12 +643,16 @@ export class Parser {
     const typeName = this.parseTypeName();
     if (!typeName) return null;
 
-    return names.map((name) => ({
-      kind: 'Parameter' as const,
-      name,
-      typeName,
-      span: span(name.span.start, typeName.span.end),
-    }));
+    return {
+      mode,
+      params: names.map((name) => ({
+        kind: 'Parameter' as const,
+        name,
+        typeName,
+        mode,
+        span: span(name.span.start, typeName.span.end),
+      })),
+    };
   }
 
   private parseDeclare(): DeclareStatement | null {
@@ -615,13 +685,17 @@ export class Parser {
   }
 
   /**
-   * TYPE Name
-   *   DECLARE … 
-   * ENDTYPE
-   *
-   * Enum / pointer / set forms (`TYPE Name = …`) are not supported yet.
+   * TYPE Name … ENDTYPE (record)
+   * TYPE Name = (A, B, …) (enum)
+   * TYPE Name = ^T (pointer)
+   * TYPE Name = SET OF T (set)
    */
-  private parseTypeDeclaration(): TypeDeclaration | null {
+  private parseTypeDeclaration():
+    | TypeDeclaration
+    | EnumTypeDeclaration
+    | PointerTypeDeclaration
+    | SetTypeDeclaration
+    | null {
     if (this.bodyContext !== 'program') {
       pushError(
         this.diagnostics,
@@ -648,21 +722,7 @@ export class Parser {
     }
 
     if (this.cursor.match(TokenKind.Equal)) {
-      pushError(
-        this.diagnostics,
-        'Enum, pointer, and SET TYPE forms are not supported yet (use TYPE Name … ENDTYPE records).',
-        this.cursor.previous(),
-        'E_UNSUPPORTED_TYPE_FORM',
-      );
-      // Recover: skip until ENDTYPE or EOF.
-      while (
-        !this.cursor.check(TokenKind.Endtype) &&
-        !this.cursor.check(TokenKind.Eof)
-      ) {
-        this.cursor.advance();
-      }
-      this.cursor.match(TokenKind.Endtype);
-      return null;
+      return this.parseEqualsTypeForm(startToken, name);
     }
 
     this.skipNewlines();
@@ -703,6 +763,201 @@ export class Parser {
       fields,
       span: span(startToken.span.start, this.cursor.previous().span.end),
     };
+  }
+
+  /** TYPE Name = (enum) | ^T | SET OF T */
+  private parseEqualsTypeForm(
+    startToken: Token,
+    name: Identifier,
+  ): EnumTypeDeclaration | PointerTypeDeclaration | SetTypeDeclaration | null {
+    // Enum: TYPE Name = (A, B, C)
+    if (this.cursor.match(TokenKind.LParen)) {
+      const members: Identifier[] = [];
+      if (this.cursor.check(TokenKind.RParen)) {
+        pushError(
+          this.diagnostics,
+          'Enumerated TYPE must list at least one member.',
+          this.cursor.peek(),
+          'E_ENUM_EMPTY',
+        );
+        this.cursor.advance();
+        return null;
+      }
+      const first = this.expressions().parseIdentifier();
+      if (!first) return null;
+      members.push(first);
+      while (this.cursor.match(TokenKind.Comma)) {
+        const next = this.expressions().parseIdentifier();
+        if (!next) break;
+        members.push(next);
+      }
+      if (!this.cursor.match(TokenKind.RParen)) {
+        pushError(
+          this.diagnostics,
+          "Expected ')' after enumerated TYPE members.",
+          this.cursor.peek(),
+          'E_ENUM_RPAREN',
+        );
+      }
+      return {
+        kind: 'EnumTypeDeclaration',
+        name,
+        members,
+        span: span(startToken.span.start, this.cursor.previous().span.end),
+      };
+    }
+
+    // Pointer: TYPE Name = ^T
+    if (this.cursor.match(TokenKind.Caret)) {
+      const targetType = this.parseSimpleTypeRef();
+      if (!targetType) {
+        pushError(
+          this.diagnostics,
+          'Expected type name after ^ in pointer TYPE.',
+          this.cursor.peek(),
+          'E_POINTER_TARGET',
+        );
+        return null;
+      }
+      return {
+        kind: 'PointerTypeDeclaration',
+        name,
+        targetType,
+        span: span(startToken.span.start, targetType.span.end),
+      };
+    }
+
+    // Set: TYPE Name = SET OF T
+    if (this.cursor.match(TokenKind.Set)) {
+      if (!this.cursor.match(TokenKind.Of)) {
+        pushError(
+          this.diagnostics,
+          "Expected 'OF' after 'SET' in set TYPE.",
+          this.cursor.peek(),
+          'E_SET_OF',
+        );
+        return null;
+      }
+      const elementType = this.parseSimpleTypeRef();
+      if (!elementType) {
+        pushError(
+          this.diagnostics,
+          'Expected element type after SET OF.',
+          this.cursor.peek(),
+          'E_SET_ELEMENT',
+        );
+        return null;
+      }
+      return {
+        kind: 'SetTypeDeclaration',
+        name,
+        elementType,
+        span: span(startToken.span.start, elementType.span.end),
+      };
+    }
+
+    pushError(
+      this.diagnostics,
+      "Expected '(…)', '^Type', or 'SET OF Type' after 'TYPE Name ='.",
+      this.cursor.peek(),
+      'E_UNSUPPORTED_TYPE_FORM',
+    );
+    // Recover: skip to newline / EOF (non-record forms are single-line).
+    while (
+      !this.cursor.check(TokenKind.Newline) &&
+      !this.cursor.check(TokenKind.Eof) &&
+      !this.cursor.check(TokenKind.Endtype)
+    ) {
+      this.cursor.advance();
+    }
+    this.cursor.match(TokenKind.Endtype);
+    return null;
+  }
+
+  /**
+   * DEFINE Name (value1, value2, …) : SetType
+   * Cambridge §4.1 set instance.
+   */
+  private parseDefine(): DefineStatement | null {
+    if (this.bodyContext !== 'program') {
+      pushError(
+        this.diagnostics,
+        'DEFINE is only allowed at program level.',
+        this.cursor.peek(),
+        'E_NESTED_DEFINE',
+      );
+      this.cursor.advance();
+      return null;
+    }
+
+    const startToken = this.cursor.advance(); // DEFINE
+    const name = this.expressions().parseIdentifier();
+    if (!name) return null;
+
+    if (!this.cursor.match(TokenKind.LParen)) {
+      pushError(
+        this.diagnostics,
+        "Expected '(' after DEFINE name.",
+        this.cursor.peek(),
+        'E_DEFINE_LPAREN',
+      );
+      return null;
+    }
+
+    const values: Expression[] = [];
+    if (!this.cursor.check(TokenKind.RParen)) {
+      const first = this.expressions().parseExpression();
+      if (first) values.push(first);
+      while (this.cursor.match(TokenKind.Comma)) {
+        const next = this.expressions().parseExpression();
+        if (!next) break;
+        values.push(next);
+      }
+    }
+    if (!this.cursor.match(TokenKind.RParen)) {
+      pushError(
+        this.diagnostics,
+        "Expected ')' after DEFINE values.",
+        this.cursor.peek(),
+        'E_DEFINE_RPAREN',
+      );
+    }
+
+    if (!this.cursor.match(TokenKind.Colon)) {
+      pushError(
+        this.diagnostics,
+        "Expected ':' before set type name in DEFINE.",
+        this.cursor.peek(),
+        'E_DEFINE_COLON',
+      );
+      return null;
+    }
+
+    const typeName = this.expressions().parseIdentifier();
+    if (!typeName) return null;
+
+    return {
+      kind: 'DefineStatement',
+      name,
+      values,
+      typeName,
+      span: span(startToken.span.start, typeName.span.end),
+    };
+  }
+
+  /** Builtin scalar or user type name (not ARRAY) for pointer/set targets. */
+  private parseSimpleTypeRef(): SimpleType | null {
+    const token = this.cursor.peek();
+    if (isTypeToken(token.kind)) {
+      this.cursor.advance();
+      const name = token.lexeme.toUpperCase() as TypeNameKind;
+      return { kind: 'TypeName', name, span: token.span };
+    }
+    if (token.kind === TokenKind.Identifier) {
+      this.cursor.advance();
+      return { kind: 'NamedType', name: token.lexeme, span: token.span };
+    }
+    return null;
   }
 
   /**
@@ -930,7 +1185,7 @@ export class Parser {
     if (!isFileModeToken(modeTok.kind)) {
       pushError(
         this.diagnostics,
-        "Expected READ, WRITE, or APPEND after OPENFILE … FOR.",
+        "Expected READ, WRITE, APPEND, or RANDOM after OPENFILE … FOR.",
         modeTok,
       );
       return null;
@@ -998,6 +1253,75 @@ export class Parser {
       kind: 'CloseFileStatement',
       fileName,
       span: span(startToken.span.start, fileName.span.end),
+    };
+  }
+
+  /** SEEK <file>, <address> — Cambridge §9.2 */
+  private parseSeek(): SeekStatement | null {
+    const startToken = this.cursor.advance(); // SEEK
+    const fileName = this.expressions().parseExpression();
+    if (!fileName) return null;
+    if (!this.cursor.match(TokenKind.Comma)) {
+      pushError(
+        this.diagnostics,
+        "Expected ',' after SEEK filename.",
+        this.cursor.peek(),
+      );
+      return null;
+    }
+    const address = this.expressions().parseExpression();
+    if (!address) return null;
+    return {
+      kind: 'SeekStatement',
+      fileName,
+      address,
+      span: span(startToken.span.start, address.span.end),
+    };
+  }
+
+  /** GETRECORD <file>, <assignTarget> — Cambridge §9.2 */
+  private parseGetRecord(): GetRecordStatement | null {
+    const startToken = this.cursor.advance(); // GETRECORD
+    const fileName = this.expressions().parseExpression();
+    if (!fileName) return null;
+    if (!this.cursor.match(TokenKind.Comma)) {
+      pushError(
+        this.diagnostics,
+        "Expected ',' after GETRECORD filename.",
+        this.cursor.peek(),
+      );
+      return null;
+    }
+    const target = this.expressions().parseAssignTarget();
+    if (!target) return null;
+    return {
+      kind: 'GetRecordStatement',
+      fileName,
+      target,
+      span: span(startToken.span.start, target.span.end),
+    };
+  }
+
+  /** PUTRECORD <file>, <expression> — Cambridge §9.2 */
+  private parsePutRecord(): PutRecordStatement | null {
+    const startToken = this.cursor.advance(); // PUTRECORD
+    const fileName = this.expressions().parseExpression();
+    if (!fileName) return null;
+    if (!this.cursor.match(TokenKind.Comma)) {
+      pushError(
+        this.diagnostics,
+        "Expected ',' after PUTRECORD filename.",
+        this.cursor.peek(),
+      );
+      return null;
+    }
+    const value = this.expressions().parseExpression();
+    if (!value) return null;
+    return {
+      kind: 'PutRecordStatement',
+      fileName,
+      value,
+      span: span(startToken.span.start, value.span.end),
     };
   }
 
@@ -1224,24 +1548,21 @@ export class Parser {
       return null;
     }
 
-    if (!this.cursor.check(TokenKind.Identifier)) {
-      pushError(
-        this.diagnostics,
-        "Expected loop variable after 'NEXT'.",
-        this.cursor.peek(),
-        'E_FOR_NEXT_VAR',
-      );
-      return null;
-    }
-
-    const nextVar = this.cursor.advance();
-    if (nextVar.lexeme !== variable) {
-      pushError(
-        this.diagnostics,
-        `NEXT variable '${nextVar.lexeme}' does not match FOR variable '${variable}'.`,
-        nextVar,
-        'E_FOR_NEXT_MISMATCH',
-      );
+    // Cambridge §7.1: bare NEXT is legal; repeating the binder is good practice.
+    let nextVariable: string | null = null;
+    let endSpan = this.cursor.previous().span.end;
+    if (this.cursor.check(TokenKind.Identifier)) {
+      const nextVar = this.cursor.advance();
+      nextVariable = nextVar.lexeme;
+      endSpan = nextVar.span.end;
+      if (nextVar.lexeme !== variable) {
+        pushError(
+          this.diagnostics,
+          `NEXT variable '${nextVar.lexeme}' does not match FOR variable '${variable}'.`,
+          nextVar,
+          'E_FOR_NEXT_MISMATCH',
+        );
+      }
     }
 
     return {
@@ -1251,7 +1572,8 @@ export class Parser {
       end,
       step,
       body,
-      span: span(startToken.span.start, nextVar.span.end),
+      nextVariable,
+      span: span(startToken.span.start, endSpan),
     };
   }
 
@@ -1577,7 +1899,8 @@ export class Parser {
       if (
         base.kind !== 'Identifier' &&
         base.kind !== 'IndexExpression' &&
-        base.kind !== 'MemberExpression'
+        base.kind !== 'MemberExpression' &&
+        base.kind !== 'DerefExpression'
       ) {
         pushError(
           this.diagnostics,
@@ -1775,6 +2098,10 @@ function exprKey(expr: Expression): string {
       return `NEW ${expr.className.name}(${expr.args.map(exprKey).join(', ')})`;
     case 'MethodCallExpression':
       return `${exprKey(expr.object)}.${expr.method.name}(${expr.args.map(exprKey).join(', ')})`;
+    case 'AddressOfExpression':
+      return `^${exprKey(expr.target as Expression)}`;
+    case 'DerefExpression':
+      return `${exprKey(expr.pointer)}^`;
     default: {
       const _exhaustive: never = expr;
       return String(_exhaustive);

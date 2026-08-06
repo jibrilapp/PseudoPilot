@@ -1,6 +1,14 @@
 import { type Diagnostic, type Position, pos, span } from '../diagnostics.js';
 import { keywordKind, TokenKind, type Token } from './token.js';
 
+export type LexOptions = {
+  /**
+   * When true, Cambridge real-literal strictness is enforced as errors
+   * (leading/trailing-dot forms like `.5` / `5.`). Default: warn only.
+   */
+  readonly strictCambridge?: boolean;
+};
+
 export type LexResult = {
   readonly tokens: Token[];
   readonly diagnostics: Diagnostic[];
@@ -11,9 +19,10 @@ export type LexResult = {
  * Skips spaces/tabs and `//` line comments. Newlines become significant tokens
  * so the parser can treat them as statement separators (Cambridge style).
  */
-export function lex(source: string): LexResult {
+export function lex(source: string, options?: LexOptions): LexResult {
   const tokens: Token[] = [];
   const diagnostics: Diagnostic[] = [];
+  const strictCambridge = options?.strictCambridge === true;
   let i = 0;
   let line = 1;
   let column = 1;
@@ -159,6 +168,12 @@ export function lex(source: string): LexResult {
       emit(TokenKind.Star, start, '*');
       continue;
     }
+    if (ch === '^') {
+      const start = currentPos();
+      advance();
+      emit(TokenKind.Caret, start, '^');
+      continue;
+    }
     if (ch === '/') {
       const start = currentPos();
       advance();
@@ -292,18 +307,34 @@ export function lex(source: string): LexResult {
       continue;
     }
 
-    // Number: integer or real
+    // Number: integer or real (including leading-dot `.5` and trailing-dot `5.`)
     if (isDigit(ch) || (ch === '.' && isDigit(peek()))) {
       const start = currentPos();
       let raw = '';
       let isReal = false;
-      while (isDigit(at())) {
-        raw += advance();
-      }
-      if (at() === '.' && isDigit(peek())) {
+      let leadingDot = false;
+      let trailingDot = false;
+
+      if (ch === '.') {
+        // Leading-dot form `.5` — Cambridge prefers `0.5` (§2.2 / SPEC §13.9).
+        leadingDot = true;
         isReal = true;
-        raw += advance();
+        raw += advance(); // .
         while (isDigit(at())) raw += advance();
+      } else {
+        while (isDigit(at())) {
+          raw += advance();
+        }
+        if (at() === '.' && isDigit(peek())) {
+          isReal = true;
+          raw += advance();
+          while (isDigit(at())) raw += advance();
+        } else if (at() === '.' && !isDigit(peek()) && !isIdentStart(peek())) {
+          // Trailing-dot form `5.` — Cambridge prefers `5.0`.
+          trailingDot = true;
+          isReal = true;
+          raw += advance();
+        }
       }
 
       // Reject glued forms like `2x` or `3.14foo` — common student typos.
@@ -317,7 +348,17 @@ export function lex(source: string): LexResult {
       }
 
       if (isReal) {
-        emit(TokenKind.Real, start, raw, Number(raw));
+        if (leadingDot || trailingDot) {
+          const normalized = leadingDot ? `0${raw}` : `${raw}0`;
+          const severity = strictCambridge ? 'error' : 'warning';
+          diagnostics.push({
+            severity,
+            message: `Real literal '${raw}' should have a digit on both sides of the decimal point (use '${normalized}').`,
+            span: span(start, currentPos()),
+            code: strictCambridge ? 'E_REAL_LITERAL' : 'W_REAL_LITERAL',
+          });
+        }
+        emit(TokenKind.Real, start, raw, Number(leadingDot ? `0${raw}` : trailingDot ? `${raw}0` : raw));
         continue;
       }
 

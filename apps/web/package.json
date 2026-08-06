@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@monaco-editor/react": "4.7.0",
+    "@pseudopilot/ai-coach": "workspace:*",
+    "@pseudopilot/checker": "workspace:*",
     "@pseudopilot/compiler-service": "workspace:*",
     "@pseudopilot/interpreter": "workspace:*",
     "@pseudopilot/language-service": "workspace:*",

@@ -31,6 +31,7 @@ export {
   type FileSystemHost,
   type VirtualFile,
   type VirtualFileHandle,
+  type OpenFileSnapshot,
 } from './files/index.js';
 export {
   Environment,
@@ -53,6 +54,11 @@ export {
   type ArrayValue,
   type RecordValue,
   type ObjectValue,
+  type EnumValue,
+  type PointerValue,
+  type SetValue,
+  type PointerCell,
+  type ValuePlace,
   type Binding,
   type RuntimeDiagnostic,
   formatValue,
@@ -61,6 +67,11 @@ export {
   booleanValue,
   stringValue,
   charValue,
+  enumValue,
+  pointerValue,
+  setValue,
+  nilPointer,
+  emptySet,
   RuntimeError,
   ReturnSignal,
 } from './value.js';

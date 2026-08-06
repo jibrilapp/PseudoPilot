@@ -21,11 +21,16 @@ import { attachTriviaToStatements } from '../trivia/attach.js';
 import { stripPythonIndexOffset } from './array-index.js';
 import type { TranslateDiagnostic } from '../types.js';
 import {
-  isPythonSyntaxKeyword,
-  isPythonTranslatorBuiltin,
-} from '../rules/python-names.js';
+  isPythonReservedIdentifier,
+  unsanitizePythonIdentifier,
+} from './identifier-sanitizer.js';
 import { cambridgeBuiltinFromPythonCall } from '../builtins/emit.js';
 import { lexPython, PyTokenKind, type PyToken } from './lexer.js';
+
+/** Recover Cambridge identifier from a PseudoPilot-emitted Python name. */
+function camIdent(pyName: string): string {
+  return unsanitizePythonIdentifier(pyName);
+}
 
 type StmtSpan = {
   readonly start: { offset: number; line: number; column: number };
@@ -66,6 +71,8 @@ class PyParser {
   private source = '';
   /** Plain `class Name` (not `@dataclass`) seen in this file — used for `NEW` recovery. */
   private knownClassNames = new Set<string>();
+  /** Enum TYPE names recovered from `class Name(IntEnum)`. */
+  private knownEnumNames = new Set<string>();
   readonly diagnostics: TranslateDiagnostic[] = [];
 
   constructor(
@@ -108,12 +115,25 @@ class PyParser {
           paired.push(stmt as { stmt: IrStatement; span: StmtSpan });
         }
       } else {
-        while (
-          !this.check(PyTokenKind.Eof) &&
-          !this.check(PyTokenKind.Newline) &&
-          !this.check(PyTokenKind.Dedent)
-        ) {
-          this.advance();
+        // Intentionally skipped helpers (`def _pp_*`) leave the cursor at the
+        // next statement. Do not recover-eat `def` / `@` / imports.
+        const peek = this.peek();
+        const atBoundary =
+          peek.kind === PyTokenKind.Eof ||
+          peek.kind === PyTokenKind.Newline ||
+          peek.kind === PyTokenKind.Dedent ||
+          peek.kind === PyTokenKind.Def ||
+          peek.kind === PyTokenKind.At ||
+          (peek.kind === PyTokenKind.Identifier &&
+            (peek.lexeme === 'import' || peek.lexeme === 'from' || peek.lexeme === 'class'));
+        if (!atBoundary) {
+          while (
+            !this.check(PyTokenKind.Eof) &&
+            !this.check(PyTokenKind.Newline) &&
+            !this.check(PyTokenKind.Dedent)
+          ) {
+            this.advance();
+          }
         }
       }
       this.skipNewlines();
@@ -249,7 +269,10 @@ class PyParser {
       // Build a postfix chain of `[idx]` / `.field` — target for assignment,
       // or (when it ends in `.method(args)`) a statement-level method call
       // (f.close() / f.write(...) / S.Home.City ← … / Students[i].Marks[1] ← …).
-      let target: IrExpression = { kind: 'IrIdentifier', name: nameTok.lexeme };
+      let target: IrExpression = {
+        kind: 'IrIdentifier',
+        name: camIdent(nameTok.lexeme),
+      };
       let endTok = nameTok;
       // Consecutive `[i][j]` (no intervening `.field`) merge into one Cambridge
       // multi-dimensional index `grid[i, j]`; a `.field` in between starts a
@@ -282,7 +305,7 @@ class PyParser {
           const propTok = this.advance();
 
           if (this.match(PyTokenKind.LParen)) {
-            const method = propTok.lexeme;
+            const methodPy = propTok.lexeme;
             const args: IrExpression[] = [];
             if (!this.check(PyTokenKind.RParen)) {
               const first = this.parseExpression();
@@ -299,9 +322,9 @@ class PyParser {
               return null;
             }
             endTok = this.previous();
-            if (method === 'close' && args.length === 0) {
+            if (methodPy === 'close' && args.length === 0) {
               target = { kind: 'IrCallExpression', callee: 'close', args: [target] };
-            } else if (method === 'write' && args.length === 1) {
+            } else if (methodPy === 'write' && args.length === 1) {
               target = {
                 kind: 'IrCallExpression',
                 callee: 'write',
@@ -312,7 +335,7 @@ class PyParser {
               target = {
                 kind: 'IrMethodCallExpression',
                 object: target,
-                method,
+                method: methodPy === '__init__' ? 'NEW' : camIdent(methodPy),
                 args,
               };
             }
@@ -320,11 +343,42 @@ class PyParser {
           }
 
           // Not a call — plain field access.
-          target = { kind: 'IrMemberExpression', object: target, property: propTok.lexeme };
+          // `P.value` (legacy) or continue; pointer deref is `P[0]` below.
+          if (
+            propTok.lexeme === 'value' &&
+            (target.kind === 'IrIdentifier' ||
+              target.kind === 'IrIndexExpression' ||
+              target.kind === 'IrMemberExpression' ||
+              target.kind === 'IrDerefExpression')
+          ) {
+            target = {
+              kind: 'IrDerefExpression',
+              pointer: target,
+            };
+          } else {
+            target = {
+              kind: 'IrMemberExpression',
+              object: target,
+              property: camIdent(propTok.lexeme),
+            };
+          }
           endTok = propTok;
           continue;
         }
         break chain;
+      }
+
+      // Pointer deref assign target: P[0] → P^ (BYREF params unwrapped later).
+      if (
+        target.kind === 'IrIndexExpression' &&
+        target.indices.length === 1 &&
+        target.indices[0]!.kind === 'IrIntegerLiteral' &&
+        target.indices[0]!.value === 0
+      ) {
+        target = {
+          kind: 'IrDerefExpression',
+          pointer: target.array,
+        };
       }
 
       if (target.kind === 'IrCallExpression') {
@@ -355,7 +409,8 @@ class PyParser {
       if (
         target.kind !== 'IrIdentifier' &&
         target.kind !== 'IrIndexExpression' &&
-        target.kind !== 'IrMemberExpression'
+        target.kind !== 'IrMemberExpression' &&
+        target.kind !== 'IrDerefExpression'
       ) {
         this.error('Unsupported assignment target.', this.peek());
         return null;
@@ -387,9 +442,210 @@ class PyParser {
         }
       }
 
+      // Pointer / SET TYPE aliases:
+      //   Name = object  # TYPE Name = ^INTEGER
+      //   Name = set  # TYPE Name = SET OF CHAR
+      if (
+        target.kind === 'IrIdentifier' &&
+        this.check(PyTokenKind.Identifier) &&
+        (this.peek().lexeme === 'object' || this.peek().lexeme === 'set')
+      ) {
+        const aliasTok = this.advance();
+        const comment = this.readTrailingHashComment(aliasTok.offset);
+        const pointerMatch = comment
+          ? /TYPE\s+(\w+)\s*=\s*\^(\w+)/i.exec(comment)
+          : null;
+        const setMatch = comment
+          ? /TYPE\s+(\w+)\s*=\s*SET\s+OF\s+(\w+)/i.exec(comment)
+          : null;
+        if (aliasTok.lexeme === 'object' && pointerMatch) {
+          const targetTypeName = pointerMatch[2]!;
+          const scalar = pythonTypeToIr(targetTypeName);
+          return {
+            span: tokenSpan(nameTok, aliasTok),
+            stmt: withEmptyTrivia({
+              kind: 'IrPointerTypeDeclaration' as const,
+              name: target.name,
+              targetType: scalar
+                ? { kind: 'IrScalarType' as const, name: scalar }
+                : { kind: 'IrNamedType' as const, name: camIdent(targetTypeName) },
+            }),
+          };
+        }
+        if (aliasTok.lexeme === 'set' && setMatch) {
+          const elemName = setMatch[2]!;
+          const scalar = pythonTypeToIr(elemName);
+          return {
+            span: tokenSpan(nameTok, aliasTok),
+            stmt: withEmptyTrivia({
+              kind: 'IrSetTypeDeclaration' as const,
+              name: target.name,
+              elementType: scalar
+                ? { kind: 'IrScalarType' as const, name: scalar }
+                : { kind: 'IrNamedType' as const, name: camIdent(elemName) },
+            }),
+          };
+        }
+        // Not a TYPE alias — treat as normal assignment (re-parse would be hard;
+        // emit IrAssignment with identifier value).
+        return {
+          span: tokenSpan(nameTok, aliasTok),
+          stmt: withEmptyTrivia({
+            kind: 'IrAssignment' as const,
+            target,
+            value: { kind: 'IrIdentifier' as const, name: camIdent(aliasTok.lexeme) },
+          }),
+        };
+      }
+
       const value = this.parseExpression();
       if (!value) return null;
       endTok = this.previous();
+
+      // Skip enum member aliases: Spring = Season.Spring
+      if (
+        target.kind === 'IrIdentifier' &&
+        value.kind === 'IrMemberExpression' &&
+        value.object.kind === 'IrIdentifier' &&
+        this.knownEnumNames.has(value.object.name) &&
+        value.property.toLowerCase() === target.name.toLowerCase()
+      ) {
+        return null;
+      }
+
+      // Address-taken cell store: _pp_store(X, v) as a call statement — handled
+      // in parseCallStatement. Also recover when parsed as assignment? N/A.
+
+      // DEFINE: Name = _pp_define("Type", …)
+      if (
+        target.kind === 'IrIdentifier' &&
+        value.kind === 'IrCallExpression' &&
+        value.callee === '_pp_define' &&
+        value.args.length >= 1 &&
+        value.args[0]!.kind === 'IrStringLiteral'
+      ) {
+        return {
+          span: tokenSpan(nameTok, endTok),
+          stmt: withEmptyTrivia({
+            kind: 'IrDefineStatement' as const,
+            name: target.name,
+            values: value.args.slice(1),
+            typeName: camIdent((value.args[0] as { value: string }).value),
+          }),
+        };
+      }
+
+      // Empty SET declare: Name = set()  # TypeName
+      if (
+        target.kind === 'IrIdentifier' &&
+        value.kind === 'IrCallExpression' &&
+        value.callee.toLowerCase() === 'set' &&
+        value.args.length === 0
+      ) {
+        const comment = this.readTrailingHashComment(endTok.offset);
+        const typeName = comment?.replace(/^#\s*/, '').trim() || 'SET';
+        return {
+          span: tokenSpan(nameTok, endTok),
+          stmt: withEmptyTrivia({
+            kind: 'IrDeclareStatement' as const,
+            names: [target.name],
+            typeRef: {
+              kind: 'IrNamedType' as const,
+              name: camIdent(typeName),
+            },
+          }),
+        };
+      }
+
+      // Pointer DECLARE: Name = None  # NIL / TypeName
+      if (
+        target.kind === 'IrIdentifier' &&
+        value.kind === 'IrIdentifier' &&
+        value.name === 'None'
+      ) {
+        const comment = this.readTrailingHashComment(endTok.offset);
+        const nilMatch = comment
+          ? /NIL\s*\/\s*(\w+)/i.exec(comment)
+          : null;
+        if (nilMatch) {
+          return {
+            span: tokenSpan(nameTok, endTok),
+            stmt: withEmptyTrivia({
+              kind: 'IrDeclareStatement' as const,
+              names: [target.name],
+              typeRef: {
+                kind: 'IrNamedType' as const,
+                name: camIdent(nilMatch[1]!),
+              },
+            }),
+          };
+        }
+      }
+
+      // Address-of: P = _pp_addr(X) → P ← ^X
+      if (
+        value.kind === 'IrCallExpression' &&
+        value.callee === '_pp_addr' &&
+        value.args.length === 1
+      ) {
+        const arg = value.args[0]!;
+        let addrTarget: IrAssignTarget | null = null;
+        if (
+          arg.kind === 'IrIdentifier' ||
+          arg.kind === 'IrIndexExpression' ||
+          arg.kind === 'IrMemberExpression' ||
+          arg.kind === 'IrDerefExpression'
+        ) {
+          addrTarget = arg;
+        } else if (
+          arg.kind === 'IrCallExpression' &&
+          arg.callee === '_pp_cell' &&
+          arg.args.length === 1 &&
+          (arg.args[0]!.kind === 'IrIdentifier' ||
+            arg.args[0]!.kind === 'IrIndexExpression' ||
+            arg.args[0]!.kind === 'IrMemberExpression' ||
+            arg.args[0]!.kind === 'IrDerefExpression')
+        ) {
+          addrTarget = arg.args[0] as IrAssignTarget;
+        }
+        if (addrTarget) {
+          return {
+            span: tokenSpan(nameTok, endTok),
+            stmt: withEmptyTrivia({
+              kind: 'IrAssignment' as const,
+              target,
+              value: {
+                kind: 'IrAddressOfExpression' as const,
+                target: addrTarget,
+              },
+            }),
+          };
+        }
+      }
+
+      // Address-taken DECLARE init: X = _pp_cell(0) — not BYREF call prelude
+      // `_pp_ref_N = _pp_cell(A)` (identifier arg), which collapseByRef needs.
+      if (
+        target.kind === 'IrIdentifier' &&
+        value.kind === 'IrCallExpression' &&
+        value.callee === '_pp_cell' &&
+        value.args.length === 1 &&
+        (value.args[0]!.kind === 'IrIntegerLiteral' ||
+          value.args[0]!.kind === 'IrRealLiteral' ||
+          value.args[0]!.kind === 'IrStringLiteral' ||
+          value.args[0]!.kind === 'IrCharLiteral' ||
+          value.args[0]!.kind === 'IrBooleanLiteral')
+      ) {
+        return {
+          span: tokenSpan(nameTok, endTok),
+          stmt: withEmptyTrivia({
+            kind: 'IrDeclareStatement' as const,
+            names: [target.name],
+            typeRef: { kind: 'IrScalarType' as const, name: 'INTEGER' as const },
+          }),
+        };
+      }
+
       return {
         span: tokenSpan(nameTok, endTok),
         stmt: withEmptyTrivia({
@@ -405,13 +661,6 @@ class PyParser {
   }
 
   private parseCallStatement(nameTok: PyToken): ParsedStatement | null {
-    if (isPythonSyntaxKeyword(nameTok.lexeme)) {
-      this.error(
-        `Call target '${nameTok.lexeme}' is a Python keyword and cannot map to CALL.`,
-        nameTok,
-      );
-      return null;
-    }
     this.expect(PyTokenKind.LParen);
     const args: IrExpression[] = [];
     if (!this.check(PyTokenKind.RParen)) {
@@ -432,15 +681,49 @@ class PyParser {
       this.error("Expected ')' after call arguments.", this.peek());
       return null;
     }
+    // Cell store: _pp_store(X, value) → X ← value
+    if (nameTok.lexeme === '_pp_store' && args.length === 2) {
+      const cell = args[0]!;
+      if (
+        cell.kind === 'IrIdentifier' ||
+        cell.kind === 'IrIndexExpression' ||
+        cell.kind === 'IrMemberExpression' ||
+        cell.kind === 'IrDerefExpression'
+      ) {
+        return {
+          span: tokenSpan(nameTok, this.previous()),
+          stmt: withEmptyTrivia({
+            kind: 'IrAssignment' as const,
+            target: cell,
+            value: args[1]!,
+          }),
+        };
+      }
+    }
+    // Pointer deref store: _pp_pstore(P, value) → P^ ← value
+    if (nameTok.lexeme === '_pp_pstore' && args.length === 2) {
+      return {
+        span: tokenSpan(nameTok, this.previous()),
+        stmt: withEmptyTrivia({
+          kind: 'IrAssignment' as const,
+          target: {
+            kind: 'IrDerefExpression' as const,
+            pointer: args[0]!,
+          },
+          value: args[1]!,
+        }),
+      };
+    }
+    const camName = camIdent(nameTok.lexeme);
     // Known CLASS name → expression-statement NEW (rare at statement level).
-    if (this.knownClassNames.has(nameTok.lexeme)) {
+    if (this.knownClassNames.has(camName)) {
       return {
         span: tokenSpan(nameTok, this.previous()),
         stmt: withEmptyTrivia({
           kind: 'IrExpressionStatement' as const,
           expression: {
             kind: 'IrNewExpression' as const,
-            className: nameTok.lexeme,
+            className: camName,
             args,
           },
         }),
@@ -450,7 +733,7 @@ class PyParser {
       span: tokenSpan(nameTok, this.previous()),
       stmt: withEmptyTrivia({
         kind: 'IrCallStatement' as const,
-        callee: nameTok.lexeme,
+        callee: camName,
         args,
       }),
     };
@@ -481,7 +764,8 @@ class PyParser {
       return null;
     }
     const methodTok = this.advance();
-    const method = methodTok.lexeme === '__init__' ? 'NEW' : methodTok.lexeme;
+    const method =
+      methodTok.lexeme === '__init__' ? 'NEW' : camIdent(methodTok.lexeme);
     if (!this.match(PyTokenKind.LParen)) {
       this.error("Expected '(' after super() method name.", this.peek());
       return null;
@@ -522,19 +806,12 @@ class PyParser {
    * Array bounds / CHAR tag come from trailing comments (post-pass).
    */
   private parseAnnotatedDeclare(nameTok: PyToken): ParsedStatement | null {
-    if (isPythonSyntaxKeyword(nameTok.lexeme)) {
-      this.error(
-        `Name '${nameTok.lexeme}' is a Python keyword and cannot map to DECLARE.`,
-        nameTok,
-      );
-      return null;
-    }
-
     if (!this.check(PyTokenKind.Identifier)) {
       this.error('Expected type name after ":".', this.peek());
       return null;
     }
     const typeTok = this.advance();
+    const declName = camIdent(nameTok.lexeme);
 
     // list[T]  (T is a builtin scalar or a user TYPE / record name)
     if (typeTok.lexeme === 'list' && this.match(PyTokenKind.LBracket)) {
@@ -546,7 +823,7 @@ class PyParser {
       const scalarElem = pythonTypeToIr(elemTok.lexeme);
       const elementType: IrSimpleType = scalarElem
         ? { kind: 'IrScalarType', name: scalarElem }
-        : { kind: 'IrNamedType', name: elemTok.lexeme };
+        : { kind: 'IrNamedType', name: camIdent(elemTok.lexeme) };
       // Optional ` | None` inside brackets (array-of-CLASS emit: list[Cls | None]).
       if (this.check(PyTokenKind.Pipe)) {
         this.advance();
@@ -575,7 +852,7 @@ class PyParser {
         span: tokenSpan(nameTok, this.previous()),
         stmt: withEmptyTrivia({
           kind: 'IrDeclareStatement' as const,
-          names: [nameTok.lexeme],
+          names: [declName],
           typeRef: {
             kind: 'IrArrayType' as const,
             dimensions: [
@@ -591,7 +868,58 @@ class PyParser {
       };
     }
 
+    // Empty SET declare keeps annotation form.
+    // DEFINE uses assignment: Name = set((…))  # DEFINE Type
     const mapped = pythonTypeToIr(typeTok.lexeme);
+    if (typeTok.lexeme === 'set') {
+      if (!this.match(PyTokenKind.Equal)) {
+        this.error('Expected "=" after set annotation.', this.peek());
+        return null;
+      }
+      // set() → empty DECLARE
+      if (
+        this.check(PyTokenKind.Identifier) &&
+        this.peek().lexeme === 'set'
+      ) {
+        this.advance();
+        if (!this.match(PyTokenKind.LParen)) {
+          this.error("Expected '(' after set.", this.peek());
+          return null;
+        }
+        if (!this.match(PyTokenKind.RParen)) {
+          this.error("Expected ')' after set().", this.peek());
+          return null;
+        }
+        const comment = this.readTrailingHashComment(this.previous().offset);
+        const typeName = comment?.replace(/^#\s*/, '').trim() || 'SET';
+        return {
+          span: tokenSpan(nameTok, this.previous()),
+          stmt: withEmptyTrivia({
+            kind: 'IrDeclareStatement' as const,
+            names: [declName],
+            typeRef: {
+              kind: 'IrNamedType' as const,
+              name: camIdent(typeName),
+            },
+          }),
+        };
+      }
+      while (
+        !this.check(PyTokenKind.Newline) &&
+        !this.check(PyTokenKind.Eof) &&
+        !this.check(PyTokenKind.Dedent)
+      ) {
+        this.advance();
+      }
+      return {
+        span: tokenSpan(nameTok, this.previous()),
+        stmt: withEmptyTrivia({
+          kind: 'IrDeclareStatement' as const,
+          names: [declName],
+          typeRef: { kind: 'IrNamedType' as const, name: 'SET' },
+        }),
+      };
+    }
     if (!mapped) {
       // User TYPE / CLASS name. PseudoPilot emits:
       //   Name: Record = Record()          (TYPE / record)
@@ -626,8 +954,11 @@ class PyParser {
         span: tokenSpan(nameTok, this.previous()),
         stmt: withEmptyTrivia({
           kind: 'IrDeclareStatement' as const,
-          names: [nameTok.lexeme],
-          typeRef: { kind: 'IrNamedType' as const, name: typeTok.lexeme },
+          names: [declName],
+          typeRef: {
+            kind: 'IrNamedType' as const,
+            name: camIdent(typeTok.lexeme),
+          },
         }),
       };
     }
@@ -642,7 +973,7 @@ class PyParser {
       span: tokenSpan(nameTok, typeTok),
       stmt: withEmptyTrivia({
         kind: 'IrDeclareStatement' as const,
-        names: [nameTok.lexeme],
+        names: [declName],
         typeRef: { kind: 'IrScalarType' as const, name: mapped },
       }),
     };
@@ -661,36 +992,15 @@ class PyParser {
       return null;
     }
     const nameTok = this.advance();
-    const name = nameTok.lexeme;
+    const pyName = nameTok.lexeme;
 
     // Skip PseudoPilot runtime helpers emitted for typed INPUT.
-    if (name.startsWith('_pp_')) {
+    if (pyName.startsWith('_pp_')) {
       this.skipDefRemainder();
       return null;
     }
 
-    if (isPythonSyntaxKeyword(name)) {
-      this.error(
-        `Procedure name '${name}' is a Python keyword and cannot map to PROCEDURE.`,
-        nameTok,
-      );
-      return null;
-    }
-    if (isPythonTranslatorBuiltin(name)) {
-      this.diagnostics.push({
-        severity: 'warning',
-        code: 'T_PROC_SHADOWS_BUILTIN',
-        message: `Procedure name '${name}' shadows a Python builtin used by the translator (print/input/range).`,
-        span: {
-          start: { offset: nameTok.offset, line: nameTok.line, column: nameTok.column },
-          end: {
-            offset: nameTok.offset + nameTok.lexeme.length,
-            line: nameTok.line,
-            column: nameTok.column + Math.max(nameTok.lexeme.length, 1) - 1,
-          },
-        },
-      });
-    }
+    const name = camIdent(pyName);
 
     if (!this.match(PyTokenKind.LParen)) {
       this.error("Expected '(' after procedure name.", this.peek());
@@ -736,8 +1046,19 @@ class PyParser {
     }
 
     this.expect(PyTokenKind.Colon);
+    const byRefNames = this.readByRefNamesFromLine(this.previous().offset);
     this.skipNewlines();
-    const body = this.parseSuite(false, returnType !== null);
+    let body = this.parseSuite(false, returnType !== null);
+
+    const parametersWithMode = parameters.map((p) => ({
+      ...p,
+      mode: (byRefNames.has(p.name.toLowerCase()) ? 'BYREF' : 'BYVAL') as
+        | 'BYVAL'
+        | 'BYREF',
+    }));
+    if (byRefNames.size > 0) {
+      body = stripByRefCellLoads(body, byRefNames);
+    }
 
     if (returnType !== null) {
       if (!containsReturnIr(body)) {
@@ -760,7 +1081,7 @@ class PyParser {
         stmt: withEmptyTrivia({
           kind: 'IrFunctionDeclaration' as const,
           name,
-          parameters,
+          parameters: parametersWithMode,
           returnType,
           body,
         }),
@@ -772,10 +1093,43 @@ class PyParser {
       stmt: withEmptyTrivia({
         kind: 'IrProcedureDeclaration' as const,
         name,
-        parameters,
+        parameters: parametersWithMode,
         body,
       }),
     };
+  }
+
+  /** Read `# BYREF A, B` from the source line containing `offset`. */
+  private readByRefNamesFromLine(offset: number): Set<string> {
+    const names = new Set<string>();
+    let lineStart = offset;
+    while (lineStart > 0 && this.source[lineStart - 1] !== '\n') lineStart -= 1;
+    let lineEnd = offset;
+    while (lineEnd < this.source.length && this.source[lineEnd] !== '\n') {
+      lineEnd += 1;
+    }
+    const line = this.source.slice(lineStart, lineEnd);
+    const m = /#\s*BYREF\s+(.+)$/i.exec(line);
+    if (!m) return names;
+    for (const part of m[1]!.split(',')) {
+      const n = part.trim();
+      if (n) names.add(camIdent(n).toLowerCase());
+    }
+    return names;
+  }
+
+  /** Read `# …` trailing comment text from the source line containing `offset`. */
+  private readTrailingHashComment(offset: number): string | null {
+    let lineStart = offset;
+    while (lineStart > 0 && this.source[lineStart - 1] !== '\n') lineStart -= 1;
+    let lineEnd = offset;
+    while (lineEnd < this.source.length && this.source[lineEnd] !== '\n') {
+      lineEnd += 1;
+    }
+    const line = this.source.slice(lineStart, lineEnd);
+    const hash = line.indexOf('#');
+    if (hash < 0) return null;
+    return line.slice(hash).trim();
   }
 
   /** Consume `(…) [: suite]` after a helper `def` name we intentionally skip. */
@@ -847,7 +1201,7 @@ class PyParser {
       this.error('Expected class name after "class".', this.peek());
       return null;
     }
-    const name = this.advance().lexeme;
+    const name = camIdent(this.advance().lexeme);
     this.skipDecoratorCallArgs(); // optional (Base) inheritance clause
     if (!this.expect(PyTokenKind.Colon)) return null;
     this.skipNewlines();
@@ -884,13 +1238,18 @@ class PyParser {
       return null;
     }
     const nameTok = this.advance();
-    const name = nameTok.lexeme;
-    this.knownClassNames.add(name);
+    const pyName = nameTok.lexeme;
+    // Skip pointer cell helper class.
+    if (pyName === '_PpCell') {
+      this.skipClassRemainder();
+      return null;
+    }
+    const name = camIdent(pyName);
 
     let inherits: string | null = null;
     if (this.match(PyTokenKind.LParen)) {
       if (this.check(PyTokenKind.Identifier)) {
-        inherits = this.advance().lexeme;
+        inherits = camIdent(this.advance().lexeme);
       }
       if (!this.match(PyTokenKind.RParen)) {
         // Unsupported multi-base / complex base — skip to ')' then fail softly.
@@ -905,6 +1264,24 @@ class PyParser {
 
     if (!this.expect(PyTokenKind.Colon)) return null;
     this.skipNewlines();
+
+    // PseudoPilot enum emit: `class Season(IntEnum):` / `class Season(Enum):`
+    const baseKey = inherits?.toLowerCase() ?? '';
+    if (baseKey === 'intenum' || baseKey === 'enum') {
+      const members = this.parseEnumClassBody();
+      if (members === null) return null;
+      this.knownEnumNames.add(name);
+      return {
+        span: tokenSpan(classTok, this.previous()),
+        stmt: withEmptyTrivia({
+          kind: 'IrEnumTypeDeclaration' as const,
+          name,
+          members,
+        }),
+      };
+    }
+
+    this.knownClassNames.add(name);
 
     const methods = this.parseClassBody();
     if (methods === null) return null;
@@ -921,6 +1298,73 @@ class PyParser {
         members,
       }),
     };
+  }
+
+  /**
+   * Body of `class Name(IntEnum): Member = 0 …` — recovers enum members in
+   * declaration order (ordinal values are ignored; Cambridge enums are ordered).
+   */
+  private parseEnumClassBody(): string[] | null {
+    if (!this.match(PyTokenKind.Indent)) {
+      this.error('Expected indented enum body.', this.peek());
+      return null;
+    }
+    const members: string[] = [];
+    while (!this.check(PyTokenKind.Dedent) && !this.check(PyTokenKind.Eof)) {
+      this.skipNewlines();
+      if (this.check(PyTokenKind.Dedent) || this.check(PyTokenKind.Eof)) break;
+      if (this.check(PyTokenKind.Pass)) {
+        this.advance();
+        this.skipNewlines();
+        continue;
+      }
+      if (!this.check(PyTokenKind.Identifier)) {
+        this.error('Expected enum member assignment in IntEnum body.', this.peek());
+        this.skipRestOfLine();
+        this.skipNewlines();
+        continue;
+      }
+      const mTok = this.advance();
+      if (!this.match(PyTokenKind.Equal)) {
+        this.error('Expected "=" after enum member name.', this.peek());
+        this.skipRestOfLine();
+        this.skipNewlines();
+        continue;
+      }
+      // Skip ordinal expression.
+      while (
+        !this.check(PyTokenKind.Newline) &&
+        !this.check(PyTokenKind.Eof) &&
+        !this.check(PyTokenKind.Dedent)
+      ) {
+        this.advance();
+      }
+      members.push(camIdent(mTok.lexeme));
+      this.skipNewlines();
+    }
+    this.expect(PyTokenKind.Dedent);
+    return members;
+  }
+
+  /** Skip a class body after recognizing an unsupported/helper class. */
+  private skipClassRemainder(): void {
+    // Optional (Base)
+    if (this.match(PyTokenKind.LParen)) {
+      this.skipBalanced('(', ')');
+    }
+    if (this.match(PyTokenKind.Colon)) {
+      this.skipNewlines();
+      if (this.match(PyTokenKind.Indent)) {
+        let depth = 1;
+        while (depth > 0 && !this.check(PyTokenKind.Eof)) {
+          if (this.check(PyTokenKind.Indent)) depth += 1;
+          else if (this.check(PyTokenKind.Dedent)) depth -= 1;
+          this.advance();
+        }
+      }
+    } else {
+      this.skipRestOfLine();
+    }
   }
 
   /** Parse indented class body: `pass` and `def` methods only. */
@@ -985,15 +1429,7 @@ class PyParser {
     const nameTok = this.advance();
     const pyName = nameTok.lexeme;
     const isCtor = pyName === '__init__';
-    const camName = isCtor ? 'NEW' : pyName;
-
-    if (!isCtor && isPythonSyntaxKeyword(pyName)) {
-      this.error(
-        `Method name '${pyName}' is a Python keyword and cannot map to a CLASS method.`,
-        nameTok,
-      );
-      return null;
-    }
+    const camName = isCtor ? 'NEW' : camIdent(pyName);
 
     if (!this.match(PyTokenKind.LParen)) {
       this.error("Expected '(' after method name.", this.peek());
@@ -1017,7 +1453,9 @@ class PyParser {
     const seen = new Set<string>(['self']);
     if (this.match(PyTokenKind.Comma)) {
       if (!this.check(PyTokenKind.RParen)) {
-        const first = this.parseDefParameter(seen);
+        const first = this.parseDefParameter(seen, {
+          unannotatedDefault: 'UNKNOWN',
+        });
         if (!first) return null;
         parameters.push(first);
         while (this.match(PyTokenKind.Comma)) {
@@ -1028,7 +1466,9 @@ class PyParser {
             );
             return null;
           }
-          const next = this.parseDefParameter(seen);
+          const next = this.parseDefParameter(seen, {
+            unannotatedDefault: 'UNKNOWN',
+          });
           if (!next) return null;
           parameters.push(next);
         }
@@ -1077,6 +1517,7 @@ class PyParser {
     this.expect(PyTokenKind.Colon);
     this.skipNewlines();
     const body = this.parseSuite(false, returnType !== null);
+    this.validateClassMethodBody(camName, parameters, body);
 
     if (returnType !== null) {
       return {
@@ -1095,6 +1536,154 @@ class PyParser {
       body,
       visibility: 'PUBLIC',
     };
+  }
+
+  /**
+   * Flag undefined identifiers in CLASS method bodies (e.g. `self.age = age`
+   * when `age` is not a parameter). Does not invent bindings.
+   */
+  private validateClassMethodBody(
+    methodName: string,
+    parameters: readonly IrParameter[],
+    body: readonly IrStatement[],
+  ): void {
+    const defined = new Set<string>([
+      'self',
+      ...parameters.map((p) => p.name.toLowerCase()),
+    ]);
+    const report = (name: string): void => {
+      const key = name.toLowerCase();
+      if (defined.has(key)) return;
+      if (key === 'self') return;
+      if (this.knownClassNames.has(name)) return;
+      if (isPythonReservedIdentifier(name)) return;
+      this.diagnostics.push({
+        severity: 'error',
+        code: 'T_CLASS_UNDECL_IDENT',
+        message: `Undefined identifier '${name}' in CLASS method '${methodName}'.`,
+        help: 'Annotate a constructor/method parameter, or assign a literal / known value to the field.',
+      });
+    };
+
+    const walkExpr = (expr: IrExpression): void => {
+      switch (expr.kind) {
+        case 'IrIdentifier':
+          report(expr.name);
+          break;
+        case 'IrMemberExpression':
+          // `self.field` receiver is bound; only walk non-self objects and never
+          // treat the property name as a free identifier.
+          if (
+            !(
+              expr.object.kind === 'IrIdentifier' &&
+              expr.object.name === 'self'
+            )
+          ) {
+            walkExpr(expr.object);
+          }
+          break;
+        case 'IrIndexExpression':
+          walkExpr(expr.array);
+          for (const i of expr.indices) walkExpr(i);
+          break;
+        case 'IrUnaryExpression':
+          walkExpr(expr.argument);
+          break;
+        case 'IrBinaryExpression':
+          walkExpr(expr.left);
+          walkExpr(expr.right);
+          break;
+        case 'IrGroupingExpression':
+          walkExpr(expr.expression);
+          break;
+        case 'IrCallExpression':
+          for (const a of expr.args) walkExpr(a);
+          break;
+        case 'IrMethodCallExpression':
+          if (expr.object.kind !== 'IrSuperExpression') walkExpr(expr.object);
+          for (const a of expr.args) walkExpr(a);
+          break;
+        case 'IrNewExpression':
+          for (const a of expr.args) walkExpr(a);
+          break;
+        case 'IrEofExpression':
+          walkExpr(expr.fileName);
+          break;
+        case 'IrDeepCopyExpression':
+          walkExpr(expr.value);
+          break;
+        default:
+          break;
+      }
+    };
+
+    const walkStmt = (stmt: IrStatement): void => {
+      switch (stmt.kind) {
+        case 'IrAssignment':
+          if (stmt.target.kind === 'IrIndexExpression') {
+            walkExpr(stmt.target.array);
+            for (const i of stmt.target.indices) walkExpr(i);
+          } else if (
+            stmt.target.kind === 'IrMemberExpression' &&
+            !(
+              stmt.target.object.kind === 'IrIdentifier' &&
+              stmt.target.object.name === 'self'
+            )
+          ) {
+            walkExpr(stmt.target.object);
+          } else if (stmt.target.kind === 'IrIdentifier') {
+            report(stmt.target.name);
+          }
+          walkExpr(stmt.value);
+          break;
+        case 'IrOutput':
+          for (const v of stmt.values) walkExpr(v);
+          break;
+        case 'IrReturnStatement':
+          if (stmt.value) walkExpr(stmt.value);
+          break;
+        case 'IrIfStatement':
+          walkExpr(stmt.condition);
+          for (const s of stmt.consequent) walkStmt(s);
+          for (const c of stmt.elseIfClauses) {
+            walkExpr(c.condition);
+            for (const s of c.consequent) walkStmt(s);
+          }
+          if (stmt.alternate) for (const s of stmt.alternate) walkStmt(s);
+          break;
+        case 'IrWhileStatement':
+          walkExpr(stmt.condition);
+          for (const s of stmt.body) walkStmt(s);
+          break;
+        case 'IrRepeatStatement':
+          for (const s of stmt.body) walkStmt(s);
+          walkExpr(stmt.condition);
+          break;
+        case 'IrForStatement':
+          walkExpr(stmt.start);
+          walkExpr(stmt.end);
+          if (stmt.step) walkExpr(stmt.step);
+          for (const s of stmt.body) walkStmt(s);
+          break;
+        case 'IrCaseStatement':
+          walkExpr(stmt.discriminant);
+          for (const arm of stmt.arms) {
+            for (const s of arm.body) walkStmt(s);
+          }
+          if (stmt.otherwise) for (const s of stmt.otherwise) walkStmt(s);
+          break;
+        case 'IrCallStatement':
+          for (const a of stmt.args) walkExpr(a);
+          break;
+        case 'IrExpressionStatement':
+          walkExpr(stmt.expression);
+          break;
+        default:
+          break;
+      }
+    };
+
+    for (const s of body) walkStmt(s);
   }
 
   private skipRestOfLine(): void {
@@ -1192,7 +1781,7 @@ class PyParser {
       const scalarElem = pythonTypeToIr(elemTok.lexeme);
       const elementType: IrSimpleType = scalarElem
         ? { kind: 'IrScalarType', name: scalarElem }
-        : { kind: 'IrNamedType', name: elemTok.lexeme };
+        : { kind: 'IrNamedType', name: camIdent(elemTok.lexeme) };
       if (!this.match(PyTokenKind.RBracket)) return null;
       if (this.match(PyTokenKind.Equal)) {
         while (
@@ -1211,7 +1800,7 @@ class PyParser {
       ];
       return {
         kind: 'IrTypeField',
-        names: [nameTok.lexeme],
+        names: [camIdent(nameTok.lexeme)],
         typeRef: {
           kind: 'IrArrayType',
           elementType,
@@ -1231,7 +1820,7 @@ class PyParser {
       if (recordName === null) return null;
       return {
         kind: 'IrTypeField',
-        names: [nameTok.lexeme],
+        names: [camIdent(nameTok.lexeme)],
         typeRef: { kind: 'IrNamedType', name: recordName },
       };
     }
@@ -1242,7 +1831,7 @@ class PyParser {
     if (!value) return null;
     return {
       kind: 'IrTypeField',
-      names: [nameTok.lexeme],
+      names: [camIdent(nameTok.lexeme)],
       typeRef: { kind: 'IrScalarType', name: mapped },
     };
   }
@@ -1277,7 +1866,7 @@ class PyParser {
     ) {
       const ident = this.advance().lexeme;
       if (this.match(PyTokenKind.RParen)) {
-        return ident;
+        return camIdent(ident);
       }
     }
     this.i = start;
@@ -1297,21 +1886,19 @@ class PyParser {
     };
   }
 
-  private parseDefParameter(seen: Set<string>): IrParameter | null {
+  private parseDefParameter(
+    seen: Set<string>,
+    opts: { readonly unannotatedDefault: 'INTEGER' | 'UNKNOWN' } = {
+      unannotatedDefault: 'INTEGER',
+    },
+  ): IrParameter | null {
     if (!this.check(PyTokenKind.Identifier)) {
       this.error('Expected parameter name.', this.peek());
       return null;
     }
     const nameTok = this.advance();
-    const name = nameTok.lexeme;
+    const name = camIdent(nameTok.lexeme);
 
-    if (isPythonSyntaxKeyword(name)) {
-      this.error(
-        `Parameter name '${name}' is a Python keyword and cannot map to PROCEDURE.`,
-        nameTok,
-      );
-      return null;
-    }
     if (seen.has(name)) {
       this.error(`Duplicate parameter name '${name}'.`, nameTok);
       return null;
@@ -1319,20 +1906,45 @@ class PyParser {
     seen.add(name);
 
     // Parameter type may be a builtin scalar or a user TYPE (record) name.
-    let typeName: IrSimpleType = { kind: 'IrScalarType', name: 'INTEGER' };
+    let typeName: IrSimpleType =
+      opts.unannotatedDefault === 'UNKNOWN'
+        ? { kind: 'IrNamedType', name: 'UNKNOWN' }
+        : { kind: 'IrScalarType', name: 'INTEGER' };
     if (this.match(PyTokenKind.Colon)) {
       if (!this.check(PyTokenKind.Identifier)) {
         this.error('Expected type name after ":".', this.peek());
         return null;
       }
       typeName = pythonAnnotationToSimpleType(this.advance().lexeme);
+    } else if (opts.unannotatedDefault === 'UNKNOWN') {
+      this.diagnostics.push({
+        severity: 'warning',
+        code: 'T_CLASS_PARAM_UNKNOWN_TYPE',
+        message: `Parameter '${name}' has no type annotation; emitting UNKNOWN (not inventing INTEGER).`,
+        span: {
+          start: {
+            offset: nameTok.offset,
+            line: nameTok.line,
+            column: nameTok.column,
+          },
+          end: {
+            offset: nameTok.offset + nameTok.lexeme.length,
+            line: nameTok.line,
+            column: nameTok.column + Math.max(nameTok.lexeme.length, 1) - 1,
+          },
+        },
+      });
     } else {
       this.diagnostics.push({
         severity: 'warning',
         code: 'T_PROC_DEFAULT_TYPE',
         message: `Parameter '${name}' has no type annotation; defaulting to INTEGER for Cambridge PROCEDURE.`,
         span: {
-          start: { offset: nameTok.offset, line: nameTok.line, column: nameTok.column },
+          start: {
+            offset: nameTok.offset,
+            line: nameTok.line,
+            column: nameTok.column,
+          },
           end: {
             offset: nameTok.offset + nameTok.lexeme.length,
             line: nameTok.line,
@@ -1341,7 +1953,7 @@ class PyParser {
         },
       });
     }
-    return { kind: 'IrParameter', name, typeName };
+    return { kind: 'IrParameter', name, typeName, mode: 'BYVAL' };
   }
 
   /**
@@ -1510,7 +2122,7 @@ class PyParser {
       this.error("Expected loop variable after 'for'.", this.peek());
       return null;
     }
-    const variable = this.advance().lexeme;
+    const variable = camIdent(this.advance().lexeme);
 
     if (!this.match(PyTokenKind.In)) {
       this.error("Expected 'in' after loop variable.", this.peek());
@@ -2056,15 +2668,8 @@ class PyParser {
       return { kind: 'IrBooleanLiteral', value: false };
     }
     if (this.match(PyTokenKind.Identifier)) {
-      const name = this.previous().lexeme;
+      const pyName = this.previous().lexeme;
       if (this.check(PyTokenKind.LParen)) {
-        if (isPythonSyntaxKeyword(name)) {
-          this.error(
-            `Call target '${name}' is a Python keyword and cannot map to a function call.`,
-            this.previous(),
-          );
-          return null;
-        }
         this.advance(); // (
         const args: IrExpression[] = [];
         if (!this.check(PyTokenKind.RParen)) {
@@ -2086,7 +2691,7 @@ class PyParser {
           return null;
         }
         // Parameterless `super()` — continue into `.Method(...)` postfix below.
-        if (name === 'super') {
+        if (pyName === 'super') {
           if (args.length !== 0) {
             this.error(
               "Translator only supports parameterless 'super()' (Cambridge SUPER).",
@@ -2094,7 +2699,7 @@ class PyParser {
             );
             return null;
           }
-          let expr: IrExpression = {
+          const expr: IrExpression = {
             kind: 'IrCallExpression',
             callee: 'super',
             args: [],
@@ -2103,21 +2708,10 @@ class PyParser {
           // by assigning into the shared postfix chain.
           return this.parsePostfixChain(expr);
         }
-        // Known CLASS constructor call → NEW ClassName(args).
-        if (this.knownClassNames.has(name)) {
-          return {
-            kind: 'IrNewExpression',
-            className: name,
-            args,
-          };
-        }
-        // datetime.date(year, month, day) / date(y, m, d)
-        if (name === 'date' && args.length === 3) {
-          if (
-            args.every(
-              (a) => a.kind === 'IrIntegerLiteral',
-            )
-          ) {
+        // datetime.date(year, month, day) / date(y, m, d) — check raw Python name
+        // before unsanitize (user `date_` recovers to Cambridge `date` as a call).
+        if (pyName === 'date' && args.length === 3) {
+          if (args.every((a) => a.kind === 'IrIntegerLiteral')) {
             return {
               kind: 'IrDateLiteral',
               year: (args[0] as { value: number }).value,
@@ -2131,11 +2725,69 @@ class PyParser {
             args: [args[2]!, args[1]!, args[0]!],
           };
         }
-        const callee = cambridgeBuiltinFromPythonCall(name) ?? name;
+        const camName = camIdent(pyName);
+        // Known CLASS constructor call → NEW ClassName(args).
+        if (this.knownClassNames.has(camName)) {
+          return {
+            kind: 'IrNewExpression',
+            className: camName,
+            args,
+          };
+        }
+        // Truncating DIV/MOD helpers → binary ops.
+        if (pyName === '_pp_div' && args.length === 2) {
+          return {
+            kind: 'IrBinaryExpression',
+            operator: '//',
+            left: args[0]!,
+            right: args[1]!,
+          };
+        }
+        if (pyName === '_pp_mod' && args.length === 2) {
+          return {
+            kind: 'IrBinaryExpression',
+            operator: '%',
+            left: args[0]!,
+            right: args[1]!,
+          };
+        }
+        // Enum ordinal helpers → + / -
+        if (pyName === '_pp_enum_add' && args.length === 2) {
+          return {
+            kind: 'IrBinaryExpression',
+            operator: '+',
+            left: args[0]!,
+            right: args[1]!,
+          };
+        }
+        if (pyName === '_pp_enum_sub' && args.length === 2) {
+          return {
+            kind: 'IrBinaryExpression',
+            operator: '-',
+            left: args[0]!,
+            right: args[1]!,
+          };
+        }
+        // OUTPUT formatting helper — unwrap.
+        if (pyName === '_pp_show' && args.length === 1) {
+          return args[0]!;
+        }
+        // Address-taken cell load → bare identifier.
+        if (pyName === '_pp_load' && args.length === 1) {
+          return args[0]!;
+        }
+        // Pointer deref load → IrDerefExpression.
+        if (pyName === '_pp_pload' && args.length === 1) {
+          return { kind: 'IrDerefExpression', pointer: args[0]! };
+        }
+        const callee = cambridgeBuiltinFromPythonCall(pyName) ?? camName;
         return { kind: 'IrCallExpression', callee, args };
       }
 
-      return this.parsePostfixChain({ kind: 'IrIdentifier', name });
+      return this.parsePostfixChain({
+        kind: 'IrIdentifier',
+        name: camIdent(pyName),
+      });
     }
     if (this.match(PyTokenKind.LParen)) {
       const inner = this.parseExpression();
@@ -2164,22 +2816,25 @@ class PyParser {
             this.error('Expected attribute name after ".".', this.peek());
             return null;
           }
-          const method = this.previous().lexeme;
+          const methodPy = this.previous().lexeme;
           if (!this.match(PyTokenKind.LParen)) {
             // Attribute access — recover DATE component builtins from
             // PseudoPilot emit (`.day` / `.month` / `.year`).
-            const attrBuiltin = pythonAttrToCambridgeBuiltin(method);
+            const attrBuiltin = pythonAttrToCambridgeBuiltin(methodPy);
             if (attrBuiltin) {
               expr = {
                 kind: 'IrCallExpression',
                 callee: attrBuiltin,
                 args: [expr],
               };
+            } else if (methodPy === 'value') {
+              // Legacy pointer cell deref: P.value → P^
+              expr = { kind: 'IrDerefExpression', pointer: expr };
             } else {
               expr = {
                 kind: 'IrMemberExpression',
                 object: expr,
-                property: method,
+                property: camIdent(methodPy),
               };
             }
             continue;
@@ -2199,21 +2854,21 @@ class PyParser {
             this.error("Expected ')' after method arguments.", this.peek());
             return null;
           }
-          if (method === 'lower' && args.length === 0) {
+          if (methodPy === 'lower' && args.length === 0) {
             expr = { kind: 'IrCallExpression', callee: 'LCASE', args: [expr] };
-          } else if (method === 'upper' && args.length === 0) {
+          } else if (methodPy === 'upper' && args.length === 0) {
             expr = { kind: 'IrCallExpression', callee: 'UCASE', args: [expr] };
           } else if (
             expr.kind === 'IrIdentifier' &&
             expr.name === 'date' &&
-            method === 'today' &&
+            methodPy === 'today' &&
             args.length === 0
           ) {
             expr = { kind: 'IrCallExpression', callee: 'TODAY', args: [] };
           } else if (
             expr.kind === 'IrIdentifier' &&
             expr.name === 'copy' &&
-            method === 'deepcopy' &&
+            methodPy === 'deepcopy' &&
             args.length === 1
           ) {
             // Forward emit uses copy.deepcopy for Cambridge by-value record/array
@@ -2222,32 +2877,33 @@ class PyParser {
           } else if (
             expr.kind === 'IrIdentifier' &&
             expr.name === 'random' &&
-            method === 'random' &&
+            methodPy === 'random' &&
             args.length === 0
           ) {
             expr = { kind: 'IrCallExpression', callee: 'RAND', args: [] };
-          } else if (method === 'readline' && args.length === 0) {
+          } else if (methodPy === 'readline' && args.length === 0) {
             expr = { kind: 'IrCallExpression', callee: 'readline', args: [expr] };
-          } else if (method === 'rstrip') {
+          } else if (methodPy === 'rstrip') {
             expr = {
               kind: 'IrCallExpression',
               callee: 'rstrip',
               args: [expr, ...args],
             };
-          } else if (method === 'write' && args.length === 1) {
+          } else if (methodPy === 'write' && args.length === 1) {
             expr = {
               kind: 'IrCallExpression',
               callee: 'write',
               args: [expr, args[0]!],
             };
-          } else if (method === 'close' && args.length === 0) {
+          } else if (methodPy === 'close' && args.length === 0) {
             expr = { kind: 'IrCallExpression', callee: 'close', args: [expr] };
           } else if (
             expr.kind === 'IrCallExpression' &&
             expr.callee === 'super' &&
             expr.args.length === 0
           ) {
-            const camMethod = method === '__init__' ? 'NEW' : method;
+            const camMethod =
+              methodPy === '__init__' ? 'NEW' : camIdent(methodPy);
             expr = {
               kind: 'IrMethodCallExpression',
               object: { kind: 'IrSuperExpression' },
@@ -2258,7 +2914,7 @@ class PyParser {
             expr = {
               kind: 'IrMethodCallExpression',
               object: expr,
-              method,
+              method: methodPy === '__init__' ? 'NEW' : camIdent(methodPy),
               args,
             };
           }
@@ -2494,7 +3150,18 @@ function collectPlainClassNames(tokens: readonly PyToken[]): Set<string> {
         continue; // TYPE via @dataclass — not a CLASS for NEW.
       }
     }
-    names.add(next.lexeme);
+    // Skip IntEnum / Enum (enum TYPE) and helper _PpCell.
+    if (next.lexeme === '_PpCell') continue;
+    let k = i + 2;
+    if (
+      k < tokens.length &&
+      tokens[k]!.kind === PyTokenKind.LParen &&
+      tokens[k + 1]?.kind === PyTokenKind.Identifier
+    ) {
+      const base = tokens[k + 1]!.lexeme.toLowerCase();
+      if (base === 'intenum' || base === 'enum') continue;
+    }
+    names.add(camIdent(next.lexeme));
   }
   return names;
 }
@@ -2597,7 +3264,8 @@ function inferTypeRefFromValue(
       name: value.argument.kind === 'IrRealLiteral' ? 'REAL' : 'INTEGER',
     };
   }
-  return { kind: 'IrScalarType', name: 'INTEGER' };
+  // Do not invent INTEGER for arbitrary expressions / undefined identifiers.
+  return { kind: 'IrNamedType', name: 'UNKNOWN' };
 }
 
 /** Builtin scalar annotation → IrScalarType; anything else → a user TYPE reference. */
@@ -2605,7 +3273,7 @@ function pythonAnnotationToSimpleType(name: string): IrSimpleType {
   const scalar = pythonTypeToIr(name);
   return scalar
     ? { kind: 'IrScalarType', name: scalar }
-    : { kind: 'IrNamedType', name };
+    : { kind: 'IrNamedType', name: camIdent(name) };
 }
 
 function isLiteralExpr(expr: IrExpression): boolean {
@@ -2647,7 +3315,7 @@ function parseArrayBoundExpr(
   }
   // Cambridge / PseudoPilot identifiers in ARRAY bounds comments.
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) {
-    return { kind: 'IrIdentifier', name: t };
+    return { kind: 'IrIdentifier', name: camIdent(t) };
   }
   return null;
 }
@@ -2679,8 +3347,121 @@ function parseArrayBoundsComment(
  */
 function refineProgram(statements: readonly IrStatement[]): IrStatement[] {
   const refined = statements.map((stmt) => refineOne(stmt));
-  const bounds = collectArrayBounds(refined);
-  return refined.map((stmt) => stripIndexOffsetsInStmt(stmt, bounds));
+  const collapsed = collapseByRefCallSites(refined);
+  const bounds = collectArrayBounds(collapsed);
+  return collapsed.map((stmt) => stripIndexOffsetsInStmt(stmt, bounds));
+}
+
+/**
+ * Collapse PseudoPilot BYREF call emit:
+ *   _pp_ref_0 = _pp_cell(A)
+ *   SWAP(_pp_ref_0, …)
+ *   A = _pp_ref_0[0]
+ * back into `CALL SWAP(A, …)`.
+ */
+function collapseByRefCallSites(
+  statements: readonly IrStatement[],
+): IrStatement[] {
+  const out: IrStatement[] = [];
+  let i = 0;
+  while (i < statements.length) {
+    const stmt = statements[i]!;
+    if (
+      stmt.kind === 'IrProcedureDeclaration' ||
+      stmt.kind === 'IrFunctionDeclaration'
+    ) {
+      out.push({ ...stmt, body: collapseByRefCallSites(stmt.body) });
+      i += 1;
+      continue;
+    }
+    if (stmt.kind === 'IrIfStatement') {
+      out.push({
+        ...stmt,
+        consequent: collapseByRefCallSites(stmt.consequent),
+        elseIfClauses: stmt.elseIfClauses.map((c) => ({
+          ...c,
+          consequent: collapseByRefCallSites(c.consequent),
+        })),
+        alternate: stmt.alternate
+          ? collapseByRefCallSites(stmt.alternate)
+          : null,
+      });
+      i += 1;
+      continue;
+    }
+    if (
+      stmt.kind === 'IrWhileStatement' ||
+      stmt.kind === 'IrRepeatStatement' ||
+      stmt.kind === 'IrForStatement'
+    ) {
+      out.push({ ...stmt, body: collapseByRefCallSites(stmt.body) });
+      i += 1;
+      continue;
+    }
+
+    // Gather leading _pp_ref_N = _pp_cell(arg) assignments.
+    const cells = new Map<string, IrExpression>();
+    let j = i;
+    while (j < statements.length) {
+      const s = statements[j]!;
+      if (
+        s.kind === 'IrAssignment' &&
+        s.target.kind === 'IrIdentifier' &&
+        s.target.name.startsWith('_pp_ref_') &&
+        s.value.kind === 'IrCallExpression' &&
+        s.value.callee === '_pp_cell' &&
+        s.value.args.length === 1
+      ) {
+        cells.set(s.target.name, s.value.args[0]!);
+        j += 1;
+        continue;
+      }
+      break;
+    }
+    if (
+      cells.size > 0 &&
+      j < statements.length &&
+      statements[j]!.kind === 'IrCallStatement'
+    ) {
+      const call = statements[j]! as Extract<
+        IrStatement,
+        { kind: 'IrCallStatement' }
+      >;
+      const newArgs = call.args.map((a) => {
+        if (a.kind === 'IrIdentifier' && cells.has(a.name)) {
+          return cells.get(a.name)!;
+        }
+        return a;
+      });
+      // Skip matching postlude A = _pp_ref_N[0]
+      let k = j + 1;
+      const expectedWrites = new Set(cells.keys());
+      while (k < statements.length && expectedWrites.size > 0) {
+        const s = statements[k]!;
+        if (
+          s.kind === 'IrAssignment' &&
+          s.value.kind === 'IrIndexExpression' &&
+          s.value.array.kind === 'IrIdentifier' &&
+          expectedWrites.has(s.value.array.name) &&
+          s.value.indices.length === 1 &&
+          s.value.indices[0]!.kind === 'IrIntegerLiteral' &&
+          s.value.indices[0]!.value === 0
+        ) {
+          expectedWrites.delete(s.value.array.name);
+          k += 1;
+          continue;
+        }
+        break;
+      }
+      out.push({ ...call, args: newArgs });
+      i = k;
+      continue;
+    }
+
+    out.push(stmt);
+    i += 1;
+  }
+  return out;
 }
 
 function collectArrayBounds(
@@ -3074,6 +3855,127 @@ function tryMidFromSlice(
     callee: 'MID',
     args: [base, start, unwrapGrouping(highU.right)],
   };
+}
+
+/**
+ * PseudoPilot emits BYREF scalar params as list cells (`X[0]`). When reversing
+ * a `# BYREF X` def, unwrap those loads/stores back to bare identifiers.
+ */
+function stripByRefCellLoads(
+  statements: readonly IrStatement[],
+  byRefNames: ReadonlySet<string>,
+): IrStatement[] {
+  const unwrapExpr = (e: IrExpression): IrExpression => {
+    if (
+      e.kind === 'IrIndexExpression' &&
+      e.array.kind === 'IrIdentifier' &&
+      byRefNames.has(e.array.name.toLowerCase()) &&
+      e.indices.length === 1 &&
+      e.indices[0]!.kind === 'IrIntegerLiteral' &&
+      e.indices[0]!.value === 0
+    ) {
+      return { kind: 'IrIdentifier', name: e.array.name };
+    }
+    // Pointer-style deref of a BYREF cell param → bare name.
+    if (
+      e.kind === 'IrDerefExpression' &&
+      e.pointer.kind === 'IrIdentifier' &&
+      byRefNames.has(e.pointer.name.toLowerCase())
+    ) {
+      return { kind: 'IrIdentifier', name: e.pointer.name };
+    }
+    switch (e.kind) {
+      case 'IrUnaryExpression':
+        return { ...e, argument: unwrapExpr(e.argument) };
+      case 'IrBinaryExpression':
+        return { ...e, left: unwrapExpr(e.left), right: unwrapExpr(e.right) };
+      case 'IrGroupingExpression':
+        return { ...e, expression: unwrapExpr(e.expression) };
+      case 'IrCallExpression':
+        return { ...e, args: e.args.map(unwrapExpr) };
+      case 'IrMethodCallExpression':
+        return {
+          ...e,
+          object: unwrapExpr(e.object),
+          args: e.args.map(unwrapExpr),
+        };
+      case 'IrIndexExpression':
+        return {
+          ...e,
+          array: unwrapExpr(e.array),
+          indices: e.indices.map(unwrapExpr),
+        };
+      case 'IrMemberExpression':
+        return { ...e, object: unwrapExpr(e.object) };
+      case 'IrDeepCopyExpression':
+        return { ...e, value: unwrapExpr(e.value) };
+      default:
+        return e;
+    }
+  };
+
+  const unwrapTarget = (t: IrAssignTarget): IrAssignTarget => {
+    if (
+      t.kind === 'IrIndexExpression' &&
+      t.array.kind === 'IrIdentifier' &&
+      byRefNames.has(t.array.name.toLowerCase()) &&
+      t.indices.length === 1 &&
+      t.indices[0]!.kind === 'IrIntegerLiteral' &&
+      t.indices[0]!.value === 0
+    ) {
+      return { kind: 'IrIdentifier', name: t.array.name };
+    }
+    return unwrapExpr(t as IrExpression) as IrAssignTarget;
+  };
+
+  const walk = (stmts: readonly IrStatement[]): IrStatement[] =>
+    stmts.map((stmt) => {
+      switch (stmt.kind) {
+        case 'IrAssignment':
+          return {
+            ...stmt,
+            target: unwrapTarget(stmt.target),
+            value: unwrapExpr(stmt.value),
+          };
+        case 'IrOutput':
+          return { ...stmt, values: stmt.values.map(unwrapExpr) };
+        case 'IrIfStatement':
+          return {
+            ...stmt,
+            condition: unwrapExpr(stmt.condition),
+            consequent: walk(stmt.consequent),
+            elseIfClauses: stmt.elseIfClauses.map((c) => ({
+              ...c,
+              condition: unwrapExpr(c.condition),
+              consequent: walk(c.consequent),
+            })),
+            alternate: stmt.alternate ? walk(stmt.alternate) : null,
+          };
+        case 'IrWhileStatement':
+        case 'IrRepeatStatement':
+          return {
+            ...stmt,
+            condition: unwrapExpr(stmt.condition),
+            body: walk(stmt.body),
+          };
+        case 'IrForStatement':
+          return {
+            ...stmt,
+            start: unwrapExpr(stmt.start),
+            end: unwrapExpr(stmt.end),
+            step: stmt.step ? unwrapExpr(stmt.step) : null,
+            body: walk(stmt.body),
+          };
+        case 'IrReturnStatement':
+          return { ...stmt, value: unwrapExpr(stmt.value) };
+        case 'IrCallStatement':
+          return { ...stmt, args: stmt.args.map(unwrapExpr) };
+        default:
+          return stmt;
+      }
+    });
+
+  return walk(statements);
 }
 
 function unwrapGrouping(expr: IrExpression): IrExpression {

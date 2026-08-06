@@ -172,6 +172,34 @@ export function diagnosticsToMarkers(
   });
 }
 
+/** UI translation diagnostics (optional line/column) → Monaco markers. */
+export function ideDiagnosticsToMarkers(
+  diags: readonly {
+    readonly severity: 'error' | 'warning';
+    readonly message: string;
+    readonly code: string;
+    readonly line?: number;
+    readonly column?: number;
+    readonly help?: string;
+  }[],
+): MonacoMarkerData[] {
+  return diags.map((d) => {
+    const line = Math.max(1, d.line ?? 1);
+    const column = Math.max(1, d.column ?? 1);
+    const message = d.help ? `${d.message}\n${d.help}` : d.message;
+    return {
+      severity:
+        d.severity === 'warning' ? MARKER_SEVERITY_WARNING : MARKER_SEVERITY_ERROR,
+      message,
+      code: d.code,
+      startLineNumber: line,
+      startColumn: column,
+      endLineNumber: line,
+      endColumn: column + 1,
+    };
+  });
+}
+
 export function locationToMonacoRange(range: LsLikeRange) {
   return lsRangeToMonaco(range);
 }

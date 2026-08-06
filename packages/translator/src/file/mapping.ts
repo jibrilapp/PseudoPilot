@@ -7,11 +7,18 @@
  *
  * Dynamic paths use `_pp_files[path] = open(path, …)`.
  *
+ * Random files (Cambridge §9.2) use an in-memory store + helpers:
+ *   OPENFILE "f.dat" FOR RANDOM
+ *   → _f_f_dat = _pp_random_open("f.dat")
+ *   SEEK / GETRECORD / PUTRECORD → _pp_random_seek / get / put
+ *
  * EOF uses tell/read(1)/seek via `_pp_eof(handle)`.
  */
 import type { IrExpression, IrProgram, IrStatement } from '../ir/nodes.js';
 
 export const PP_FILES_INIT = '_pp_files = dict()';
+
+export const PP_RANDOM_FILES_INIT = '_pp_random_files = dict()';
 
 export const PP_EOF_HELPER = [
   'def _pp_eof(f):',
@@ -21,6 +28,26 @@ export const PP_EOF_HELPER = [
   '        return True',
   '    f.seek(pos)',
   '    return False',
+].join('\n');
+
+/** In-memory RANDOM file helpers (teaching mapping; not OS binary files). */
+export const PP_RANDOM_HELPERS = [
+  'def _pp_random_open(path):',
+  '    if path not in _pp_random_files:',
+  '        _pp_random_files[path] = [dict(), 0]',
+  '    return _pp_random_files[path]',
+  '',
+  'def _pp_random_seek(f, n):',
+  '    f[1] = n',
+  '',
+  'def _pp_random_get(f):',
+  '    return copy.deepcopy(f[0][f[1]])',
+  '',
+  'def _pp_random_put(f, rec):',
+  '    f[0][f[1]] = copy.deepcopy(rec)',
+  '',
+  'def _pp_random_close(f):',
+  '    pass',
 ].join('\n');
 
 export function pythonMode(mode: 'READ' | 'WRITE' | 'APPEND'): string {
@@ -48,6 +75,10 @@ export function fileHandleName(path: string): string {
 
 export function programUsesFiles(program: IrProgram): boolean {
   return statementsUseFiles(program.body);
+}
+
+export function programUsesRandomFiles(program: IrProgram): boolean {
+  return statementsUseRandomFiles(program.body);
 }
 
 export function programUsesEof(program: IrProgram): boolean {
@@ -90,7 +121,10 @@ function statementsUseFiles(stmts: readonly IrStatement[]): boolean {
       stmt.kind === 'IrOpenFileStatement' ||
       stmt.kind === 'IrReadFileStatement' ||
       stmt.kind === 'IrWriteFileStatement' ||
-      stmt.kind === 'IrCloseFileStatement'
+      stmt.kind === 'IrCloseFileStatement' ||
+      stmt.kind === 'IrSeekStatement' ||
+      stmt.kind === 'IrGetRecordStatement' ||
+      stmt.kind === 'IrPutRecordStatement'
     ) {
       return true;
     }
@@ -118,6 +152,45 @@ function statementsUseFiles(stmts: readonly IrStatement[]): boolean {
       if (statementsUseFiles(stmt.body)) return true;
     }
     if (stmtHasEof(stmt)) return true;
+  }
+  return false;
+}
+
+function statementsUseRandomFiles(stmts: readonly IrStatement[]): boolean {
+  for (const stmt of stmts) {
+    if (
+      stmt.kind === 'IrSeekStatement' ||
+      stmt.kind === 'IrGetRecordStatement' ||
+      stmt.kind === 'IrPutRecordStatement' ||
+      (stmt.kind === 'IrOpenFileStatement' && stmt.mode === 'RANDOM')
+    ) {
+      return true;
+    }
+    if (stmt.kind === 'IrIfStatement') {
+      if (statementsUseRandomFiles(stmt.consequent)) return true;
+      for (const c of stmt.elseIfClauses) {
+        if (statementsUseRandomFiles(c.consequent)) return true;
+      }
+      if (stmt.alternate && statementsUseRandomFiles(stmt.alternate)) return true;
+    } else if (
+      stmt.kind === 'IrWhileStatement' ||
+      stmt.kind === 'IrRepeatStatement' ||
+      stmt.kind === 'IrForStatement'
+    ) {
+      if (statementsUseRandomFiles(stmt.body)) return true;
+    } else if (stmt.kind === 'IrCaseStatement') {
+      for (const arm of stmt.arms) {
+        if (statementsUseRandomFiles(arm.body)) return true;
+      }
+      if (stmt.otherwise && statementsUseRandomFiles(stmt.otherwise)) {
+        return true;
+      }
+    } else if (
+      stmt.kind === 'IrProcedureDeclaration' ||
+      stmt.kind === 'IrFunctionDeclaration'
+    ) {
+      if (statementsUseRandomFiles(stmt.body)) return true;
+    }
   }
   return false;
 }
@@ -163,8 +236,11 @@ function stmtHasEof(stmt: IrStatement): boolean {
     case 'IrOpenFileStatement':
     case 'IrReadFileStatement':
     case 'IrCloseFileStatement':
+    case 'IrSeekStatement':
+    case 'IrGetRecordStatement':
       return walk(stmt.fileName);
     case 'IrWriteFileStatement':
+    case 'IrPutRecordStatement':
       return walk(stmt.fileName) || walk(stmt.value);
     default:
       return false;

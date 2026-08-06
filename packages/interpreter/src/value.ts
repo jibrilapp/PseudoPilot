@@ -59,9 +59,51 @@ export type ObjectValue = {
   readonly fieldNames: readonly string[];
 };
 
-export type RuntimeValue = ScalarValue | ArrayValue | RecordValue | ObjectValue;
-
 export type BindingKind = 'variable' | 'constant' | 'parameter';
+
+/** Mutable location used for BYREF parameter aliases and pointer cells. */
+export type ValuePlace = {
+  get: () => RuntimeValue;
+  set: (value: RuntimeValue) => void;
+};
+
+/** Enumerated TYPE member (ordinal is 0-based declaration order). */
+export type EnumValue = {
+  readonly kind: 'ENUM';
+  readonly typeName: string;
+  readonly member: string;
+  readonly ordinal: number;
+};
+
+/**
+ * Mutable cell for pointer targets — same shape as BYREF {@link ValuePlace}.
+ * Created when taking `^place`; deref reads/writes through the cell.
+ */
+export type PointerCell = ValuePlace;
+
+/** Pointer TYPE value; `cell === null` is Cambridge NIL. */
+export type PointerValue = {
+  readonly kind: 'POINTER';
+  /** Named pointer TYPE display name, or `''` for anonymous `^place`. */
+  readonly typeName: string;
+  readonly cell: PointerCell | null;
+};
+
+/** SET OF T instance (DEFINE or DECLARE empty). */
+export type SetValue = {
+  readonly kind: 'SET';
+  readonly typeName: string;
+  readonly elements: RuntimeValue[];
+};
+
+export type RuntimeValue =
+  | ScalarValue
+  | ArrayValue
+  | RecordValue
+  | ObjectValue
+  | EnumValue
+  | PointerValue
+  | SetValue;
 
 export type Binding = {
   readonly name: string;
@@ -69,6 +111,8 @@ export type Binding = {
   /** Scalar TypeNameKind, `'ARRAY'`, or a record TYPE display name. */
   typeName: string;
   value: RuntimeValue;
+  /** True when this parameter aliases a caller location (Cambridge BYREF). */
+  readonly byRef?: boolean;
 };
 
 export type RuntimeDiagnostic = {
@@ -162,7 +206,43 @@ export function formatValue(v: RuntimeValue): string {
       });
       return `${v.className}{${parts.join(', ')}}`;
     }
+    case 'ENUM':
+      return v.member;
+    case 'POINTER':
+      return v.cell === null ? 'NIL' : `POINTER${v.typeName ? `:${v.typeName}` : ''}`;
+    case 'SET':
+      return `{${v.elements.map(quoteForDisplay).join(', ')}}`;
   }
+}
+
+export function enumValue(
+  typeName: string,
+  member: string,
+  ordinal: number,
+): EnumValue {
+  return { kind: 'ENUM', typeName, member, ordinal };
+}
+
+export function pointerValue(
+  typeName: string,
+  cell: PointerCell | null,
+): PointerValue {
+  return { kind: 'POINTER', typeName, cell };
+}
+
+export function setValue(
+  typeName: string,
+  elements: readonly RuntimeValue[],
+): SetValue {
+  return { kind: 'SET', typeName, elements: elements.map(cloneValue) };
+}
+
+export function nilPointer(typeName = ''): PointerValue {
+  return pointerValue(typeName, null);
+}
+
+export function emptySet(typeName: string): SetValue {
+  return { kind: 'SET', typeName, elements: [] };
 }
 
 function pad2(n: number): string {
@@ -355,7 +435,7 @@ export function allocateObject(
   return { kind: 'OBJECT', className, fields, fieldNames };
 }
 
-/** Deep by-value copy: records/arrays are reference types otherwise. */
+/** Deep by-value copy: records/arrays/sets clone; objects/pointers alias. */
 export function cloneValue(v: RuntimeValue): RuntimeValue {
   switch (v.kind) {
     case 'ARRAY':
@@ -377,9 +457,18 @@ export function cloneValue(v: RuntimeValue): RuntimeValue {
       // Objects are reference types: assignment/params alias the same
       // instance (Cambridge 9618 OOP identity semantics) — never clone.
       return v;
+    case 'SET':
+      return {
+        kind: 'SET',
+        typeName: v.typeName,
+        elements: v.elements.map(cloneValue),
+      };
+    case 'POINTER':
+      // Pointer assignment copies the cell reference, not the pointee.
+      return { kind: 'POINTER', typeName: v.typeName, cell: v.cell };
+    case 'ENUM':
     default:
-      // Scalars are treated as immutable — always replaced wholesale, never
-      // mutated in place — so sharing the reference is safe.
+      // Scalars / enums are immutable — sharing the reference is safe.
       return v;
   }
 }

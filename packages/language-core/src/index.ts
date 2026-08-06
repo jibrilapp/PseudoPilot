@@ -15,7 +15,7 @@ export {
   type ParseResult,
   type ParseOptions,
 } from './parse.js';
-export { lex, type LexResult } from './lexer/lexer.js';
+export { lex, type LexResult, type LexOptions } from './lexer/lexer.js';
 export type {
   Program,
   Statement,
@@ -41,6 +41,9 @@ export type {
   ReadFileStatement,
   WriteFileStatement,
   CloseFileStatement,
+  SeekStatement,
+  GetRecordStatement,
+  PutRecordStatement,
   CallExpression,
   IndexExpression,
   EofExpression,
@@ -56,9 +59,14 @@ export type {
   AssignTarget,
   FileMode,
   Parameter,
+  ParameterMode,
   TypeName,
   TypeNameKind,
   TypeDeclaration,
+  EnumTypeDeclaration,
+  PointerTypeDeclaration,
+  SetTypeDeclaration,
+  DefineStatement,
   Visibility,
   ClassPropertyDeclaration,
   ClassProcedureDeclaration,
@@ -70,6 +78,8 @@ export type {
   BinaryExpression,
   UnaryExpression,
   GroupingExpression,
+  AddressOfExpression,
+  DerefExpression,
   IntegerLiteral,
   RealLiteral,
   StringLiteral,

@@ -1,31 +1,70 @@
 # Monaco editor integration
 
-The student IDE (`apps/web`) uses **Monaco Editor** for both the pseudocode and Python panes.
+The student IDE (`apps/web`) uses **Monaco Editor** for both the Pseudocode and
+Python panes as **first-class editable** surfaces.
 
 ## Architecture
 
 ```
-Monaco Editor (CodeSurface)
-    │  sync text → LanguageService.updateDocument (ide://main)
-    │  debounced markers only
-    ▼
-CompilerService / LanguageService   (shared IncrementalCompiler)
-    │  hover / completion / definition / rename / diagnostics
-    ▼
-Monaco providers + markers + decorations
-    │
+Pseudocode Monaco (CodeSurface)          Python Monaco (CodeSurface)
+        │ user edit                                │ user edit
+        ▼                                          ▼
+usePseudocodeTranslation / createBidirectionalSync
+        │ origin = pseudocode                      │ origin = python
+        │ debounce → forward translate             │ debounce → reverse translate
+        │ update Python only                       │ update Pseudocode only
+        │ (no reverse)                             │ (no forward)
+        ▼                                          ▼
+CompilerService / LanguageService          Python markers (translate errors)
+(shared IncrementalCompiler on             owner: pseudopilot-translate
+ ide://main — Pseudocode only)
+        │
 RuntimeController → Worker → Interpreter
-    │  pauseLocation / breakpoints
-    ▼
-Monaco glyph margin + exec-line decoration + revealLineInCenter
+(always runs Pseudocode buffer; breakpoints unchanged by translate)
 ```
 
 **Rule:** Monaco adapters must not re-implement parse, check, or rename rules.
 They only map `@pseudopilot/language-service` results to Monaco APIs.
 
-Monaco never parses or type-checks. Providers call `LanguageService` only.
-Document versions are monotonic across React remounts (`nextDocumentVersion`) so
-CompilerService does not ignore updates under the LSP stale-version rule.
+Monaco never parses or type-checks Pseudocode. Providers call `LanguageService`
+only. Document versions are monotonic across React remounts
+(`nextDocumentVersion`) so CompilerService does not ignore updates under the
+LSP stale-version rule.
+
+Translation uses `@pseudopilot/translator` via thin crash-safe adapters in
+`lib/translation/runTranslate.ts`. The translator remains **independent** of
+`IncrementalCompiler` (no architecture change).
+
+## Bidirectional editing (origin-aware sync)
+
+| User action | Scheduled work | Peer update | Loop guard |
+| --- | --- | --- | --- |
+| Edit Pseudocode | Forward `translatePseudocodeToPython` | Set Python text | Does **not** schedule reverse |
+| Edit Python | Reverse `translatePythonToPseudocode` | Set Pseudocode text | Does **not** schedule forward |
+| Apply peer text via `code` prop | — | `executeEdits` + `suppressChangeRef` | `onChange` suppressed; identical buffer edits are no-ops in `createBidirectionalSync` (blocks reverse echo) |
+
+Controller: `lib/translation/bidirectionalSync.ts` (`createBidirectionalSync`).
+React hook: `hooks/usePseudocodeTranslation.ts`.
+
+Debounce: ~250ms (500ms above 32k chars), shared constants in
+`lib/translation/types.ts`. Opposite-direction pending work is cancelled when
+the user switches panes (generation tokens).
+
+### Failure behaviour
+
+| Failure | Visible peer | Diagnostics | Compiler / debugger |
+| --- | --- | --- | --- |
+| Forward (bad Pseudocode) | Last good Python | Console + LS markers on Pseudocode | Unchanged; LS still sees current Pseudocode |
+| Reverse (bad Python) | Last good Pseudocode | Console + Monaco markers on Python | Unchanged; breakpoints / pause state kept |
+
+### UX preservation
+
+- Models are not recreated (`path` stable: `main.pseudo` / `main.py`)
+- Peer sync uses `applyExternalModelText` → `executeEdits` (undo/redo) + clamp
+  cursor + restore scroll
+- Folding, minimap, selection: left to Monaco; sync only replaces text when the
+  buffer actually differs
+- Glyph margin / breakpoints remain Pseudocode-only
 
 ## Provider mapping
 
@@ -38,7 +77,8 @@ CompilerService does not ignore updates under the LSP stale-version rule.
 | ReferenceProvider | `references` |
 | RenameProvider | `prepareRename` / `rename` |
 | DocumentSymbolProvider | `documentSymbols` |
-| `setModelMarkers` | `diagnostics` (debounced) |
+| `setModelMarkers` (`pseudopilot`) | `diagnostics` (debounced, Pseudocode) |
+| `setModelMarkers` (`pseudopilot-translate`) | Reverse-translate `IdeDiagnostic`s (Python) |
 
 Document URI: `ide://main` (`IDE_DOCUMENT_URI`).
 
@@ -48,12 +88,14 @@ Document URI: `ide://main` (`IDE_DOCUMENT_URI`).
 - Enabled breakpoints → `pp-bp-glyph`
 - Disabled → `pp-bp-glyph-disabled`
 - `activeLine` from `runtime.pauseLocation` → `pp-exec-line` + `revealLineInCenter`
+- Run/Debug always targets the **Pseudocode** buffer (after a successful reverse)
 
 ## Performance
 
-- **Document sync is immediate** on every edit (keeps hover/completion/rename fresh)
+- **Document sync is immediate** on every Pseudocode edit (keeps hover/completion/rename fresh)
 - **Marker paints** are debounced (`LS_DIAGNOSTICS_DEBOUNCE_MS` = 200) with a
   generation token so stale paints never overwrite newer diagnostics
+- **Translation** is separately debounced; stale forward/reverse results are dropped
 - External `code` prop syncs only when model text differs (no keystroke thrash)
 - Cursor movement does **not** reparse
 - Compiler content-hash cache reused via `createCompilerSession`
@@ -71,7 +113,9 @@ The same LS adapter can drive a VS Code extension or LSP server without changing
 
 ## Limitations
 
-- Single pseudocode buffer (no multi-tab LS documents yet)
+- Single Pseudocode LS buffer (no multi-tab LS documents yet)
 - Semantic token provider not fully wired (`classifyAt` available)
 - Workspace symbols UI not exposed in chrome
 - Monaco workers load via `@monaco-editor/react` defaults
+- Python pane has no Cambridge language service (syntax highlighting only +
+  translate markers)

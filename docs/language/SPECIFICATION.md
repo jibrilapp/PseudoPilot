@@ -18,7 +18,7 @@ Define exactly what PseudoPilot accepts as Cambridge-style pseudocode: keywords,
 | Tier | Contents | Product intent |
 | --- | --- | --- |
 | **Core (Paper 2)** | Declarations, constants, arrays, I/O, expressions, IF, CASE, FOR/WHILE/REPEAT, PROCEDURE/FUNCTION, text files, string/numeric builtins | Primary student IDE path |
-| **Extended (A Level)** | `TYPE` / `ENDTYPE` (record, enum, pointer, set), random files, OOP (`CLASS` / `INHERITS` / `NEW`) | Record `TYPE` and OOP `CLASS` implemented; enum/pointer/set `TYPE` and random files remain |
+| **Extended (A Level)** | `TYPE` / `ENDTYPE` (record, enum, pointer, set), random files, OOP (`CLASS` / `INHERITS` / `NEW`) | All `TYPE` forms, OOP `CLASS`, and random files implemented |
 | **Exam-insert only** | Extra functions printed on a paper insert (e.g. `ASC`, `CHR`, `TO_UPPER`) | Accepted when registered as library stubs; not part of fixed dialect |
 
 ### 0.3 Presentation conventions (Cambridge §1)
@@ -51,10 +51,10 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | `DATE` | Type name | ✅ | `dd/mm/yyyy` (Cambridge). There is **no** standalone `TIME` datatype in Cambridge 9618. |
 | `ARRAY` | Array type constructor | ✅ | |
 | `OF` | Part of `ARRAY[…] OF Type` and `CASE OF` | ✅ | |
-| `TYPE` | User-defined record type | ✅ records | Extended (enum/pointer/set ❌) |
-| `ENDTYPE` | End of composite type | ✅ records | Extended |
-| `SET` | Set type | ❌ | Extended |
-| `DEFINE` | Set instance | ❌ | Extended |
+| `TYPE` | User-defined type (record / enum / pointer / set) | ✅ | Extended |
+| `ENDTYPE` | End of composite record type | ✅ | Extended |
+| `SET` | Set type (`SET OF T`) | ✅ | Extended |
+| `DEFINE` | Set instance | ✅ | Extended |
 
 ### 1.2 Literals / booleans
 
@@ -108,8 +108,8 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | `RETURNS` | Function return type | ✅ |
 | `RETURN` | Return value (functions only) | ✅ |
 | `CALL` | Call a procedure | ✅ |
-| `BYVAL` | Pass by value | ❌ |
-| `BYREF` | Pass by reference | ❌ |
+| `BYVAL` | Pass by value | ✅ |
+| `BYREF` | Pass by reference | ✅ |
 
 ### 1.7 File handling
 
@@ -123,10 +123,10 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 | `WRITE` | Open mode | ✅ |
 | `APPEND` | Open mode | ✅ |
 | `EOF` | End-of-file test | ✅ |
-| `RANDOM` | Random-file open mode | ❌ |
-| `SEEK` | Move file pointer | ❌ |
-| `GETRECORD` | Read record | ❌ |
-| `PUTRECORD` | Write record | ❌ |
+| `RANDOM` | Random-file open mode | ✅ |
+| `SEEK` | Move file pointer | ✅ |
+| `GETRECORD` | Read record | ✅ |
+| `PUTRECORD` | Write record | ✅ |
 
 ### 1.8 Operators as keywords
 
@@ -140,7 +140,7 @@ Keywords must not be used as identifiers. All are case-insensitive in PseudoPilo
 
 ### 1.9 Built-in function names (reserved as library)
 
-These are identifiers with special semantics; PseudoPilot treats them as **builtin callables**, not user redefinition targets.
+These are identifiers with special semantics; PseudoPilot injects them as **builtin callables**. Soft-reserve policy: `DECLARE` may shadow a builtin name (e.g. `DECLARE Length : INTEGER`); redefining via `FUNCTION` / `PROCEDURE` is still rejected (`C_DUP_FUNCTION`).
 
 | Name | Parser |
 | --- | --- |
@@ -241,7 +241,7 @@ Exponentiation is **not** a Cambridge arithmetic operator in the guide. The care
 | Operator | Meaning | Parser |
 | --- | --- | --- |
 | `.` | Record field access | ✅ |
-| `^` | Pointer type / dereference (context-dependent) | ❌ |
+| `^` | Pointer type / address-of / dereference (context-dependent) | ✅ |
 
 ### 2.7 Precedence and associativity
 
@@ -284,10 +284,10 @@ See §6. Fixed-length, homogeneous elements, consecutive integer indices.
 
 | Form | Purpose | Parser |
 | --- | --- | --- |
-| Enumerated `TYPE Name = (A, B, C)` | Named enum values | ❌ |
-| Pointer `TYPE Name = ^BaseType` | Address of BaseType | ❌ |
+| Enumerated `TYPE Name = (A, B, C)` | Named enum values | ✅ |
+| Pointer `TYPE Name = ^BaseType` | Address of BaseType | ✅ |
 | Record `TYPE Name` … `ENDTYPE` | Composite fields | ✅ |
-| Set `TYPE Name = SET OF T` + `DEFINE` | Set values | ❌ |
+| Set `TYPE Name = SET OF T` + `DEFINE` | Set values | ✅ |
 
 ### 3.4 Class types (Extended / OOP)
 
@@ -303,23 +303,32 @@ See §6. Fixed-length, homogeneous elements, consecutive integer indices.
 
 | Signature | Description | Parser | Runtime |
 | --- | --- | --- | --- |
-| `LENGTH(ThisString : STRING) RETURNS INTEGER` | Character count | ✅ | ❌ |
-| `LEFT(ThisString : STRING, x : INTEGER) RETURNS STRING` | Leftmost `x` chars (PseudoPilot Core) | ✅ | ❌ |
-| `RIGHT(ThisString : STRING, x : INTEGER) RETURNS STRING` | Rightmost `x` chars | ✅ | ❌ |
-| `MID(ThisString : STRING, x : INTEGER, y : INTEGER) RETURNS STRING` | Substring length `y` from position `x` (1-based) | ✅ | ❌ |
-| `LCASE(ThisChar : CHAR) RETURNS CHAR` | Lower-case letter | ✅ | ❌ |
-| `UCASE(ThisChar : CHAR) RETURNS CHAR` | Upper-case letter | ✅ | ❌ |
-| `INT(x : REAL) RETURNS INTEGER` | Truncate toward zero (integer part) | ✅ | ❌ |
-| `RAND(x : INTEGER) RETURNS REAL` | Random in `[0, x)` | ✅ | ❌ |
-| `EOF(FileId) RETURNS BOOLEAN` | No more lines to read | ✅ | ❌ |
+| `LENGTH(ThisString : STRING) RETURNS INTEGER` | Character count | ✅ | ✅ |
+| `LEFT(ThisString : STRING, x : INTEGER) RETURNS STRING` | Leftmost `x` chars (PseudoPilot Core) | ✅ | ✅ |
+| `RIGHT(ThisString : STRING, x : INTEGER) RETURNS STRING` | Rightmost `x` chars | ✅ | ✅ |
+| `MID(ThisString : STRING, x : INTEGER, y : INTEGER) RETURNS STRING` | Substring length `y` from position `x` (1-based) | ✅ | ✅ |
+| `LCASE(ThisChar : CHAR) RETURNS CHAR` | Lower-case letter | ✅ | ✅ |
+| `UCASE(ThisChar : CHAR) RETURNS CHAR` | Upper-case letter | ✅ | ✅ |
+| `INT(x : REAL) RETURNS INTEGER` | Truncate toward zero (integer part) | ✅ | ✅ |
+| `RAND(x : INTEGER) RETURNS REAL` | Random in `[0, x)` | ✅ | ✅ |
+| `EOF(FileId) RETURNS BOOLEAN` | No more lines to read | ✅ | ✅ |
 
 **Notes**
 
 - String positions are **1-based** (Cambridge `MID` examples).
 - `LCASE` / `UCASE` in the teacher guide take **CHAR**; exams sometimes allow STRING via insert — see §13.
 - There is **no** standard `LEFT` in the teacher guide index; if an exam provides it, treat as insert.
+- Full coverage table: [`BUILTINS.md`](./BUILTINS.md).
 
-### 4.2 DATE helpers (Cambridge Paper 2 insert)
+### 4.2 Character / numeric-string insert (Paper 2)
+
+| Signature | Description | Parser | Runtime |
+| --- | --- | --- | --- |
+| `ASC(ThisChar : CHAR) RETURNS INTEGER` | ASCII / code point of CHAR | ✅ | ✅ |
+| `CHR(x : INTEGER) RETURNS CHAR` | CHAR for code point `x` | ✅ | ✅ |
+| `IS_NUM(ThisString : STRING\|CHAR) RETURNS BOOLEAN` | TRUE if value is a decimal numeric literal | ✅ | ✅ |
+
+### 4.3 DATE helpers (Cambridge Paper 2 insert)
 
 These are the Cambridge DATE insert builtins. There is no `TIME` datatype or clock-of-day insert pack in this dialect.
 
@@ -332,12 +341,13 @@ These are the Cambridge DATE insert builtins. There is no `TIME` datatype or clo
 | `SETDATE(Day, Month, Year : INTEGER) RETURNS DATE` | Construct a DATE | ✅ | ✅ |
 | `TODAY() RETURNS DATE` | Current calendar DATE | ✅ | ✅ |
 
-### 4.3 Exam-insert builtins
+### 4.4 Other exam-insert packs
 
-Paper 2 inserts may define additional functions (`ASC`, `CHR`, `IS_NUM`, `TO_UPPER`, …). PseudoPilot will:
+Paper-specific one-off functions beyond §4.1–4.3 may still appear on individual inserts.
+PseudoPilot will:
 
-1. Ship a **builtin registry** for the fixed dialect (§4.1) and DATE helpers (§4.2).
-2. Allow an exam/library pack to register extra names with signatures.
+1. Ship a **builtin registry** for the fixed dialect + standard insert pack (§4.1–4.3).
+2. Allow an exam/library pack to register extra names with signatures later.
 3. Never invent undocumented builtins in generated translation by default.
 
 ---
@@ -369,10 +379,17 @@ Paper 2 inserts may define additional functions (`ASC`, `CHR`, `IS_NUM`, `TO_UPP
 
 | Statement | Form | Parser |
 | --- | --- | --- |
-| Open | `OPENFILE <file> FOR RANDOM` | ❌ |
-| Seek | `SEEK <file>, <address>` | ❌ |
-| Get | `GETRECORD <file>, <variable>` | ❌ |
-| Put | `PUTRECORD <file>, <expression>` | ❌ |
+| Open | `OPENFILE <file> FOR RANDOM` | ✅ |
+| Seek | `SEEK <file>, <address>` | ✅ |
+| Get | `GETRECORD <file>, <variable>` | ✅ |
+| Put | `PUTRECORD <file>, <expression>` | ✅ |
+
+**Semantics (Cambridge §9.2 + PseudoPilot resolutions)** — see [`FILE_IO.md`](./FILE_IO.md).
+
+- Address is an INTEGER “number of records from the beginning”; PseudoPilot uses **0-based** addresses.
+- `GETRECORD` / `PUTRECORD` operate on **TYPE** records (not CLASS objects).
+- `PUTRECORD` replaces any prior record at the pointer; sparse PUT beyond existing addresses is allowed.
+- `GETRECORD` on an empty address is a runtime error (`R_FILE_NO_RECORD`) — guide-undefined.
 
 ---
 
@@ -402,7 +419,7 @@ Parser status: ✅
 
 - Index expressions must evaluate to `INTEGER`.
 - Valid as **r-value** and **assign target** (`INPUT`, `READFILE`, `←`).
-- Array **whole-value** assignment (`A ← B` when same shape/type) is Cambridge-allowed — ❌ not yet modelled as assign of ArrayRef.
+- Array **whole-value** assignment (`A ← B` when same shape/type) is Cambridge-allowed — ✅ checker enforces matching dims/element/bounds when known; runtime deep-clones.
 
 ### 6.3 Forbidden sugar
 
@@ -432,9 +449,9 @@ CALL <Name>                    // empty args — Cambridge allows CALL Name()
 | Parameters typed `Name : Type` or `Name1, Name2 : Type` (expanded) | ✅ |
 | Nested procedure declarations | ❌ Rejected (`E_NESTED_ROUTINE`) |
 | `RETURN` inside procedure | ❌ Rejected |
-| Default parameter mode | By value (Cambridge) |
-| Explicit `BYVAL` / `BYREF` | ❌ Not parsed yet |
-| `BYREF` only on procedures | Cambridge: not on functions |
+| Default parameter mode | By value (Cambridge §8.3) |
+| Explicit `BYVAL` / `BYREF` | ✅ Parsed; sticky mode across groups |
+| `BYREF` only on procedures | ✅ `C_BYREF_ON_FUNCTION` |
 
 ### 7.2 Functions
 
@@ -455,7 +472,7 @@ ENDFUNCTION
 
 ```
 paramList  = paramGroup ("," paramGroup)*
-paramGroup = Ident ("," Ident)* ":" TypeName
+paramGroup = [ "BYVAL" | "BYREF" ] Ident ("," Ident)* ":" TypeName
 ```
 
 Cambridge allows several identifiers to share one type annotation, e.g.
@@ -463,12 +480,16 @@ Cambridge allows several identifiers to share one type annotation, e.g.
 individual `Parameter` AST nodes (`a : INTEGER`, `b : INTEGER`, `c : REAL`) —
 there is no grouped-parameter node.
 
+Guide §8.3: `BYVAL`/`BYREF` may precede a group. When omitted, the **previous
+group's mode sticks** (default **BYVAL** for the first group). Example:
+`PROCEDURE SWAP(BYREF X : INTEGER, Y : INTEGER)` — both parameters are BYREF.
+
 | Form | Parser |
 | --- | --- |
-| `Ident ":" TypeName` | ✅ |
+| `Ident ":" TypeName` | ✅ (mode BYVAL by default / sticky) |
 | `Ident ("," Ident)+ ":" TypeName` | ✅ (expanded) |
 | Mixed groups in one list | ✅ |
-| `BYVAL` / `BYREF` | ❌ |
+| `BYVAL` / `BYREF` | ✅ |
 
 ### 7.4 DECLARE scope
 
@@ -545,15 +566,16 @@ ENDCASE
 ```
 FOR <Ident> ← <start> TO <end> [STEP <increment>]
     <statements>
-NEXT <Ident>
+NEXT [<Ident>]
 ```
 
 | Rule | Detail | Parser |
 | --- | --- | --- |
-| Control variable | `INTEGER` | ❌ |
-| Inclusive range | Runs if `start <= end` with positive step; empty if `start > end` (default step +1) | ❌ |
+| Control variable | `INTEGER` | ✅ (checker) |
+| Inclusive range | Runs if `start <= end` with positive step; empty if `start > end` (default step +1) | ✅ |
 | `STEP` | May be negative | ✅ |
-| `NEXT` identifier | Required in PseudoPilot (Cambridge: good practice) | ✅ |
+| `NEXT` identifier | Optional; when present must match the `FOR` binder (`E_FOR_NEXT_MISMATCH`) | ✅ |
+| Bare `NEXT` | Cambridge-legal | ✅ |
 
 ### 9.2 REPEAT … UNTIL (post-condition)
 
@@ -594,7 +616,7 @@ An expression is one of:
 
 | Form | Example | Parser |
 | --- | --- | --- |
-| Literal | `3`, `2.5`, `"hi"`, `'A'`, `TRUE` | 🟡 CHAR literal ❌ |
+| Literal | `3`, `2.5`, `"hi"`, `'A'`, `TRUE` | ✅ |
 | Identifier | `Count` | ✅ |
 | Unary | `-x`, `NOT Flag` | ✅ |
 | Binary | `a + b`, `x DIV y`, `p AND q` | ✅ |
@@ -602,7 +624,7 @@ An expression is one of:
 | Call | `Max(a, b)`, `LENGTH(s)` | ✅ |
 | Index | `Grid[i, j]` | ✅ |
 | Member | `Pupil.LastName` | ✅ |
-| Pointer | `MyPtr^`, `^Var` | ❌ |
+| Pointer | `MyPtr^`, `^Var` | ✅ |
 | Concat | `a & b` | ✅ |
 | EOF | `EOF(path)` | ✅ |
 
@@ -629,9 +651,9 @@ An expression is one of:
 | Kind | Syntax | Parser | Notes |
 | --- | --- | --- | --- |
 | Integer | Optional `-`, digits | ✅ | Unary minus separate for expressions |
-| Real | Digits on **both** sides of `.` per Cambridge (`4.7`, `0.3`, `-4.0`) | 🟡 | Lexer may accept variants; enforce on harden |
+| Real | Digits on **both** sides of `.` per Cambridge (`4.7`, `0.3`, `-4.0`) | ✅ | `.5` / `5.` → `W_REAL_LITERAL`; `parse(..., { strictCambridge: true })` → `E_REAL_LITERAL` |
 | String | `"…"` double quotes; `""` empty | ✅ | Escape policy: minimal (`\\`, `\"`) TBD |
-| Char | `'x'` single quotes | ❌ | Not yet distinct from identifiers/strings |
+| Char | `'x'` single quotes | ✅ | Distinct `CHAR` literal |
 | Boolean | `TRUE`, `FALSE` | ✅ | |
 | Date | typically `dd/mm/yyyy` | ✅ | Lexed as a single DATE literal (not division) |
 
@@ -714,9 +736,9 @@ Cambridge’s guide is a **style guide for exams**, not a formal grammar. Ambigu
 
 | Source | Stance |
 | --- | --- |
-| Cambridge | “Good practice” to repeat the variable |
+| Cambridge | Formal line allows bare `NEXT`; repeating the variable is “good practice” |
 
-**PseudoPilot:** **Required** — `NEXT i` must match the `FOR i` binder (diagnostic if mismatch).
+**PseudoPilot:** Bare `NEXT` is accepted. When an identifier is present, it must match the `FOR` binder (`E_FOR_NEXT_MISMATCH`).
 
 ### 13.4 Keyword `FOR` dual use
 
@@ -738,7 +760,21 @@ Cambridge: identifiers should be treated as case-insensitive; keywords upper-cas
 
 ### 13.7 Parameters without `BYVAL`/`BYREF`
 
-Unspecified → **by value**. Functions must not use `BYREF` (semantic error when implemented).
+Unspecified → **by value** (Cambridge Guide §8.3: “If the method for passing
+parameters is not specified, passing by value is assumed”). Functions must not
+use `BYREF` (`C_BYREF_ON_FUNCTION`).
+
+**BYREF arguments** must be mutable locations: variables, parameters, array
+elements, or record/object fields. Literals (`C_BYREF_LITERAL`), constants
+(`C_BYREF_CONSTANT`), and other temporaries/expressions (`C_BYREF_TEMPORARY`)
+are rejected.
+
+**Undefined / PseudoPilot resolutions:**
+
+- Whole-`ARRAY` parameters are not part of the Core param grammar (`SimpleType`
+  only); BYREF of array *elements* is supported.
+- `CLASS` instances remain reference types under both BYVAL and BYREF (OOP
+  identity); BYREF additionally allows rebinding the caller's variable.
 
 ### 13.8 String indexing / `&`
 
@@ -750,7 +786,7 @@ No Cambridge string indexing with `[]`. Use `MID` / `RIGHT` / `LENGTH`. Concaten
 
 Cambridge requires a digit on both sides of `.`.
 
-**PseudoPilot:** Accept `.5` and `5.` with a **warning**, normalize AST to `0.5` / `5.0`, or reject in strict mode (`--strict-cambridge`).
+**PseudoPilot:** Accept `.5` and `5.` with warning `W_REAL_LITERAL` (AST normalized). Reject with `E_REAL_LITERAL` when `parse(source, { strictCambridge: true })`.
 
 ### 13.10 Array lower bounds
 
@@ -762,13 +798,13 @@ Not fixed to 0 or 1.
 
 Cambridge allows `Saved ← Board` for same shape.
 
-**PseudoPilot:** Supported at runtime later; parser currently requires assign targets that are identifier or index (identifier alone is fine as target — runtime decides if array-valued).
+**PseudoPilot:** Supported. Checker requires matching element type, rank, and identical bounds when known; runtime deep-clones and rejects mismatched shapes.
 
 ### 13.12 Character vs string quotes
 
 `CHAR` → single quotes; `STRING` → double quotes.
 
-**PseudoPilot:** Will enforce when CHAR literals are implemented. Until then, only double-quoted strings exist (🟡).
+**PseudoPilot:** Enforced — `'x'` is CHAR; `"…"` is STRING.
 
 ### 13.13 Comments inside statements
 
@@ -792,11 +828,14 @@ Ignored for structure. Structure comes from keywords and newlines.
 
 ### 13.17 OOP / TYPE / random files
 
-Documented in this specification as **Extended**. Core dialect is complete without them. Product roadmap implements Core first.
+All `TYPE` forms (record, enum, pointer, SET + `DEFINE`), OOP `CLASS`, and random files (`RANDOM` / `SEEK` / `GETRECORD` / `PUTRECORD`) are implemented as Extended.
+See [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md), [`FILE_IO.md`](./FILE_IO.md), and [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md).
 
 ### 13.18 Exam inserts vs fixed builtins
 
 Fixed builtins are §4.1. Anything else requires an insert pack. The translator must not invent Python helpers for unknown names without that pack.
+
+Soft-reserve: `DECLARE Length : INTEGER` is allowed (shadows the injected builtin); `FUNCTION LENGTH …` remains a duplicate (`C_DUP_FUNCTION`).
 
 ---
 
@@ -806,4 +845,4 @@ Fixed builtins are §4.1. Anything else requires an insert pack. The translator 
 | --- | --- |
 | Owners | PseudoPilot language-core |
 | Change policy | Spec change before parser change |
-| Related | [EBNF.md](./EBNF.md), [PARSER_COVERAGE.md](./PARSER_COVERAGE.md), [IMPLEMENTATION_CHECKLIST.md](./IMPLEMENTATION_CHECKLIST.md) |
+| Related | [EBNF.md](./EBNF.md), [PARSER_COVERAGE.md](./PARSER_COVERAGE.md), [IMPLEMENTATION_CHECKLIST.md](./IMPLEMENTATION_CHECKLIST.md), [../CONFORMANCE.md](../CONFORMANCE.md) |

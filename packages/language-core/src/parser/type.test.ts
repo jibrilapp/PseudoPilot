@@ -48,11 +48,10 @@ Roster[1].Marks[2] ← 90
     expect(assign).toBeDefined();
   });
 
-  it('rejects enum TYPE form with stable code', () => {
+  it('parses enum TYPE form', () => {
     const result = parse('TYPE Colour = (Red, Green)\n');
-    expect(result.diagnostics.some((d) => d.code === 'E_UNSUPPORTED_TYPE_FORM')).toBe(
-      true,
-    );
+    expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(result.ast!.body[0]?.kind).toBe('EnumTypeDeclaration');
   });
 
   it('does not hoist field DECLAREs when TYPE name is missing', () => {

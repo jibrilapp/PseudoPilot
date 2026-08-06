@@ -1,5 +1,6 @@
 /**
- * Lift Python open()/readline()/write()/close() patterns into IR file statements.
+ * Lift Python open()/readline()/write()/close() and PseudoPilot random-file
+ * helpers into IR file statements.
  * Best-effort reverse of our Cambridge→Python file emission.
  */
 import {
@@ -10,7 +11,10 @@ import {
 } from '../ir/nodes.js';
 import { cambridgeModeFromPython } from './mapping.js';
 
-type HandleMap = Map<string, { path: IrExpression; mode: 'READ' | 'WRITE' | 'APPEND' }>;
+type HandleMap = Map<
+  string,
+  { path: IrExpression; mode: 'READ' | 'WRITE' | 'APPEND' | 'RANDOM' }
+>;
 
 export function liftPythonFilePatterns(program: IrProgram): IrProgram {
   const handles: HandleMap = new Map();
@@ -38,19 +42,108 @@ function liftOne(
   stmt: IrStatement,
   handles: HandleMap,
 ): IrStatement | IrStatement[] | null {
-  // Skip `_pp_files = dict()` and `_pp_eof` helper function.
+  // Skip `_pp_files = dict()` / `_pp_random_files = dict()` and helpers.
   if (
     stmt.kind === 'IrAssignment' &&
     stmt.target.kind === 'IrIdentifier' &&
-    stmt.target.name === '_pp_files' &&
+    (stmt.target.name === '_pp_files' ||
+      stmt.target.name === '_pp_random_files') &&
     stmt.value.kind === 'IrCallExpression' &&
     stmt.value.callee === 'dict' &&
     stmt.value.args.length === 0
   ) {
     return null;
   }
-  if (stmt.kind === 'IrFunctionDeclaration' && stmt.name === '_pp_eof') {
+  if (
+    stmt.kind === 'IrFunctionDeclaration' &&
+    (stmt.name === '_pp_eof' ||
+      stmt.name === '_pp_random_open' ||
+      stmt.name === '_pp_random_seek' ||
+      stmt.name === '_pp_random_get' ||
+      stmt.name === '_pp_random_put' ||
+      stmt.name === '_pp_random_close')
+  ) {
     return null;
+  }
+
+  // h = _pp_random_open("path")
+  if (
+    stmt.kind === 'IrAssignment' &&
+    stmt.target.kind === 'IrIdentifier' &&
+    stmt.value.kind === 'IrCallExpression' &&
+    stmt.value.callee === '_pp_random_open' &&
+    stmt.value.args.length === 1
+  ) {
+    const path = stmt.value.args[0]!;
+    handles.set(stmt.target.name, { path, mode: 'RANDOM' });
+    return withEmptyTrivia({
+      kind: 'IrOpenFileStatement' as const,
+      fileName: path,
+      mode: 'RANDOM' as const,
+    });
+  }
+
+  // _pp_random_open(path)  — dynamic-path side-effect open
+  if (
+    stmt.kind === 'IrCallStatement' &&
+    stmt.callee === '_pp_random_open' &&
+    stmt.args.length === 1
+  ) {
+    return withEmptyTrivia({
+      kind: 'IrOpenFileStatement' as const,
+      fileName: stmt.args[0]!,
+      mode: 'RANDOM' as const,
+    });
+  }
+
+  // _pp_random_seek(h, n) / _pp_random_put(h, rec)
+  if (stmt.kind === 'IrCallStatement') {
+    if (stmt.callee === '_pp_random_seek' && stmt.args.length === 2) {
+      const path = resolveRandomHandle(stmt.args[0]!, handles);
+      if (path) {
+        return withEmptyTrivia({
+          kind: 'IrSeekStatement' as const,
+          fileName: path,
+          address: stmt.args[1]!,
+        });
+      }
+    }
+    if (stmt.callee === '_pp_random_put' && stmt.args.length === 2) {
+      const path = resolveRandomHandle(stmt.args[0]!, handles);
+      if (path) {
+        return withEmptyTrivia({
+          kind: 'IrPutRecordStatement' as const,
+          fileName: path,
+          value: stmt.args[1]!,
+        });
+      }
+    }
+    if (stmt.callee === '_pp_random_close' && stmt.args.length === 1) {
+      const path = resolveRandomHandle(stmt.args[0]!, handles);
+      if (path) {
+        return withEmptyTrivia({
+          kind: 'IrCloseFileStatement' as const,
+          fileName: path,
+        });
+      }
+    }
+  }
+
+  // target = _pp_random_get(h)
+  if (
+    stmt.kind === 'IrAssignment' &&
+    stmt.value.kind === 'IrCallExpression' &&
+    stmt.value.callee === '_pp_random_get' &&
+    stmt.value.args.length === 1
+  ) {
+    const path = resolveRandomHandle(stmt.value.args[0]!, handles);
+    if (path) {
+      return withEmptyTrivia({
+        kind: 'IrGetRecordStatement' as const,
+        fileName: path,
+        target: stmt.target,
+      });
+    }
   }
 
   // h = open("path", "r")
@@ -97,8 +190,7 @@ function liftOne(
     }
   }
 
-  // target = h.readline().rstrip("\n")  — represented as nested calls if we lift attrs to calls
-  // We also accept IrCallExpression callee patterns after attribute lowering.
+  // target = h.readline().rstrip("\n")
   if (stmt.kind === 'IrAssignment') {
     const read = matchReadlineAssign(stmt.value);
     if (read) {
@@ -196,6 +288,24 @@ function liftOne(
 
   // EOF: _pp_eof(h) or _pp_eof(_pp_files[path])
   return rewriteEofExprs(stmt, handles);
+}
+
+function resolveRandomHandle(
+  arg: IrExpression,
+  handles: HandleMap,
+): IrExpression | null {
+  if (arg.kind === 'IrIdentifier' && handles.has(arg.name)) {
+    return handles.get(arg.name)!.path;
+  }
+  if (
+    arg.kind === 'IrIndexExpression' &&
+    arg.array.kind === 'IrIdentifier' &&
+    arg.array.name === '_pp_random_files' &&
+    arg.indices.length === 1
+  ) {
+    return arg.indices[0]!;
+  }
+  return null;
 }
 
 function unwrapWritePayload(value: IrExpression): IrExpression {

@@ -1,8 +1,8 @@
 # Translation Engine — Architecture (V1)
 
 **Package:** `@pseudopilot/translator`  
-**Dialect version:** Core subset V14 (V13 + **CLASS … ENDCLASS OOP**)  
-**Status:** Record types lower to Python `@dataclass`; classes lower to plain Python `class`. See [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md) and [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md).
+**Dialect version:** Core + Extended TYPE forms + CLASS (V15)  
+**Status:** Records → `@dataclass`; enums → `IntEnum`; pointers → `_pp_addr` / `_pp_pload` / `_pp_pstore`; SET/`DEFINE` → `set` + `_pp_define`; classes → plain Python `class`. DIV/MOD → `_pp_div`/`_pp_mod`; RIGHT → `_pp_right`. See [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md) and [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md).
 
 ---
 
@@ -46,7 +46,7 @@ PseudoPilot does **not** translate by string rewrite. The engine is a classic mu
 
 - Deterministic: same input → same IR → same output (stable formatting).
 - Pure library: no I/O, network, or AI.
-- Fail loudly on unsupported constructs (BYREF, RANDOM files, …) with structured diagnostics — never invent control flow.
+- Fail loudly on unsupported constructs with structured diagnostics — never invent control flow.
 - **Semantic check** (default on): `@pseudopilot/checker` validates scopes/types/builtins before lowering. Disable with `semanticCheck: false` only for IR experiments.
 - **Builtins:** signatures in `language-core` `CORE_BUILTINS`; Python emission in `translator/src/builtins/emit.ts` (backend-owned, not in language-core).
 - New languages plug in as **frontend + printer** only; IR and rule registries stay shared.
@@ -108,6 +108,7 @@ Rules live as **tables and pure functions**, not as ad-hoc string concat in prin
 | `rules/operators.ts` | Cambridge ↔ IR ↔ Python operator maps, precedences |
 | `rules/literals.ts` | `TRUE`/`FALSE` ↔ `True`/`False`; number/string escaping |
 | `rules/io.ts` | `INPUT`/`OUTPUT` ↔ `input`/`print` conventions |
+| `python/identifier-sanitizer.ts` | Deterministic keyword/builtin → `name_` (and reverse) |
 | `cambridge/lower.ts` | AST kind → IR kind |
 | `python/parse.ts` | Python syntax → IR |
 | `*/print.ts` | IR → syntax using the tables |
@@ -159,7 +160,7 @@ Trivia is stored on IR nodes, not re-derived from target language, so Cambridge 
 | `A[i] ← expr` / `A[i, j] ← expr` | `IrAssignment` + `IrIndexExpression` | `A[i] = expr` / `A[i][j] = expr` |
 | `INPUT x` / `INPUT A[i]` | `IrInput` | Typed: `x = int(input().strip())` / `A[i - L] = int(input().strip())` (see below) |
 | `OUTPUT a, b` | `IrOutput` | `print(a, b)` |
-| `DIV` / `MOD` | `//` / `%` | `//` / `%` (**note:** Python floors on negatives; the AST interpreter truncates toward zero — known Cambridge ambiguity) |
+| `DIV` / `MOD` | `_pp_div` / `_pp_mod` | Trunc toward zero (incl. negatives) — aligned with interpreter; not raw Python `//` / `%` |
 | `=` `<>` … | `==` `!=` … | `==` `!=` … |
 | `AND` `OR` `NOT` | `and` `or` `not` | `and` `or` `not` |
 | `TRUE`/`FALSE` | bool | `True`/`False` |
@@ -203,17 +204,54 @@ Unknown / undeclared targets still emit plain `input()`.
 
 **CASE → Python decision:** Emit `match`/`case` (Python 3.10+). It is the clearest semantic match for Cambridge CASE; the project does not pin an older Python runtime. Range labels use a guarded capture `_v` so inclusive `TO` bounds round-trip.
 
-**PROCEDURE → Python:** Parameters are by-value (Cambridge default). `BYVAL`/`BYREF` keywords are not parsed. Types map INTEGER→int, REAL→float, STRING/CHAR→str, BOOLEAN→bool, DATE→`date` (`# DATE` tag).
+**PROCEDURE → Python:** Parameters default to by-value (Cambridge §8.3). Explicit
+`BYVAL`/`BYREF` are parsed. Scalar **BYREF** parameters lower to list cells via
+`_pp_cell(value)` (body uses `Name[0]`; call sites wrap/unwrap). Composite BYREF
+(record) skips `copy.deepcopy` so the shared object is mutated. Reverse recovers
+`# BYREF` tags on `def` lines and collapses `_pp_ref_*` call patterns. Types map
+INTEGER→int, REAL→float, STRING/CHAR→str, BOOLEAN→bool, DATE→`date` (`# DATE` tag).
 
 **FUNCTION → Python:** Same parameter mapping. Return type becomes a Python `->` annotation so reverse translation can distinguish FUNCTION from PROCEDURE. `RETURN expr` maps 1:1 to `return expr`. Function calls in expressions (`OUTPUT Add(2, 3)`) become `print(Add(2, 3))`. A FUNCTION with no `RETURN` anywhere errors via the checker (`C_FUNC_NO_RETURN`). Statements after `RETURN` at the same block level warn (`C_UNREACHABLE`). Full path-coverage analysis is not performed. (Python→pseudocode reverse may still emit `T_FUNC_NO_RETURN`.)
 
-**PROCEDURE/FUNCTION safety checks:** Routine/parameter names that are Python keywords are rejected (`T_PROC_PY_KEYWORD`). Duplicate parameters are rejected (`T_PROC_DUP_PARAM`). Nested `def` is rejected. Names that shadow `print`/`input`/`range` warn (`T_PROC_SHADOWS_BUILTIN`). Unannotated Python params warn and default to INTEGER (`T_PROC_DEFAULT_TYPE`). CALL before its definition warns (`T_CALL_BEFORE_PROC`).
+**PROCEDURE/FUNCTION safety checks:** Duplicate parameters are rejected (`T_PROC_DUP_PARAM`). Nested `def` is rejected. Unannotated Python params warn and default to INTEGER (`T_PROC_DEFAULT_TYPE`). CALL before its definition warns (`T_CALL_BEFORE_PROC`). Python keywords and builtins in routine/parameter names are **sanitized** at emit time (see Identifier sanitization below) rather than rejected.
 
-**DECLARE/CONSTANT diagnostics:** Duplicate names in a scope (`T_DUP_DECLARE` / `T_DUP_CONSTANT`), assignment / INPUT / FOR update of a CONSTANT (`T_ASSIGN_TO_CONSTANT`, statement not emitted), Python-keyword names (`T_DECL_PY_KEYWORD`), builtin shadow warnings (`T_DECL_SHADOWS_BUILTIN`). Locals may shadow globals. Malformed CONSTANT non-literals (`E_CONSTANT_LITERAL` from the parser).
+**DECLARE/CONSTANT diagnostics:** Duplicate names in a scope (`T_DUP_DECLARE` / `T_DUP_CONSTANT`), assignment / INPUT / FOR update of a CONSTANT (`T_ASSIGN_TO_CONSTANT`, statement not emitted). Locals may shadow globals. Malformed CONSTANT non-literals (`E_CONSTANT_LITERAL` from the parser). Python keywords and builtins in DECLARE/CONSTANT names are sanitized at emit time (see below).
 
-**Builtin emission (Python):** `RIGHT` uses `s[-(n):]` and `RAND` uses `random.random() * (x)` so additive count expressions keep correct precedence. `MID` uses parenthesized `s[(start)-1:(start)-1+(length)]`. DATE helpers map to `datetime.date` attributes / `date(...)` / `date.today()`; reverse recovers `DAY`/`MONTH`/`YEAR`/`SETDATE`/`TODAY`. Reverse maps those forms back; `len(x) + …` stays numeric `+` (LENGTH is not stringy).
+### Identifier sanitization (Python)
 
-**Explicitly out of scope for this subset:** BYREF, RANDOM file I/O, ASC/CHR and other exam-insert-only builtins (except PseudoPilot Core `LEFT`). There is **no** Cambridge `TIME` datatype — do not invent one in translation.
+Cambridge identifiers are kept verbatim in IR. The Python printer runs **every** user identifier through a single `IdentifierSanitizer` (`packages/translator/src/python/identifier-sanitizer.ts`) so emitted Python never uses a keyword or shadows a builtin the translator relies on.
+
+| Cambridge | Python |
+| --- | --- |
+| `list` | `list_` |
+| `class` | `class_` |
+| `print` | `print_` |
+| `input` | `input_` |
+| `str` | `str_` |
+| `int` | `int_` |
+| `Count` (no collision) | `Count` (unchanged) |
+
+**Policy**
+
+- Deterministic: same Cambridge name → same Python name everywhere (declarations, references, TYPE/CLASS names, fields, methods, parameters, loop variables, helpers’ user-facing args).
+- Collision → append a single trailing `_`. Non-colliding names are unchanged.
+- Covers Python keywords (`class`, `def`, `pass`, `for`, `while`, `if`, `else`, `from`, `import`, `lambda`, `global`, `nonlocal`, `match`, `case`, …) and builtins (`list`, `dict`, `set`, `tuple`, `str`, `int`, `float`, `bool`, `input`, `print`, `len`, `range`, `type`, `object`, `open`, `sum`, `min`, `max`, `chr`, `ord`, `bytes`, `Exception`, …) plus names the translator binds (`date`, `copy`, `random`, `dataclass`, `field`).
+- Generated helpers keep the `_pp_` prefix (`_pp_cell`, `_pp_is_num`, …) and are not rewritten by the sanitizer.
+
+**Reverse recovery**
+
+The Python parser recovers Cambridge names with the inverse rule: if a name ends with `_` and the stem is reserved, strip one `_` (`list_` → `list`). Otherwise leave the name unchanged.
+
+**Edge cases**
+
+- If Cambridge already used a name like `list_`, forward emit leaves it as `list_` (not reserved), but reverse strips it to `list` — round-trip is imperfect for that edge case.
+- A Cambridge identifier equal to a translator helper (e.g. `_pp_cell`) is not reserved and is emitted unchanged; avoid those names to prevent colliding with helpers.
+- Case matters for the reserved check (`List` is not `list`); Cambridge case-folding still canonicalizes student identifiers to first-declaration casing before emit.
+- Cambridge language keywords (`INPUT`, `CLASS`, `FOR`, …) cannot appear as identifiers in Cambridge source (lexer). Sanitization still applies when those names enter IR from reverse translation of PseudoPilot-emitted Python (`input_`, `class_`, …).
+
+**Builtin emission (Python):** `RIGHT` uses `_pp_right(s, n)` so `RIGHT(s, 0)` is `""` (Python `s[-0:]` would return the whole string). `RAND` uses `random.random() * (x)` so additive count expressions keep correct precedence. `MID` uses parenthesized `s[(start)-1:(start)-1+(length)]`. `DIV`/`MOD` emit `_pp_div`/`_pp_mod` (trunc toward zero). DATE helpers map to `datetime.date` attributes / `date(...)` / `date.today()`; reverse recovers `DAY`/`MONTH`/`YEAR`/`SETDATE`/`TODAY`. Reverse maps those forms back; `len(x) + …` stays numeric `+` (LENGTH is not stringy).
+
+**Explicitly out of scope for this subset:** ASC/CHR and other exam-insert-only builtins that lack a fixed Core mapping (except PseudoPilot Core `LEFT`). There is **no** Cambridge `TIME` datatype — do not invent one in translation.
 
 ### Text file I/O (V12)
 
@@ -232,6 +270,31 @@ Cambridge → Python (literal paths):
 Dynamic paths use `_pp_files[path] = open(...)`. Reverse translation lifts `open` / `readline` / `write` / `close` patterns back to Cambridge where practical.
 
 **Fidelity notes:** Python file objects are not Cambridge path-handles; EOF via tell/seek is a documented teaching mapping, not a byte-identical Cambridge runtime.
+
+### Random file I/O (§9.2)
+
+| Cambridge | Python |
+| --- | --- |
+| `OPENFILE "f.dat" FOR RANDOM` | `handle = _pp_random_open("f.dat")` |
+| `SEEK path, n` | `_pp_random_seek(handle, n)` |
+| `GETRECORD path, var` | `var = _pp_random_get(handle)` |
+| `PUTRECORD path, expr` | `_pp_random_put(handle, expr)` |
+| `CLOSEFILE path` (random) | `_pp_random_close(handle)` |
+
+Helpers use an in-memory `_pp_random_files` dict (teaching mapping — not OS binary records). Reverse lift recovers SEEK/GETRECORD/PUTRECORD from these helpers. See [`FILE_IO.md`](./FILE_IO.md).
+
+### Enum / pointer / SET TYPE
+
+| Cambridge | Python |
+| --- | --- |
+| `TYPE Season = (Spring, Summer, …)` | `class Season(IntEnum): Spring = 0; …` |
+| `TYPE IntPtr = ^INTEGER` | Type comment / alias; values are cells |
+| `P ← ^X` | `P = _pp_addr(X)` (or `_pp_cell` wrap for non-simple places) |
+| `P^` (load / store) | `_pp_pload(P)` / `_pp_pstore(P, value)` |
+| `TYPE Digits = SET OF INTEGER` | Documented set-of alias |
+| `DEFINE Lucky(3, 7) : Digits` | `Lucky = _pp_define("Digits", 3, 7)` |
+
+Reverse recovers PseudoPilot-emitted `IntEnum`, `_pp_addr` / `_pp_*` pointer helpers, and `_pp_define`. Hand-written Python may not round-trip. See [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md).
 
 ### `CLASS` / OOP (V14)
 

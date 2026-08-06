@@ -13,12 +13,14 @@ import {
   acquireLanguageProviders,
   mergeEditorDecorations,
   diagnosticsToMarkers,
+  applyExternalModelText,
   MONACO_FONT,
   LS_DIAGNOSTICS_DEBOUNCE_MS,
   PSEUDOCODE_LANGUAGE_ID,
   PYTHON_LANGUAGE_ID,
   createGenerationDebouncer,
   nextDocumentVersion,
+  type MonacoMarkerData,
 } from '@/lib/monaco';
 import { cn } from '@/lib/cn';
 
@@ -32,15 +34,23 @@ type CodeSurfaceProps = {
   activeLine?: number | null;
   breakpoints?: readonly Breakpoint[];
   onToggleBreakpoint?: (line: number) => void;
+  /**
+   * Extra Monaco markers (e.g. reverse-translate errors on the Python pane).
+   * Owner: `pseudopilot-translate`. Cleared when the array is empty.
+   */
+  externalMarkers?: readonly MonacoMarkerData[];
+  /** Fired when the user selection changes (AI Coach grounding). */
+  onSelectionChange?: (text: string) => void;
 };
 
 /**
  * Monaco-backed code surface.
  * Pseudocode pane: editable + LS providers + breakpoints + exec highlight.
- * Python pane: read-only syntax highlighting.
+ * Python pane: editable first-class peer (bidirectional translation).
  *
- * Language Service document text is updated synchronously on edits so hover /
- * completion / rename never see a stale buffer. Marker paints are debounced.
+ * Language Service document text is updated synchronously on Pseudocode edits
+ * so hover / completion / rename never see a stale buffer. Marker paints are
+ * debounced. External `code` prop syncs via executeEdits (undo + cursor).
  */
 export function CodeSurface({
   code,
@@ -51,16 +61,21 @@ export function CodeSurface({
   activeLine = null,
   breakpoints = [],
   onToggleBreakpoint,
+  externalMarkers = [],
+  onSelectionChange,
 }: CodeSurfaceProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const decoRef = useRef<string[]>([]);
   const providersRef = useRef<{ dispose(): void } | null>(null);
   const mouseDisposeRef = useRef<Monaco.IDisposable | null>(null);
+  const selectionDisposeRef = useRef<Monaco.IDisposable | null>(null);
   const versionRef = useRef(0);
   const suppressChangeRef = useRef(false);
   const onToggleBreakpointRef = useRef(onToggleBreakpoint);
   onToggleBreakpointRef.current = onToggleBreakpoint;
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
 
   const markerDebounceRef = useRef(
     createGenerationDebouncer(LS_DIAGNOSTICS_DEBOUNCE_MS),
@@ -80,6 +95,19 @@ export function CodeSurface({
     const markers = diagnosticsToMarkers(ls.diagnostics(IDE_DOCUMENT_URI));
     monaco.editor.setModelMarkers(model, 'pseudopilot', markers);
   }, [language]);
+
+  const applyExternalMarkers = useCallback(() => {
+    const monaco = monacoRef.current;
+    const editor = editorRef.current;
+    if (!monaco || !editor) return;
+    const model = editor.getModel();
+    if (!model) return;
+    monaco.editor.setModelMarkers(
+      model,
+      'pseudopilot-translate',
+      externalMarkers.map((m) => ({ ...m })),
+    );
+  }, [externalMarkers]);
 
   /** Sync LS buffer immediately (providers read this). Does not paint markers. */
   const syncLanguageService = useCallback(
@@ -125,6 +153,7 @@ export function CodeSurface({
       const model = editor?.getModel();
       if (monaco && model) {
         monaco.editor.setModelMarkers(model, 'pseudopilot', []);
+        monaco.editor.setModelMarkers(model, 'pseudopilot-translate', []);
       }
     } catch {
       decoRef.current = [];
@@ -135,13 +164,17 @@ export function CodeSurface({
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    const model = editor.getModel();
-    if (!model) return;
-    if (model.getValue() === code) return;
     suppressChangeRef.current = true;
-    editor.setValue(code);
-    suppressChangeRef.current = false;
-    if (language === 'pseudocode') {
+    const result = applyExternalModelText(
+      editor as unknown as Parameters<typeof applyExternalModelText>[0],
+      code,
+    );
+    // Keep suppress through any deferred model-content listeners so peer
+    // executeEdits cannot echo into onChange → opposite-direction translate.
+    queueMicrotask(() => {
+      suppressChangeRef.current = false;
+    });
+    if (result.applied && language === 'pseudocode') {
       syncLanguageService(code);
       scheduleMarkers();
     }
@@ -150,6 +183,10 @@ export function CodeSurface({
   useEffect(() => {
     applyDecorations();
   }, [applyDecorations]);
+
+  useEffect(() => {
+    applyExternalMarkers();
+  }, [applyExternalMarkers]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -162,6 +199,8 @@ export function CodeSurface({
       markerDebounceRef.current.cancel();
       mouseDisposeRef.current?.dispose();
       mouseDisposeRef.current = null;
+      selectionDisposeRef.current?.dispose();
+      selectionDisposeRef.current = null;
       providersRef.current?.dispose();
       providersRef.current = null;
       clearEditorChrome();
@@ -173,6 +212,18 @@ export function CodeSurface({
     monacoRef.current = monaco;
     ensurePseudocodeLanguage(monaco);
     monaco.editor.setTheme('pseudopilot-light');
+
+    selectionDisposeRef.current?.dispose();
+    selectionDisposeRef.current = editor.onDidChangeCursorSelection(() => {
+      const model = editor.getModel();
+      const sel = editor.getSelection();
+      if (!model || !sel) {
+        onSelectionChangeRef.current?.('');
+        return;
+      }
+      const text = model.getValueInRange(sel);
+      onSelectionChangeRef.current?.(text);
+    });
 
     if (language === 'pseudocode') {
       const ls = getIdeLanguageService();
@@ -206,6 +257,7 @@ export function CodeSurface({
     }
 
     applyDecorations();
+    applyExternalMarkers();
   };
 
   return (
@@ -214,13 +266,14 @@ export function CodeSurface({
       data-testid={
         editable ? 'code-surface-editable' : 'code-surface-readonly'
       }
+      data-language={language}
       aria-label={ariaLabel}
     >
       <Editor
         height="100%"
         language={langId}
         theme="pseudopilot-light"
-        value={code}
+        defaultValue={code}
         path={
           language === 'pseudocode'
             ? 'file:///src/main.pseudo'
@@ -242,7 +295,7 @@ export function CodeSurface({
           lineHeight: MONACO_FONT.lineHeight,
           fontFamily: MONACO_FONT.fontFamily,
           fontLigatures: true,
-          minimap: { enabled: language === 'pseudocode' },
+          minimap: { enabled: true },
           lineNumbers: 'on',
           glyphMargin: language === 'pseudocode',
           folding: true,

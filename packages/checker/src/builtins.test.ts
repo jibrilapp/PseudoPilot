@@ -12,12 +12,13 @@ function codes(source: string): string[] {
 }
 
 describe('builtins + &', () => {
-  it('types LENGTH / LEFT / RIGHT / MID / LCASE / UCASE / INT / RAND', () => {
+  it('types LENGTH / LEFT / RIGHT / MID / LCASE / UCASE / INT / RAND / ASC / CHR / IS_NUM', () => {
     const { ok, diagnostics } = checkSource(`
 DECLARE Name : STRING
 DECLARE N : INTEGER
 DECLARE R : REAL
 DECLARE C : CHAR
+DECLARE Ok : BOOLEAN
 N ← LENGTH(Name)
 Name ← LEFT(Name, 3)
 Name ← RIGHT(Name, 2)
@@ -27,9 +28,34 @@ Name ← UCASE(Name)
 C ← LCASE(C)
 N ← INT(4.8)
 R ← RAND(100)
+N ← ASC('A')
+C ← CHR(65)
+Ok ← IS_NUM("-12.36")
+Ok ← IS_NUM('9')
 `);
     expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
     expect(ok).toBe(true);
+  });
+
+  it('rejects ASC/CHR/IS_NUM arity and type errors', () => {
+    expect(codes(`OUTPUT ASC()\n`)).toContain('C_BUILTIN_ARG_COUNT');
+    expect(
+      codes(`
+DECLARE S : STRING
+OUTPUT ASC(S)
+`),
+    ).toContain('C_BUILTIN_ARG_TYPE');
+    expect(
+      codes(`
+OUTPUT CHR("A")
+`),
+    ).toContain('C_BUILTIN_ARG_TYPE');
+    expect(
+      codes(`
+DECLARE N : INTEGER
+OUTPUT IS_NUM(N)
+`),
+    ).toContain('C_BUILTIN_ARG_TYPE');
   });
 
   it('rejects wrong builtin arity and types', () => {
@@ -59,12 +85,19 @@ OUTPUT RAND(2.5)
     ).toContain('C_BUILTIN_ARG_TYPE');
   });
 
-  it('rejects redefining a Core builtin name', () => {
-    expect(
-      codes(`
+  it('allows DECLARE Length to shadow the Core builtin (D8)', () => {
+    const shadowed = checkSource(`
 DECLARE Length : INTEGER
-`),
-    ).toContain('C_DUP_FUNCTION');
+Length ← 3
+OUTPUT Length
+`);
+    expect(shadowed.ok).toBe(true);
+    expect(
+      shadowed.diagnostics.filter((d) => d.severity === 'error'),
+    ).toEqual([]);
+  });
+
+  it('still rejects FUNCTION LENGTH that redefines a Core builtin', () => {
     expect(
       codes(`
 FUNCTION LENGTH(S : STRING) RETURNS INTEGER
@@ -72,6 +105,15 @@ FUNCTION LENGTH(S : STRING) RETURNS INTEGER
 ENDFUNCTION
 `),
     ).toContain('C_DUP_FUNCTION');
+  });
+
+  it('rejects redefining a Core builtin as a PROCEDURE', () => {
+    expect(
+      codes(`
+PROCEDURE MID
+ENDPROCEDURE
+`),
+    ).toContain('C_DUP_PROCEDURE');
   });
 
   it('supports & concatenation and rejects + for strings', () => {

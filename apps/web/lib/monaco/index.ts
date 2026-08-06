@@ -28,12 +28,15 @@ export {
 } from './decorations';
 export {
   diagnosticsToMarkers,
+  ideDiagnosticsToMarkers,
   mapCompletions,
   mapSignatureHelp,
   hoverToMarkdown,
   MARKER_SEVERITY_ERROR,
   MARKER_SEVERITY_WARNING,
   type MarkerDiagnostic,
+  type MonacoMarkerData,
 } from './mapProviders';
 export { createGenerationDebouncer } from './debounce';
 export { nextDocumentVersion } from './documentSync';
+export { applyExternalModelText } from './applyExternalText';

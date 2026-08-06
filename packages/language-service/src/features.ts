@@ -191,6 +191,19 @@ function formatHover(analysis: DocumentAnalysis, symbol: SymbolInfo): string {
       .join(', ');
     lines.push(fields ? `Fields: \`${fields}\`` : '_Empty record_');
   }
+  if (symbol.type.kind === 'enum') {
+    lines.push(
+      symbol.type.members.length > 0
+        ? `Members: \`${symbol.type.members.join(', ')}\``
+        : '_Empty enum_',
+    );
+  }
+  if (symbol.type.kind === 'pointer') {
+    lines.push(`Points to: \`${formatType(symbol.type.target)}\``);
+  }
+  if (symbol.type.kind === 'set') {
+    lines.push(`Element type: \`${formatType(symbol.type.element)}\``);
+  }
   if (symbol.type.kind === 'class') {
     const cls = symbol.type;
     if (cls.inherits) {
@@ -248,7 +261,10 @@ function formatCallable(
     params
       .map((p, i) => {
         const n = namedParams?.[i]?.name.name ?? `p${i + 1}`;
-        return `${n}: ${formatType(p)}`;
+        const mode = namedParams?.[i]?.mode;
+        const prefix =
+          mode === 'BYREF' ? 'BYREF ' : mode === 'BYVAL' ? '' : '';
+        return `${prefix}${n}: ${formatType(p)}`;
       })
       .join(', ');
   if (type.kind === 'procedure') {
@@ -586,6 +602,7 @@ export function completion(
 ): CompletionItem[] {
   const items: CompletionItem[] = [];
   const seen = new Set<string>();
+  const enumContextType = expectedEnumAssignmentType(analysis, position);
 
   const add = (item: CompletionItem): void => {
     const key = `${item.kind}:${item.label.toLowerCase()}`;
@@ -648,6 +665,20 @@ export function completion(
   for (const s of analysis.symbols) {
     if (s.builtin) continue;
     if (s.kind === 'field' || s.kind === 'method') continue; // offered after `.` only
+    if (
+      enumContextType &&
+      s.kind === 'constant' &&
+      s.type.kind === 'enum' &&
+      s.type.name.toLowerCase() === enumContextType.name.toLowerCase()
+    ) {
+      add({
+        label: s.name,
+        kind: 'constant',
+        detail: formatType(s.type),
+        documentation: `Member of enum ${enumContextType.name}`,
+      });
+      continue;
+    }
     add({
       label: s.name,
       kind:
@@ -734,6 +765,8 @@ export function completion(
       'RETURN',
       'OUTPUT',
       'INPUT',
+      'SET',
+      'DEFINE',
       'AND',
       'OR',
       'NOT',
@@ -760,6 +793,74 @@ function linePrefixAt(source: string, position: LsPosition): string {
   const lines = source.split('\n');
   const line = lines[position.line] ?? '';
   return line.slice(0, position.character);
+}
+
+function expectedEnumAssignmentType(
+  analysis: DocumentAnalysis,
+  position: LsPosition,
+): Extract<PpType, { kind: 'enum' }> | null {
+  const prefix = linePrefixAt(analysis.source, position);
+  const match =
+    /(?:^|[^A-Za-z0-9_])([A-Za-z_][\w]*(?:\s*(?:\.\s*[A-Za-z_][\w]*|\[[^\]]*\]|\^))*)\s*(?:←|<-)\s*$/u.exec(
+      prefix,
+    );
+  if (!match) return null;
+  const type = resolveAssignableTypeText(
+    analysis,
+    match[1]!.replace(/\s+/g, ''),
+  );
+  return type?.kind === 'enum' ? type : null;
+}
+
+function resolveAssignableTypeText(
+  analysis: DocumentAnalysis,
+  text: string,
+): PpType | null {
+  const root = /^([A-Za-z_][\w]*)/.exec(text);
+  if (!root) return null;
+  const rootSym = analysis.symbols.find(
+    (s) =>
+      s.name.toLowerCase() === root[1]!.toLowerCase() &&
+      (s.kind === 'variable' || s.kind === 'parameter' || s.kind === 'constant'),
+  );
+  const rootType = rootSym?.type;
+  if (!rootType) return null;
+  let current: PpType = rootType;
+
+  const segments = text.slice(root[1]!.length);
+  const segmentRe = /(\[[^\]]*\])|(\.)\s*([A-Za-z_][\w]*)|(\^)/g;
+  let seg: RegExpExecArray | null;
+  while ((seg = segmentRe.exec(segments)) !== null) {
+    if (seg[1]) {
+      if (current.kind !== 'array') return null;
+      current = current.element;
+      continue;
+    }
+    if (seg[2]) {
+      const fieldName = seg[3]!;
+      if (current.kind === 'record') {
+        const field = current.fields.find(
+          (f) => f.name.toLowerCase() === fieldName.toLowerCase(),
+        );
+        if (!field) return null;
+        current = field.type;
+        continue;
+      }
+      if (current.kind === 'class') {
+        const field = findClassFieldInChain(analysis, current, fieldName);
+        if (!field) return null;
+        current = field.type;
+        continue;
+      }
+      return null;
+    }
+    if (seg[4]) {
+      if (current.kind !== 'pointer') return null;
+      current = current.target;
+    }
+  }
+
+  return current;
 }
 
 type MemberHost =
@@ -924,9 +1025,13 @@ export function signatureHelp(
 
   const named = callableParams(analysis, symbol.name);
   const params = symbol.type.params;
-  const parameters = params.map((p, i) => ({
-    label: `${named?.[i]?.name.name ?? `p${i + 1}`}: ${formatType(p)}`,
-  }));
+  const parameters = params.map((p, i) => {
+    const mode = named?.[i]?.mode;
+    const prefix = mode === 'BYREF' ? 'BYREF ' : '';
+    return {
+      label: `${prefix}${named?.[i]?.name.name ?? `p${i + 1}`}: ${formatType(p)}`,
+    };
+  });
   const label = formatCallable(symbol.name, symbol.type, named);
   return {
     label,

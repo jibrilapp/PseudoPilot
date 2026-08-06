@@ -34,6 +34,17 @@ export class Scope {
     const key = identKey(symbol.name);
     const existing = this.bindings.get(key);
     if (existing) {
+      // Soft-reserved Core builtins (LENGTH, …): variables/constants may
+      // shadow them (Cambridge allows `DECLARE Length : INTEGER`). PROCEDURE /
+      // FUNCTION redefinitions still collide.
+      if (
+        existing.builtin === true &&
+        existing.kind === 'function' &&
+        (symbol.kind === 'variable' || symbol.kind === 'constant')
+      ) {
+        this.bindings.set(key, symbol);
+        return true;
+      }
       report({
         severity: 'error',
         code: dupCode(existing.kind, symbol.kind),

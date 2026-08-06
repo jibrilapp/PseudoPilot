@@ -320,8 +320,8 @@ coverage.
 - `ObjectValue` is a distinct runtime shape (`{ kind: 'OBJECT', className, fields,
   fieldNames }`) purely so `cloneValue` can special-case it (never deep-copy) without
   touching `RecordValue` behaviour.
-- A `TYPE` cannot `INHERITS`; a `CLASS` cannot use `GETRECORD`/`PUTRECORD` (neither is
-  implemented for records either, but the distinction exists in the type system either way).
+- A `TYPE` cannot `INHERITS`; a `CLASS` cannot use `GETRECORD`/`PUTRECORD`
+  (random-file I/O is for TYPE records only — see [`FILE_IO.md`](./FILE_IO.md)).
 
 ---
 
@@ -340,18 +340,19 @@ coverage.
   → `DECLARE`). Properties are inferred from `self.Field = …`. Unsupported Python
   class constructs are rejected with clear diagnostics — never silently mis-translated.
   (`TYPE` continues to reverse via `@dataclass`.)
-- **No `GETRECORD`/`PUTRECORD` of objects.** Random-file record I/O is unimplemented for
-  both `TYPE` and `CLASS` (see `TYPE_SYSTEM.md` limitations); objects are never a random-file
-  record target.
+- **No `GETRECORD`/`PUTRECORD` of objects.** Random-file I/O applies to TYPE records only
+  (see [`FILE_IO.md`](./FILE_IO.md)); CLASS objects are rejected by the checker/runtime.
 - **No abstract classes / interfaces.** Cambridge 9618 does not define either; every `CLASS`
   is concrete and instantiable via `NEW` (a class with no `NEW` method still allows
   `NEW ClassName()` with zero arguments).
 - **Override checking is best-effort and non-blocking.** `C_OVERRIDE_MISMATCH` is a
   *warning*, not an error — arity/kind/return-type mismatches between an override and its
   parent's method do not stop compilation.
-- **No `THIS`/`self` keyword.** Field/method access on the implicit receiver inside a method
-  body is always *bare* (`Name`, not `THIS.Name`) — matching Cambridge's own examples, which
-  never introduce a self-reference keyword.
+- **No mandatory `THIS`/`self` keyword in hand-written Cambridge.** Field/method access on
+  the implicit receiver inside a method body may be *bare* (`Name`) — matching Cambridge's
+  own examples. Reverse translation from Python `self.Field` emits explicit `SELF.Field` so
+  assignments stay object-field writes when a parameter shares the field name
+  (`SELF.name ← name`). Forward translation accepts both bare fields and `SELF.Field`.
 - **Language-service inheritance walk depth is capped** (64 levels) purely as a safety net
   against undetected cycles; ordinary programs never approach this.
 

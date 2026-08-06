@@ -16,6 +16,8 @@ export type DebuggerSessionCallbacks = {
     location: PauseLocation;
     callStack: readonly CallStackFrameView[];
     frame: StackFrame;
+    /** Open text/random file handles when the VFS is in use. */
+    openFiles?: StatementHookInfo['openFiles'];
   }) => void;
   readonly onResume: () => void;
 };
@@ -159,6 +161,7 @@ export class DebuggerSession {
       location,
       callStack: this.snapshotCallStack(info),
       frame: info.frame,
+      ...(info.openFiles !== undefined ? { openFiles: info.openFiles } : {}),
     });
 
     try {
@@ -192,7 +195,10 @@ export class DebuggerSession {
         const args: { name: string; value: string }[] = [];
         for (const b of f.env.snapshot().values()) {
           if (b.kind === 'parameter') {
-            args.push({ name: b.name, value: formatValue(b.value) });
+            args.push({
+              name: b.byRef ? `${b.name} (BYREF)` : b.name,
+              value: formatValue(b.value),
+            });
           }
         }
         const line =

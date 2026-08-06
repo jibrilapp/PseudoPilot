@@ -34,9 +34,11 @@ export type BuiltinSpec = {
  * LEFT is PseudoPilot Core (common exam insert; not in teacher-guide index).
  * RAND returns REAL per Cambridge guide (`[0, x)`).
  *
- * Soft extensions vs teacher guide (documented in SEMANTICS.md):
+ * Soft extensions vs teacher guide (documented in SEMANTICS.md / BUILTINS.md):
  * - LENGTH / LEFT / RIGHT / MID accept CHAR as well as STRING
  * - LCASE / UCASE accept STRING as well as CHAR
+ * - LEFT is PseudoPilot Core (common exam insert; not in teacher-guide §5.5 index)
+ * - ASC / CHR / IS_NUM ship from the standard Paper 2 exam insert
  */
 export const CORE_BUILTINS: readonly BuiltinSpec[] = [
   {
@@ -96,6 +98,25 @@ export const CORE_BUILTINS: readonly BuiltinSpec[] = [
     params: [{ name: 'x', accept: ['INTEGER'] }],
     returns: 'REAL',
     summary: 'Pseudo-random REAL in [0, x).',
+  },
+  // Cambridge Paper 2 exam insert — character / numeric-string helpers.
+  {
+    name: 'ASC',
+    params: [{ name: 'ThisChar', accept: ['CHAR'] }],
+    returns: 'INTEGER',
+    summary: 'ASCII code point of a CHAR.',
+  },
+  {
+    name: 'CHR',
+    params: [{ name: 'x', accept: ['INTEGER'] }],
+    returns: 'CHAR',
+    summary: 'CHAR whose ASCII code point is x.',
+  },
+  {
+    name: 'IS_NUM',
+    params: [{ name: 'ThisString', accept: ['STRING', 'CHAR'] }],
+    returns: 'BOOLEAN',
+    summary: 'TRUE if the value represents a valid numeric literal.',
   },
   // Cambridge Paper 2 insert — DATE helpers (dd/mm/yyyy).
   {

@@ -38,10 +38,18 @@ export type ClassMethodInfo = {
   readonly kind: 'procedure' | 'function';
   readonly visibility: 'PUBLIC' | 'PRIVATE';
   readonly params: readonly PpType[];
+  /** Parallel to `params` (Cambridge §8.3). */
+  readonly paramModes?: readonly ('BYVAL' | 'BYREF')[];
   /** null for procedures. */
   readonly returns: PpType | null;
   readonly span: SourceSpan;
   readonly isConstructor: boolean;
+};
+
+/** Inclusive ARRAY dimension bounds when both ends are integer literals. */
+export type ArrayBound = {
+  readonly lower: number;
+  readonly upper: number;
 };
 
 export type PpType =
@@ -51,6 +59,11 @@ export type PpType =
       /** Element type: scalar or record (not nested array). */
       readonly element: PpType;
       readonly dimensions: number;
+      /**
+       * Present when every dimension bound is an integer literal.
+       * Used for whole-array assignability (matching lowers/uppers).
+       */
+      readonly bounds?: readonly ArrayBound[];
     }
   | {
       readonly kind: 'record';
@@ -70,15 +83,49 @@ export type PpType =
       readonly methods: readonly ClassMethodInfo[];
     }
   | {
+      readonly kind: 'enum';
+      /** Display name from TYPE declaration. */
+      readonly name: string;
+      /** Display member names in declaration order. */
+      readonly members: readonly string[];
+    }
+  | {
+      readonly kind: 'pointer';
+      /**
+       * Display name from TYPE declaration, or `''` for an anonymous
+       * address-of (`^place`) result used only during assignability checks.
+       */
+      readonly name: string;
+      readonly target: PpType;
+    }
+  | {
+      readonly kind: 'set';
+      /** Display name from TYPE declaration. */
+      readonly name: string;
+      readonly element: PpType;
+    }
+  | {
       readonly kind: 'procedure';
       readonly params: readonly PpType[];
+      /** Parallel to `params`; default all BYVAL when omitted (legacy). */
+      readonly paramModes?: readonly ('BYVAL' | 'BYREF')[];
     }
   | {
       readonly kind: 'function';
       readonly params: readonly PpType[];
+      readonly paramModes?: readonly ('BYVAL' | 'BYREF')[];
       readonly returns: PpType;
     }
   | { readonly kind: 'error' };
+
+/**
+ * Checker-level default for a declared variable (interpreter may mirror).
+ * Pointers use an explicit nil sentinel — Cambridge pointers may be uninitialized.
+ */
+export type TypeDefaultHint =
+  | { readonly kind: 'enumFirst'; readonly member: string }
+  | { readonly kind: 'pointerNil' }
+  | { readonly kind: 'emptySet' };
 
 export type SymbolKind =
   | 'variable'

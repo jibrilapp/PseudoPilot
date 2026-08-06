@@ -238,6 +238,30 @@ OUTPUT Line
     tags: ['file'],
   },
   {
+    id: 'random-file-io',
+    title: 'Random file SEEK / GETRECORD / PUTRECORD',
+    source: `
+TYPE Student
+  DECLARE LastName : STRING
+  DECLARE YearGroup : INTEGER
+ENDTYPE
+DECLARE Pupil : Student
+DECLARE Loaded : Student
+Pupil.LastName ← "Johnson"
+Pupil.YearGroup ← 6
+OPENFILE "StudentFile.Dat" FOR RANDOM
+SEEK "StudentFile.Dat", 0
+PUTRECORD "StudentFile.Dat", Pupil
+SEEK "StudentFile.Dat", 0
+GETRECORD "StudentFile.Dat", Loaded
+CLOSEFILE "StudentFile.Dat"
+OUTPUT Loaded.LastName
+OUTPUT Loaded.YearGroup
+`,
+    expectOutput: ['Johnson', '6'],
+    tags: ['file', 'random', 'type'],
+  },
+  {
     id: 'mixed-control',
     title: 'Mixed control + procedure',
     source: `
@@ -315,6 +339,115 @@ ENDIF
 `,
     expectOutput: ['2003', '10', '4', 'date-match', 'date-before'],
     tags: ['date'],
+  },
+  {
+    id: 'insert-asc-chr-is-num',
+    title: 'Paper 2 insert ASC / CHR / IS_NUM',
+    source: `
+OUTPUT ASC('A')
+OUTPUT CHR(66)
+OUTPUT IS_NUM("-12.36")
+OUTPUT IS_NUM("nope")
+`,
+    expectOutput: ['65', 'B', 'TRUE', 'FALSE'],
+    tags: ['builtin', 'insert'],
+  },
+  {
+    id: 'byref-swap',
+    title: 'Cambridge §8.3 BYREF SWAP',
+    source: `
+PROCEDURE SWAP(BYREF X : INTEGER, Y : INTEGER)
+  DECLARE Temp : INTEGER
+  Temp ← X
+  X ← Y
+  Y ← Temp
+ENDPROCEDURE
+DECLARE A, B : INTEGER
+A ← 3
+B ← 7
+CALL SWAP(A, B)
+OUTPUT A
+OUTPUT B
+`,
+    expectOutput: ['7', '3'],
+    tags: ['procedure', 'byref'],
+  },
+  {
+    id: 'byval-default',
+    title: 'Default parameter mode is BYVAL',
+    source: `
+PROCEDURE Inc(N : INTEGER)
+  N ← N + 1
+ENDPROCEDURE
+DECLARE A : INTEGER
+A ← 5
+CALL Inc(A)
+OUTPUT A
+`,
+    expectOutput: ['5'],
+    tags: ['procedure', 'byval'],
+  },
+  {
+    id: 'enum-season',
+    title: 'Enum Season assign and OUTPUT',
+    source: `
+TYPE Season = (Spring, Summer, Autumn, Winter)
+DECLARE Current : Season
+Current ← Autumn
+OUTPUT Current
+`,
+    expectOutput: ['Autumn'],
+    tags: ['type', 'enum'],
+  },
+  {
+    id: 'pointer-deref-mutate',
+    title: 'Pointer address-of and dereference mutation',
+    source: `
+TYPE IntPtr = ^INTEGER
+DECLARE Value : INTEGER
+DECLARE Ptr : IntPtr
+Value ← 10
+Ptr ← ^Value
+Ptr^ ← Ptr^ + 5
+OUTPUT Value
+`,
+    expectOutput: ['15'],
+    tags: ['type', 'pointer'],
+  },
+  {
+    id: 'set-define',
+    title: 'SET type with DEFINE instance',
+    source: `
+TYPE Digits = SET OF INTEGER
+DEFINE Lucky(3, 7, 9) : Digits
+OUTPUT Lucky
+`,
+    expectOutput: ['{3, 7, 9}'],
+    tags: ['type', 'set', 'define'],
+  },
+  {
+    id: 'bare-next',
+    title: 'FOR loop with bare NEXT',
+    source: `
+DECLARE I, Total : INTEGER
+Total ← 0
+FOR I ← 1 TO 4
+  Total ← Total + I
+NEXT
+OUTPUT Total
+`,
+    expectOutput: ['10'],
+    tags: ['for'],
+  },
+  {
+    id: 'negative-div-mod',
+    title: 'Negative DIV and MOD',
+    source: `
+OUTPUT -7 DIV 3
+OUTPUT -7 MOD 3
+`,
+    expectOutput: ['-2', '-1'],
+    tags: ['expr', 'divmod'],
   },
 ];
 

@@ -2,6 +2,9 @@
 
 import type { EditorTab } from '@/lib/dummy';
 import type { Breakpoint } from '@/lib/debugger';
+import type { IdeDiagnostic } from '@/lib/translation/types';
+import type { EditOrigin } from '@/lib/translation/bidirectionalSync';
+import { ideDiagnosticsToMarkers } from '@/lib/monaco';
 import { cn } from '@/lib/cn';
 import { CodeSurface } from './CodeSurface';
 
@@ -12,12 +15,28 @@ type DualEditorProps = {
   pseudocode: string;
   python: string;
   onPseudocodeChange: (value: string) => void;
+  onPythonChange: (value: string) => void;
+  onPseudocodeSelectionChange?: (text: string) => void;
+  onPythonSelectionChange?: (text: string) => void;
   stacked?: boolean;
   translationStatus?: 'idle' | 'ok' | 'error';
+  /** Which pane's last translate attempt failed. */
+  translationErrorSide?: EditOrigin | null;
+  translationDiagnostics?: readonly IdeDiagnostic[];
   activeLine?: number | null;
   breakpoints?: readonly Breakpoint[];
   onToggleBreakpoint?: (line: number) => void;
 };
+
+function pythonBadge(
+  status: 'idle' | 'ok' | 'error',
+  errorSide: EditOrigin | null | undefined,
+): string | undefined {
+  if (status === 'ok') return 'Live';
+  if (status !== 'error') return undefined;
+  if (errorSide === 'python') return 'Showing last good Pseudocode';
+  return 'Showing last good translation';
+}
 
 export function DualEditor({
   tabs,
@@ -26,12 +45,22 @@ export function DualEditor({
   pseudocode,
   python,
   onPseudocodeChange,
+  onPythonChange,
+  onPseudocodeSelectionChange,
+  onPythonSelectionChange,
   stacked = false,
   translationStatus = 'idle',
+  translationErrorSide = null,
+  translationDiagnostics = [],
   activeLine = null,
   breakpoints = [],
   onToggleBreakpoint,
 }: DualEditorProps) {
+  const pythonMarkers =
+    translationStatus === 'error' && translationErrorSide === 'python'
+      ? ideDiagnosticsToMarkers(translationDiagnostics)
+      : [];
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-pp-editor">
       <div className="flex items-end overflow-x-auto border-b border-pp-line bg-pp-shell/60 px-1">
@@ -61,6 +90,7 @@ export function DualEditor({
           language="pseudocode"
           editable
           onChange={onPseudocodeChange}
+          onSelectionChange={onPseudocodeSelectionChange}
           emphasis={activeFileId.includes('pseudo') || activeFileId.startsWith('ex')}
           activeLine={activeLine}
           breakpoints={breakpoints}
@@ -71,15 +101,13 @@ export function DualEditor({
           path="src/main.py"
           code={python}
           language="python"
+          editable
+          onChange={onPythonChange}
+          onSelectionChange={onPythonSelectionChange}
           emphasis={activeFileId.includes('py')}
           bordered
-          badge={
-            translationStatus === 'error'
-              ? 'Showing last good translation'
-              : translationStatus === 'ok'
-                ? 'Live'
-                : undefined
-          }
+          badge={pythonBadge(translationStatus, translationErrorSide)}
+          externalMarkers={pythonMarkers}
         />
       </div>
     </div>
@@ -95,10 +123,12 @@ function EditorColumn({
   bordered,
   editable,
   onChange,
+  onSelectionChange,
   badge,
   activeLine,
   breakpoints,
   onToggleBreakpoint,
+  externalMarkers,
 }: {
   title: string;
   path: string;
@@ -108,10 +138,12 @@ function EditorColumn({
   bordered?: boolean;
   editable?: boolean;
   onChange?: (value: string) => void;
+  onSelectionChange?: (text: string) => void;
   badge?: string;
   activeLine?: number | null;
   breakpoints?: readonly Breakpoint[];
   onToggleBreakpoint?: (line: number) => void;
+  externalMarkers?: ReturnType<typeof ideDiagnosticsToMarkers>;
 }) {
   return (
     <section
@@ -144,10 +176,12 @@ function EditorColumn({
         language={language}
         editable={editable}
         onChange={onChange}
+        onSelectionChange={onSelectionChange}
         aria-label={title}
         activeLine={language === 'pseudocode' ? activeLine : null}
         breakpoints={language === 'pseudocode' ? breakpoints : []}
         onToggleBreakpoint={language === 'pseudocode' ? onToggleBreakpoint : undefined}
+        externalMarkers={externalMarkers}
       />
     </section>
   );

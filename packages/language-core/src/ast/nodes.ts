@@ -37,6 +37,10 @@ export type Statement =
   | DeclareStatement
   | ConstantStatement
   | TypeDeclaration
+  | EnumTypeDeclaration
+  | PointerTypeDeclaration
+  | SetTypeDeclaration
+  | DefineStatement
   | ProcedureDeclaration
   | FunctionDeclaration
   | CallStatement
@@ -45,6 +49,9 @@ export type Statement =
   | ReadFileStatement
   | WriteFileStatement
   | CloseFileStatement
+  | SeekStatement
+  | GetRecordStatement
+  | PutRecordStatement
   | ClassDeclaration
   | ExpressionStatement;
 
@@ -94,16 +101,30 @@ export type ArrayDimension = {
 /** Scalar, named record, or array type in DECLARE. */
 export type TypeReference = TypeName | NamedType | ArrayType;
 
-export type FileMode = 'READ' | 'WRITE' | 'APPEND';
+/** Cambridge §9.1 text modes + §9.2 RANDOM. */
+export type FileMode = 'READ' | 'WRITE' | 'APPEND' | 'RANDOM';
 
 /** Left-hand side of assignment / INPUT / READFILE targets. */
-export type AssignTarget = Identifier | IndexExpression | MemberExpression;
+export type AssignTarget =
+  | Identifier
+  | IndexExpression
+  | MemberExpression
+  | DerefExpression;
+
+/**
+ * Cambridge §8.3 parameter passing mode.
+ * Omitted keywords default to BYVAL; sticky mode across a parameter list is
+ * resolved at parse time so every {@link Parameter} carries an explicit mode.
+ */
+export type ParameterMode = 'BYVAL' | 'BYREF';
 
 export type Parameter = {
   readonly kind: 'Parameter';
   readonly name: Identifier;
   /** Builtin scalar or user record type (not ARRAY in Core params). */
   readonly typeName: SimpleType;
+  /** Pass-by-value (default) or pass-by-reference. */
+  readonly mode: ParameterMode;
   readonly span: SourceSpan;
 };
 
@@ -117,6 +138,42 @@ export type TypeDeclaration = {
   readonly kind: 'TypeDeclaration';
   readonly name: Identifier;
   readonly fields: DeclareStatement[];
+  readonly span: SourceSpan;
+};
+
+/** TYPE Name = (A, B, C) — Cambridge enumerated type. */
+export type EnumTypeDeclaration = {
+  readonly kind: 'EnumTypeDeclaration';
+  readonly name: Identifier;
+  readonly members: Identifier[];
+  readonly span: SourceSpan;
+};
+
+/** TYPE Name = ^T — Cambridge pointer type. */
+export type PointerTypeDeclaration = {
+  readonly kind: 'PointerTypeDeclaration';
+  readonly name: Identifier;
+  readonly targetType: SimpleType;
+  readonly span: SourceSpan;
+};
+
+/** TYPE Name = SET OF T — Cambridge set type (instances via DEFINE). */
+export type SetTypeDeclaration = {
+  readonly kind: 'SetTypeDeclaration';
+  readonly name: Identifier;
+  readonly elementType: SimpleType;
+  readonly span: SourceSpan;
+};
+
+/**
+ * DEFINE Name (value1, value2, …) : SetType
+ * Creates a set instance with the given element literals.
+ */
+export type DefineStatement = {
+  readonly kind: 'DefineStatement';
+  readonly name: Identifier;
+  readonly values: Expression[];
+  readonly typeName: Identifier;
   readonly span: SourceSpan;
 };
 
@@ -261,7 +318,11 @@ export type RepeatStatement = {
   readonly span: SourceSpan;
 };
 
-/** FOR <ident> ← <start> TO <end> [STEP <step>] … NEXT <ident> */
+/**
+ * FOR <ident> ← <start> TO <end> [STEP <step>] … NEXT [<ident>]
+ * Cambridge allows bare NEXT; repeating the binder is good practice.
+ * When present, `nextVariable` is the identifier after NEXT (may mismatch).
+ */
 export type ForStatement = {
   readonly kind: 'ForStatement';
   readonly variable: string;
@@ -269,10 +330,12 @@ export type ForStatement = {
   readonly end: Expression;
   readonly step: Expression | null;
   readonly body: Statement[];
+  /** Identifier after NEXT, or null for bare NEXT. */
+  readonly nextVariable: string | null;
   readonly span: SourceSpan;
 };
 
-/** OPENFILE name FOR READ | WRITE | APPEND */
+/** OPENFILE name FOR READ | WRITE | APPEND | RANDOM */
 export type OpenFileStatement = {
   readonly kind: 'OpenFileStatement';
   readonly fileName: Expression;
@@ -300,6 +363,30 @@ export type WriteFileStatement = {
 export type CloseFileStatement = {
   readonly kind: 'CloseFileStatement';
   readonly fileName: Expression;
+  readonly span: SourceSpan;
+};
+
+/** SEEK name, address — Cambridge §9.2; moves the random-file record pointer. */
+export type SeekStatement = {
+  readonly kind: 'SeekStatement';
+  readonly fileName: Expression;
+  readonly address: Expression;
+  readonly span: SourceSpan;
+};
+
+/** GETRECORD name, target — Cambridge §9.2; reads the record at the file pointer. */
+export type GetRecordStatement = {
+  readonly kind: 'GetRecordStatement';
+  readonly fileName: Expression;
+  readonly target: AssignTarget;
+  readonly span: SourceSpan;
+};
+
+/** PUTRECORD name, value — Cambridge §9.2; writes a record at the file pointer. */
+export type PutRecordStatement = {
+  readonly kind: 'PutRecordStatement';
+  readonly fileName: Expression;
+  readonly value: Expression;
   readonly span: SourceSpan;
 };
 
@@ -371,10 +458,26 @@ export type Expression =
   | CallExpression
   | IndexExpression
   | MemberExpression
+  | AddressOfExpression
+  | DerefExpression
   | EofExpression
   | SuperExpression
   | NewExpression
   | MethodCallExpression;
+
+/** `^Var` — address-of a variable / place (Cambridge pointer). */
+export type AddressOfExpression = {
+  readonly kind: 'AddressOfExpression';
+  readonly target: AssignTarget;
+  readonly span: SourceSpan;
+};
+
+/** `Ptr^` — dereference a pointer. */
+export type DerefExpression = {
+  readonly kind: 'DerefExpression';
+  readonly pointer: Expression;
+  readonly span: SourceSpan;
+};
 
 export type CallExpression = {
   readonly kind: 'CallExpression';

@@ -110,6 +110,11 @@ OPENFILE Path FOR APPEND
     ]);
   });
 
+  it('10b. OPENFILE FOR RANDOM', () => {
+    const ast = parseOk(`OPENFILE Path FOR RANDOM`);
+    expect((ast.body[0] as OpenFileStatement).mode).toBe('RANDOM');
+  });
+
   it('11. WRITEFILE value can be any expression', () => {
     const w = parseOk(`WRITEFILE "f.txt", A + B * 2`).body[0] as WriteFileStatement;
     expect(w.value.kind).toBe('BinaryExpression');
@@ -220,6 +225,18 @@ CLOSEFILE "f.txt"
 
   it('25. rejects OPENFILE FOR with invalid mode', () => {
     expect(parse(`OPENFILE "f.txt" FOR UPDATE`).ok).toBe(false);
+  });
+
+  it('25b. rejects SEEK without comma', () => {
+    expect(parse(`SEEK "f.dat" 1`).ok).toBe(false);
+  });
+
+  it('25c. rejects GETRECORD without target', () => {
+    expect(parse(`GETRECORD "f.dat",`).ok).toBe(false);
+  });
+
+  it('25d. rejects PUTRECORD without value', () => {
+    expect(parse(`PUTRECORD "f.dat",`).ok).toBe(false);
   });
 
   it('26. rejects READFILE without comma', () => {

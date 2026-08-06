@@ -43,6 +43,8 @@ export enum TokenKind {
   Returns = 'Returns',
   Return = 'Return',
   Call = 'Call',
+  Byval = 'Byval',
+  Byref = 'Byref',
   And = 'And',
   Or = 'Or',
   Not = 'Not',
@@ -53,9 +55,13 @@ export enum TokenKind {
   Readfile = 'Readfile',
   Writefile = 'Writefile',
   Closefile = 'Closefile',
+  Seek = 'Seek',
+  Getrecord = 'Getrecord',
+  Putrecord = 'Putrecord',
   FileRead = 'FileRead',
   FileWrite = 'FileWrite',
   FileAppend = 'FileAppend',
+  FileRandom = 'FileRandom',
   FileEof = 'FileEof',
 
   TypeInteger = 'TypeInteger',
@@ -70,6 +76,8 @@ export enum TokenKind {
 
   Type = 'Type',
   Endtype = 'Endtype',
+  Set = 'Set',
+  Define = 'Define',
 
   Class = 'Class',
   Endclass = 'Endclass',
@@ -98,6 +106,8 @@ export enum TokenKind {
   Comma = 'Comma',
   Colon = 'Colon',
   Dot = 'Dot',
+  /** Pointer address-of / dereference caret (`^`). */
+  Caret = 'Caret',
   Newline = 'Newline',
 
   Eof = 'Eof',
@@ -142,6 +152,8 @@ const KEYWORDS: ReadonlyMap<string, TokenKind> = new Map([
   ['RETURNS', TokenKind.Returns],
   ['RETURN', TokenKind.Return],
   ['CALL', TokenKind.Call],
+  ['BYVAL', TokenKind.Byval],
+  ['BYREF', TokenKind.Byref],
   ['AND', TokenKind.And],
   ['OR', TokenKind.Or],
   ['NOT', TokenKind.Not],
@@ -151,9 +163,13 @@ const KEYWORDS: ReadonlyMap<string, TokenKind> = new Map([
   ['READFILE', TokenKind.Readfile],
   ['WRITEFILE', TokenKind.Writefile],
   ['CLOSEFILE', TokenKind.Closefile],
+  ['SEEK', TokenKind.Seek],
+  ['GETRECORD', TokenKind.Getrecord],
+  ['PUTRECORD', TokenKind.Putrecord],
   ['READ', TokenKind.FileRead],
   ['WRITE', TokenKind.FileWrite],
   ['APPEND', TokenKind.FileAppend],
+  ['RANDOM', TokenKind.FileRandom],
   ['EOF', TokenKind.FileEof],
   ['INTEGER', TokenKind.TypeInteger],
   ['REAL', TokenKind.TypeReal],
@@ -163,6 +179,8 @@ const KEYWORDS: ReadonlyMap<string, TokenKind> = new Map([
   ['DATE', TokenKind.TypeDate],
   ['TYPE', TokenKind.Type],
   ['ENDTYPE', TokenKind.Endtype],
+  ['SET', TokenKind.Set],
+  ['DEFINE', TokenKind.Define],
   ['CLASS', TokenKind.Class],
   ['ENDCLASS', TokenKind.Endclass],
   ['PUBLIC', TokenKind.Public],
@@ -191,6 +209,7 @@ export function isFileModeToken(kind: TokenKind): boolean {
   return (
     kind === TokenKind.FileRead ||
     kind === TokenKind.FileWrite ||
-    kind === TokenKind.FileAppend
+    kind === TokenKind.FileAppend ||
+    kind === TokenKind.FileRandom
   );
 }

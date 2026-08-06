@@ -4,7 +4,8 @@
 **Spec:** [SPECIFICATION.md](./SPECIFICATION.md)  
 **Legend:** ✅ Implemented · 🟡 Partially implemented · ❌ Not implemented
 
-This checklist is about **lexer + parser + AST** only (not interpreter or translator).
+This checklist is about **lexer + parser + AST** only (not interpreter or translator).  
+For full-stack Cambridge status, prefer [`../CONFORMANCE.md`](../CONFORMANCE.md) (authoritative).
 
 ---
 
@@ -12,7 +13,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Keyword table (core set) | 🟡 | Core control-flow / routines present; Extended / OOP / many builtins missing |
+| Keyword table (core + Extended) | ✅ | Control-flow, routines, files, TYPE forms, OOP |
 | Case-insensitive keywords | ✅ | |
 | Reject keywords as identifiers | 🟡 | Lexed as keywords; edge cases TBD |
 
@@ -30,7 +31,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `CASE` `OTHERWISE` `ENDCASE` | ✅ |
 | `FOR` (loop) | ✅ |
 | `FOR` (file mode connector) | ✅ |
-| `TO` `NEXT` | ✅ | Used by FOR loop |
+| `TO` `NEXT` | ✅ | Bare `NEXT` allowed; optional binder |
 | `STEP` | ✅ | Used by FOR loop |
 | `DO` | ✅ | Optional after WHILE condition |
 | `WHILE` `ENDWHILE` | ✅ | Optional `DO` accepted |
@@ -38,16 +39,16 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `PROCEDURE` `ENDPROCEDURE` | ✅ |
 | `FUNCTION` `ENDFUNCTION` `RETURNS` `RETURN` | ✅ |
 | `CALL` | ✅ |
-| `BYVAL` `BYREF` | ❌ |
+| `BYVAL` `BYREF` | ✅ |
 | `DIV` `MOD` `AND` `OR` `NOT` | ✅ |
 | `OPENFILE` `READFILE` `WRITEFILE` `CLOSEFILE` | ✅ |
 | `READ` `WRITE` `APPEND` | ✅ |
 | `EOF` | ✅ |
-| `RANDOM` `SEEK` `GETRECORD` `PUTRECORD` | ❌ |
+| `RANDOM` `SEEK` `GETRECORD` `PUTRECORD` | ✅ |
 | `TYPE` `ENDTYPE` (records) | ✅ |
-| `SET` `DEFINE` / enum / pointer TYPE | ❌ |
+| `SET` `DEFINE` / enum / pointer TYPE | ✅ |
 | `CLASS` `ENDCLASS` `PUBLIC` `PRIVATE` `INHERITS` `SUPER` `NEW` | ✅ |
-| Builtin names as reserved calls | 🟡 | Only `EOF` special-cased |
+| Builtin names as soft calls | ✅ | Registry + soft CallExpression; `EOF` primary |
 
 ---
 
@@ -65,7 +66,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Parentheses | ✅ |
 | `&` concatenation | ✅ |
 | `.` member | ✅ |
-| `^` pointer | ❌ |
+| `^` pointer (type / address-of / deref) | ✅ |
 
 ---
 
@@ -77,10 +78,10 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `DATE` type name + `dd/mm/yyyy` literal | ✅ |
 | `ARRAY[l:u] OF T` | ✅ |
 | Multi-dimensional arrays | ✅ |
-| User type names | ❌ |
+| User type names | ✅ |
 | Record TYPE … ENDTYPE | ✅ |
-| Enum / pointer / set TYPE | ❌ |
-| Class types | ❌ |
+| Enum / pointer / set TYPE | ✅ |
+| Class types | ✅ |
 
 ---
 
@@ -109,8 +110,8 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | `WRITEFILE` (WRITE and APPEND opens) | ✅ |
 | `CLOSEFILE` | ✅ |
 | `EOF(…)` expression | ✅ |
-| `OPENFILE … FOR RANDOM` | ❌ |
-| `SEEK` / `GETRECORD` / `PUTRECORD` | ❌ |
+| `OPENFILE … FOR RANDOM` | ✅ |
+| `SEEK` / `GETRECORD` / `PUTRECORD` | ✅ |
 
 ---
 
@@ -123,7 +124,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Index expression `A[i]` / `A[i,j]` | ✅ |
 | Assign / INPUT / READFILE to index | ✅ |
 | Reject `A[1 TO n]` sugar | ✅ | (not part of grammar; would fail parse) |
-| Whole-array assign AST special-case | 🟡 | Identifier target OK; no shape check |
+| Whole-array assign AST | ✅ | Identifier target; shape checked in checker/runtime |
 
 ---
 
@@ -139,8 +140,8 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Reject `RETURN` in procedure / top-level | ✅ |
 | Reject nested routines | ✅ |
 | Function `CallExpression` | ✅ |
-| `BYVAL` / `BYREF` | ❌ |
-| Empty `()` vs omitted params | 🟡 | Verify both forms in tests |
+| `BYVAL` / `BYREF` | ✅ |
+| Empty `()` vs omitted params | ✅ |
 
 ---
 
@@ -162,7 +163,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 
 | Feature | Status |
 | --- | --- |
-| `FOR` / `TO` / `NEXT` | ✅ |
+| `FOR` / `TO` / `NEXT` | ✅ | Bare `NEXT` OK |
 | `STEP` | ✅ |
 | `WHILE` / `DO` / `ENDWHILE` | ✅ |
 | `REPEAT` / `UNTIL` | ✅ |
@@ -179,7 +180,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Index postfix | ✅ |
 | Precedence (Pratt) | ✅ |
 | `&` concat | ✅ |
-| Member / pointer expressions | ❌ |
+| Member / pointer expressions | ✅ |
 
 ---
 
@@ -188,11 +189,11 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Feature | Status |
 | --- | --- |
 | Integer | ✅ |
-| Real | 🟡 | Strict digit-both-sides not fully enforced |
+| Real | ✅ | `.5`/`5.` → `W_REAL_LITERAL`; `strictCambridge` → `E_REAL_LITERAL` |
 | String `"…"` | ✅ |
 | Boolean | ✅ |
 | Char `'…'` | ✅ |
-| Date literal | ❌ |
+| Date literal | ✅ |
 
 ---
 
@@ -206,7 +207,7 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Diagnostics with codes/spans | ✅ |
 | Comments `//` | ✅ |
 | Trailing-comma / glue-token hardening | ✅ |
-| Full grammar per EBNF.md | 🟡 | Core subset matches except Extended / routines depth |
+| Full grammar per EBNF.md | ✅ | Core + Extended TYPE/CLASS/files |
 
 ---
 
@@ -215,11 +216,11 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | Resolution | Status |
 | --- | --- |
 | `ELSE IF` vs nested IF (newline rule) | ✅ |
-| `FOR` file vs loop | 🟡 | File path ✅; loop ❌ |
+| `FOR` file vs loop | ✅ |
 | `←` / `<-` | ✅ |
 | Case-insensitive keywords | ✅ |
 | Optional `DO` on WHILE | ✅ | Accepted when present; not required |
-| Require `NEXT` binder match | ❌ | Not implemented yet |
+| `NEXT` binder | ✅ | Optional; mismatch → `E_FOR_NEXT_MISMATCH` |
 
 ---
 
@@ -231,13 +232,14 @@ This checklist is about **lexer + parser + AST** only (not interpreter or transl
 | IF selection | ✅ |
 | Routines | ✅ |
 | Arrays + text files | ✅ |
-| Loops | 🟡 |
+| Loops | ✅ |
 | CASE | ✅ |
-| String/numeric builtins (except EOF) | ✅ |
+| String/numeric builtins | ✅ |
 | CONSTANT (literal) | ✅ |
-| BYREF | ❌ |
+| BYREF | ✅ |
 | DATE | ✅ |
-| Extended enum/pointer/SET TYPE / OOP / random files | ❌ |
-| Record TYPE … ENDTYPE | ✅ |
+| CHAR literals | ✅ |
+| TYPE enum / pointer / SET / records | ✅ |
+| OOP / random files | ✅ |
 
-**Estimate:** Core Paper 2 surface covers selection, iteration, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE/CONSTANT, Core builtins + `&`. Semantic analysis is **not** parser coverage — see [`SEMANTICS.md`](./SEMANTICS.md) / `@pseudopilot/checker`. Still blocked on BYREF, file I/O runtime, and exam-insert packs.
+**Estimate:** Parser covers Core Paper 2 + Extended TYPE forms + OOP + random files. Semantic analysis is **not** parser coverage — see [`SEMANTICS.md`](./SEMANTICS.md) / `@pseudopilot/checker`. Full-stack conformance: [`../CONFORMANCE.md`](../CONFORMANCE.md).

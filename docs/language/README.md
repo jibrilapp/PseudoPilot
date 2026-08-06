@@ -7,11 +7,15 @@ PseudoPilot targets the **Cambridge International AS & A Level Computer Science 
 | Document | Purpose |
 | --- | --- |
 | [SPECIFICATION.md](./SPECIFICATION.md) | Full language rules, ambiguities, and PseudoPilot resolutions |
+| [`../CONFORMANCE.md`](../CONFORMANCE.md) | Cambridge 2026 guide compatibility matrix (full-stack audit) |
+| [LANGUAGE_REFERENCE.md](./LANGUAGE_REFERENCE.md) | Quick student-facing index |
+| [BUILTINS.md](./BUILTINS.md) | Official builtin audit & coverage |
 | [EBNF.md](./EBNF.md) | Complete EBNF grammar for the dialect |
 | [PARSER_COVERAGE.md](./PARSER_COVERAGE.md) | What `@pseudopilot/language-core` can parse today |
 | [IMPLEMENTATION_CHECKLIST.md](./IMPLEMENTATION_CHECKLIST.md) | Parser + checker + translator + runtime progress |
 | [SEMANTICS.md](./SEMANTICS.md) | Semantic checker: scopes, types, diagnostics (`C_*`) |
-| [TYPE_SYSTEM.md](./TYPE_SYSTEM.md) | `TYPE … ENDTYPE` records: fields, defaults, value semantics |
+| [FILE_IO.md](./FILE_IO.md) | Text (§9.1) + random (§9.2) file I/O |
+| [TYPE_SYSTEM.md](./TYPE_SYSTEM.md) | User types: record / enum / pointer / SET + DEFINE |
 | [OBJECT_ORIENTED_PROGRAMMING.md](./OBJECT_ORIENTED_PROGRAMMING.md) | `CLASS … ENDCLASS` OOP: inheritance, visibility, `NEW`, `SUPER`, reference semantics |
 | [SPEC_REVIEW.md](./SPEC_REVIEW.md) | Production readiness review of this suite (errata + priorities) |
 | [TRANSLATION.md](./TRANSLATION.md) | Translation engine architecture and V14 mapping |

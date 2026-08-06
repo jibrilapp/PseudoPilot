@@ -4,8 +4,6 @@ import type {
   Expression,
   FunctionDeclaration,
   Identifier,
-  IndexExpression,
-  MemberExpression,
   Parameter,
   ProcedureDeclaration,
   Program,
@@ -41,20 +39,27 @@ import {
   cloneValue,
   dateValue,
   defaultScalar,
+  emptySet,
+  enumValue,
   formatValue,
   integerValue,
   isTruthyBoolean,
+  nilPointer,
+  pointerValue,
   realValue,
   ReturnSignal,
   RuntimeError,
   runtimeFail,
+  setValue,
   stringValue,
   type ArrayElementType,
   type ArrayValue,
+  type EnumValue,
   type ObjectValue,
   type RuntimeDiagnostic,
   type RuntimeValue,
   type ScalarValue,
+  type ValuePlace,
 } from './value.js';
 
 export type InterpretOptions = {
@@ -74,6 +79,8 @@ export type VariableSnapshot = {
   readonly kind: string;
   readonly typeName: string;
   readonly value: string;
+  /** Present when the binding is a BYREF parameter alias. */
+  readonly byRef?: boolean;
 };
 
 export type FrameSnapshot = {
@@ -101,6 +108,27 @@ type RecordTypeDef = {
   readonly fields: readonly { readonly name: string; readonly typeRef: TypeReference }[];
 };
 
+/** Registered `TYPE Name = (A, B, …)` enum. */
+type EnumTypeDef = {
+  readonly name: string;
+  /** Display-case member names in declaration order. */
+  readonly members: readonly string[];
+  /** Case-folded member → 0-based ordinal. */
+  readonly ordinals: ReadonlyMap<string, number>;
+};
+
+/** Registered `TYPE Name = ^T` pointer. */
+type PointerTypeDef = {
+  readonly name: string;
+  readonly targetType: SimpleType;
+};
+
+/** Registered `TYPE Name = SET OF T`. */
+type SetTypeDef = {
+  readonly name: string;
+  readonly elementType: SimpleType;
+};
+
 /** Registered `CLASS … ENDCLASS` method (procedure/function, including `NEW`). */
 type ClassMethodDef = {
   readonly name: string;
@@ -126,10 +154,7 @@ type ClassDef = {
 };
 
 /** A resolvable assignment target: read the current value, or store a new one. */
-type Place = {
-  get(): RuntimeValue;
-  set(value: RuntimeValue): void;
-};
+type Place = ValuePlace;
 
 /**
  * Tree-walk interpreter over a semantically validated Cambridge AST.
@@ -149,6 +174,12 @@ export class Interpreter {
   private readonly routines = new Map<string, Routine>();
   /** TYPE … ENDTYPE registry, case-folded name → field defs (declaration order). */
   private readonly typeRegistry = new Map<string, RecordTypeDef>();
+  /** TYPE Name = (…); case-folded name → enum def. */
+  private readonly enumRegistry = new Map<string, EnumTypeDef>();
+  /** TYPE Name = ^T; case-folded name → pointer def. */
+  private readonly pointerRegistry = new Map<string, PointerTypeDef>();
+  /** TYPE Name = SET OF T; case-folded name → set def. */
+  private readonly setRegistry = new Map<string, SetTypeDef>();
   /** CLASS … ENDCLASS registry, case-folded name → own members. */
   private readonly classRegistry = new Map<string, ClassDef>();
   /** The object bound to implicit `this` inside the currently executing method/constructor (or null at top level). */
@@ -179,6 +210,9 @@ export class Interpreter {
     this.steps = 0;
     this.routines.clear();
     this.typeRegistry.clear();
+    this.enumRegistry.clear();
+    this.pointerRegistry.clear();
+    this.setRegistry.clear();
     this.classRegistry.clear();
     this.currentInstance = null;
     this.currentMethodClass = null;
@@ -254,6 +288,40 @@ export class Interpreter {
           name: stmt.name.name,
           fields,
         });
+      } else if (stmt.kind === 'EnumTypeDeclaration') {
+        const ordinals = new Map<string, number>();
+        const members: string[] = [];
+        for (let i = 0; i < stmt.members.length; i++) {
+          const m = stmt.members[i]!;
+          members.push(m.name);
+          ordinals.set(identKey(m.name), i);
+        }
+        const def: EnumTypeDef = {
+          name: stmt.name.name,
+          members,
+          ordinals,
+        };
+        this.enumRegistry.set(identKey(stmt.name.name), def);
+        // Inject enum members as global constants (Cambridge enumeration).
+        for (let i = 0; i < members.length; i++) {
+          const member = members[i]!;
+          this.globalEnv.define(
+            member,
+            'constant',
+            def.name,
+            enumValue(def.name, member, i),
+          );
+        }
+      } else if (stmt.kind === 'PointerTypeDeclaration') {
+        this.pointerRegistry.set(identKey(stmt.name.name), {
+          name: stmt.name.name,
+          targetType: stmt.targetType,
+        });
+      } else if (stmt.kind === 'SetTypeDeclaration') {
+        this.setRegistry.set(identKey(stmt.name.name), {
+          name: stmt.name.name,
+          elementType: stmt.elementType,
+        });
       } else if (stmt.kind === 'ClassDeclaration') {
         const fields: {
           name: string;
@@ -325,6 +393,9 @@ export class Interpreter {
       frame: this.stack.current(),
       step: this.steps,
       depth: this.stack.depth(),
+      ...(this.files instanceof VirtualFileSystem
+        ? { openFiles: this.files.snapshotOpenFiles() }
+        : {}),
     });
     // Re-check after async debugger suspend (Stop may have fired while parked).
     if (this.signal?.aborted) {
@@ -440,7 +511,13 @@ export class Interpreter {
       case 'FunctionDeclaration':
         return;
       case 'TypeDeclaration':
-        // Registered into typeRegistry once at program start; nothing to do here.
+      case 'EnumTypeDeclaration':
+      case 'PointerTypeDeclaration':
+      case 'SetTypeDeclaration':
+        // Registered into type registries once at program start; nothing to do here.
+        return;
+      case 'DefineStatement':
+        await this.execDefine(stmt);
         return;
       case 'OpenFileStatement':
         await this.execOpenFile(stmt);
@@ -453,6 +530,15 @@ export class Interpreter {
         return;
       case 'CloseFileStatement':
         await this.execCloseFile(stmt);
+        return;
+      case 'SeekStatement':
+        await this.execSeek(stmt);
+        return;
+      case 'GetRecordStatement':
+        await this.execGetRecord(stmt);
+        return;
+      case 'PutRecordStatement':
+        await this.execPutRecord(stmt);
         return;
       case 'ClassDeclaration':
         // Registered into classRegistry once at program start; nothing to do here.
@@ -555,6 +641,63 @@ export class Interpreter {
     }
   }
 
+  private async execSeek(
+    stmt: Extract<Statement, { kind: 'SeekStatement' }>,
+  ): Promise<void> {
+    const path = await this.evalFilePath(stmt.fileName, stmt.span);
+    const addr = await this.evalExpr(stmt.address);
+    if (addr.kind !== 'INTEGER') {
+      throw runtimeFail(
+        'R_FILE_SEEK',
+        `SEEK address must be INTEGER (got ${addr.kind}).`,
+        stmt.address.span,
+      );
+    }
+    try {
+      await this.files.seek(path, addr.value);
+    } catch (e) {
+      throw mapFileError(e, stmt.span);
+    }
+  }
+
+  private async execGetRecord(
+    stmt: Extract<Statement, { kind: 'GetRecordStatement' }>,
+  ): Promise<void> {
+    const path = await this.evalFilePath(stmt.fileName, stmt.span);
+    try {
+      const record = await this.files.getRecord(path);
+      if (record.kind !== 'RECORD') {
+        throw runtimeFail(
+          'R_FILE_RECORD_TYPE',
+          `GETRECORD '${path}' did not yield a TYPE record.`,
+          stmt.span,
+        );
+      }
+      await this.assignTarget(stmt.target, record, stmt.span);
+    } catch (e) {
+      throw mapFileError(e, stmt.span);
+    }
+  }
+
+  private async execPutRecord(
+    stmt: Extract<Statement, { kind: 'PutRecordStatement' }>,
+  ): Promise<void> {
+    const path = await this.evalFilePath(stmt.fileName, stmt.span);
+    const value = await this.evalExpr(stmt.value);
+    if (value.kind !== 'RECORD') {
+      throw runtimeFail(
+        'R_FILE_RECORD_TYPE',
+        `PUTRECORD '${path}' expects a TYPE record (got ${value.kind}).`,
+        stmt.value.span,
+      );
+    }
+    try {
+      await this.files.putRecord(path, value);
+    } catch (e) {
+      throw mapFileError(e, stmt.span);
+    }
+  }
+
   private async execBlock(body: readonly Statement[]): Promise<void> {
     for (const s of body) await this.execStatement(s);
   }
@@ -569,6 +712,29 @@ export class Interpreter {
     for (const name of names) {
       this.env().define(name, 'variable', typeName, factory());
     }
+  }
+
+  private async execDefine(
+    stmt: Extract<Statement, { kind: 'DefineStatement' }>,
+  ): Promise<void> {
+    const def = this.setRegistry.get(identKey(stmt.typeName.name));
+    if (!def) {
+      throw runtimeFail(
+        'R_UNKNOWN_TYPE',
+        `Unknown SET TYPE '${stmt.typeName.name}'.`,
+        stmt.span,
+      );
+    }
+    const elements: RuntimeValue[] = [];
+    for (const e of stmt.values) {
+      elements.push(await this.evalExpr(e));
+    }
+    this.env().define(
+      stmt.name.name,
+      'variable',
+      def.name,
+      setValue(def.name, elements),
+    );
   }
 
   /**
@@ -587,10 +753,7 @@ export class Interpreter {
       return () => defaultScalar(name);
     }
     if (typeRef.kind === 'NamedType') {
-      if (this.classRegistry.has(identKey(typeRef.name))) {
-        return this.buildClassFactory(typeRef.name, span);
-      }
-      return this.buildRecordFactory(typeRef.name, span);
+      return this.buildNamedTypeFactory(typeRef.name, span);
     }
     // ArrayType
     const lowers: number[] = [];
@@ -604,6 +767,38 @@ export class Interpreter {
     return () => allocateArray(elementType, lowers, uppers, elementFactory, span);
   }
 
+  private async buildNamedTypeFactory(
+    typeName: string,
+    span: SourceSpan,
+  ): Promise<() => RuntimeValue> {
+    const key = identKey(typeName);
+    const enumDef = this.enumRegistry.get(key);
+    if (enumDef) {
+      const first = enumDef.members[0];
+      if (first === undefined) {
+        throw runtimeFail(
+          'R_UNKNOWN_TYPE',
+          `Enum TYPE '${typeName}' has no members.`,
+          span,
+        );
+      }
+      const value = enumValue(enumDef.name, first, 0);
+      return () => value;
+    }
+    const ptrDef = this.pointerRegistry.get(key);
+    if (ptrDef) {
+      return () => nilPointer(ptrDef.name);
+    }
+    const setDef = this.setRegistry.get(key);
+    if (setDef) {
+      return () => emptySet(setDef.name);
+    }
+    if (this.classRegistry.has(key)) {
+      return this.buildClassFactory(typeName, span);
+    }
+    return this.buildRecordFactory(typeName, span);
+  }
+
   private async buildSimpleValueFactory(
     t: SimpleType,
     span: SourceSpan,
@@ -612,10 +807,7 @@ export class Interpreter {
       const name = t.name;
       return () => defaultScalar(name);
     }
-    if (this.classRegistry.has(identKey(t.name))) {
-      return this.buildClassFactory(t.name, span);
-    }
-    return this.buildRecordFactory(t.name, span);
+    return this.buildNamedTypeFactory(t.name, span);
   }
 
   private elementTypeOf(t: SimpleType, span: SourceSpan): ArrayElementType {
@@ -770,6 +962,17 @@ export class Interpreter {
         span,
       );
     }
+    if (
+      current.kind === 'ENUM' ||
+      current.kind === 'POINTER' ||
+      current.kind === 'SET'
+    ) {
+      throw runtimeFail(
+        'R_INPUT',
+        `Cannot INPUT a ${current.kind.toLowerCase()} value.`,
+        span,
+      );
+    }
     const typeHint: TypeNameKind = current.kind;
     place.set(parseInput(await this.readLine(), typeHint, span));
   }
@@ -784,14 +987,15 @@ export class Interpreter {
   }
 
   /**
-   * Resolve an Identifier / IndexExpression / MemberExpression (possibly
-   * chained, e.g. `Class[1].Home.City`, `Students[i].Marks[j]`) to a place
-   * that can be read or written. Records/arrays are reference types, so once
-   * the innermost container is found, mutating it in place is sufficient —
-   * no need to write the result back up the chain.
+   * Resolve an Identifier / IndexExpression / MemberExpression / DerefExpression
+   * (possibly chained, e.g. `Class[1].Home.City`, `Ptr^`) to a place that can
+   * be read or written. Records/arrays are reference types, so once the
+   * innermost container is found, mutating it in place is sufficient — no need
+   * to write the result back up the chain. Pointer cells reuse the same
+   * ValuePlace shape as BYREF aliases.
    */
   private async resolvePlace(
-    target: Identifier | IndexExpression | MemberExpression,
+    target: AssignTarget,
     span: SourceSpan,
   ): Promise<Place> {
     if (target.kind === 'Identifier') {
@@ -831,6 +1035,31 @@ export class Interpreter {
         `Undeclared identifier '${target.name}'.`,
         span,
       );
+    }
+
+    if (target.kind === 'DerefExpression') {
+      const ptr = await this.evalExpr(target.pointer);
+      if (ptr.kind !== 'POINTER') {
+        throw runtimeFail(
+          'R_TYPE',
+          `Cannot dereference non-pointer value (got ${ptr.kind}).`,
+          span,
+        );
+      }
+      if (ptr.cell === null) {
+        throw runtimeFail(
+          'R_NULL_POINTER',
+          'Cannot dereference NIL pointer.',
+          span,
+        );
+      }
+      const cell = ptr.cell;
+      return {
+        get: () => cell.get(),
+        set: (value) => {
+          cell.set(this.coerceForStore(cell.get(), value, span));
+        },
+      };
     }
 
     if (target.kind === 'MemberExpression') {
@@ -921,6 +1150,51 @@ export class Interpreter {
       // Never clone, unlike RECORD/ARRAY above.
       return incoming;
     }
+    if (existing.kind === 'ENUM' || incoming.kind === 'ENUM') {
+      if (existing.kind !== 'ENUM' || incoming.kind !== 'ENUM') {
+        throw runtimeFail('R_TYPE', 'Enum assignment type mismatch.', span);
+      }
+      if (identKey(existing.typeName) !== identKey(incoming.typeName)) {
+        throw runtimeFail(
+          'R_TYPE',
+          `Cannot assign enum '${incoming.typeName}' to enum '${existing.typeName}'.`,
+          span,
+        );
+      }
+      return incoming;
+    }
+    if (existing.kind === 'POINTER' || incoming.kind === 'POINTER') {
+      if (existing.kind !== 'POINTER' || incoming.kind !== 'POINTER') {
+        throw runtimeFail('R_TYPE', 'Pointer assignment type mismatch.', span);
+      }
+      // Named pointer ← anonymous address-of is allowed when the checker
+      // already validated target compatibility; copy the cell reference.
+      if (
+        existing.typeName !== '' &&
+        incoming.typeName !== '' &&
+        identKey(existing.typeName) !== identKey(incoming.typeName)
+      ) {
+        throw runtimeFail(
+          'R_TYPE',
+          `Cannot assign pointer '${incoming.typeName}' to pointer '${existing.typeName}'.`,
+          span,
+        );
+      }
+      return pointerValue(existing.typeName || incoming.typeName, incoming.cell);
+    }
+    if (existing.kind === 'SET' || incoming.kind === 'SET') {
+      if (existing.kind !== 'SET' || incoming.kind !== 'SET') {
+        throw runtimeFail('R_TYPE', 'Set assignment type mismatch.', span);
+      }
+      if (identKey(existing.typeName) !== identKey(incoming.typeName)) {
+        throw runtimeFail(
+          'R_TYPE',
+          `Cannot assign SET '${incoming.typeName}' to SET '${existing.typeName}'.`,
+          span,
+        );
+      }
+      return cloneValue(incoming);
+    }
     return coerceAssign(existing.kind, incoming, span);
   }
 
@@ -962,7 +1236,7 @@ export class Interpreter {
           await this.evalExpr(expr.argument),
           expr.span,
         );
-      case 'BinaryExpression':
+      case 'BinaryExpression': {
         // Short-circuit AND/OR (Cambridge-style; avoids evaluating RHS side effects).
         if (expr.operator === 'AND') {
           const left = await this.evalExpr(expr.left);
@@ -974,12 +1248,16 @@ export class Interpreter {
           if (isTruthyBoolean(left)) return booleanValue(true);
           return booleanValue(isTruthyBoolean(await this.evalExpr(expr.right)));
         }
-        return evalBinary(
-          expr.operator,
-          await this.evalExpr(expr.left),
-          await this.evalExpr(expr.right),
-          expr.span,
-        );
+        const left = await this.evalExpr(expr.left);
+        const right = await this.evalExpr(expr.right);
+        if (
+          (expr.operator === '+' || expr.operator === '-') &&
+          (left.kind === 'ENUM' || right.kind === 'ENUM')
+        ) {
+          return this.evalEnumOrdinal(expr.operator, left, right, expr.span);
+        }
+        return evalBinary(expr.operator, left, right, expr.span);
+      }
       case 'CallExpression':
         return await this.callRoutine(
           expr.callee.name,
@@ -990,6 +1268,12 @@ export class Interpreter {
       case 'IndexExpression':
         return (await this.resolvePlace(expr, expr.span)).get();
       case 'MemberExpression':
+        return (await this.resolvePlace(expr, expr.span)).get();
+      case 'AddressOfExpression': {
+        const place = await this.resolvePlace(expr.target, expr.span);
+        return pointerValue('', place);
+      }
+      case 'DerefExpression':
         return (await this.resolvePlace(expr, expr.span)).get();
       case 'EofExpression': {
         const path = await this.evalFilePath(expr.fileName, expr.span);
@@ -1018,6 +1302,50 @@ export class Interpreter {
         return _exhaustive;
       }
     }
+  }
+
+  /**
+   * Cambridge ordinal arithmetic: enum ± INTEGER (or INTEGER ± enum) → same enum.
+   * Out-of-range ordinals raise `R_ENUM_RANGE`.
+   */
+  private evalEnumOrdinal(
+    op: '+' | '-',
+    left: RuntimeValue,
+    right: RuntimeValue,
+    span: SourceSpan,
+  ): EnumValue {
+    let enumSide: EnumValue;
+    let next: number;
+    if (left.kind === 'ENUM' && right.kind === 'INTEGER') {
+      enumSide = left;
+      next = op === '+' ? left.ordinal + right.value : left.ordinal - right.value;
+    } else if (right.kind === 'ENUM' && left.kind === 'INTEGER') {
+      enumSide = right;
+      next = op === '+' ? right.ordinal + left.value : left.value - right.ordinal;
+    } else {
+      throw runtimeFail(
+        'R_TYPE',
+        `Enum ${op} requires an INTEGER operand (got ${left.kind}, ${right.kind}).`,
+        span,
+      );
+    }
+    const def = this.enumRegistry.get(identKey(enumSide.typeName));
+    if (!def) {
+      throw runtimeFail(
+        'R_UNKNOWN_TYPE',
+        `Unknown enum TYPE '${enumSide.typeName}'.`,
+        span,
+      );
+    }
+    if (next < 0 || next >= def.members.length) {
+      throw runtimeFail(
+        'R_ENUM_RANGE',
+        `Enum '${def.name}' ordinal ${next} is out of range [0..${def.members.length - 1}].`,
+        span,
+      );
+    }
+    const member = def.members[next]!;
+    return enumValue(def.name, member, next);
   }
 
   private async callRoutine(
@@ -1058,8 +1386,6 @@ export class Interpreter {
       );
     }
 
-    const argValues: RuntimeValue[] = [];
-    for (const a of argExprs) argValues.push(await this.evalExpr(a));
     if (this.stack.depth() >= this.maxCallDepth) {
       throw runtimeFail(
         'R_STACK_OVERFLOW',
@@ -1070,7 +1396,7 @@ export class Interpreter {
     }
 
     const local = new Environment(this.globalEnv);
-    bindParameters(local, decl.parameters, argValues, span);
+    await this.bindCallParameters(local, decl.parameters, argExprs, span);
     const frameKind = routine.kind === 'function' ? 'function' : 'procedure';
     const frame = this.stack.push(frameKind, decl.name.name, local, span);
     this.hooks?.onEnterFrame?.(frame);
@@ -1305,8 +1631,6 @@ export class Interpreter {
       );
     }
 
-    const argValues: RuntimeValue[] = [];
-    for (const a of argExprs) argValues.push(await this.evalExpr(a));
     if (this.stack.depth() >= this.maxCallDepth) {
       throw runtimeFail(
         'R_STACK_OVERFLOW',
@@ -1317,7 +1641,7 @@ export class Interpreter {
     }
 
     const local = new Environment(this.globalEnv);
-    bindParameters(local, method.parameters, argValues, span);
+    await this.bindCallParameters(local, method.parameters, argExprs, span);
     const frameKind = method.kind === 'function' ? 'function' : 'procedure';
     const frame = this.stack.push(frameKind, `${owner}.${method.name}`, local, span);
     this.hooks?.onEnterFrame?.(frame);
@@ -1358,6 +1682,42 @@ export class Interpreter {
     }
   }
 
+  /**
+   * Bind call arguments: BYREF aliases the caller's place; BYVAL copies
+   * (records/arrays deep-cloned; CLASS instances remain reference aliases).
+   */
+  private async bindCallParameters(
+    env: Environment,
+    params: readonly Parameter[],
+    argExprs: readonly Expression[],
+    span: SourceSpan,
+  ): Promise<void> {
+    for (let i = 0; i < params.length; i++) {
+      const p = params[i]!;
+      const arg = argExprs[i]!;
+      if (p.mode === 'BYREF') {
+        if (
+          arg.kind !== 'Identifier' &&
+          arg.kind !== 'IndexExpression' &&
+          arg.kind !== 'MemberExpression'
+        ) {
+          throw runtimeFail(
+            'R_BYREF_TEMPORARY',
+            `Cannot pass a temporary BYREF to parameter '${p.name.name}'.`,
+            arg.span,
+          );
+        }
+        const place = await this.resolvePlace(arg, span);
+        const typeName =
+          p.typeName.kind === 'NamedType' ? p.typeName.name : p.typeName.name;
+        env.defineByRef(p.name.name, typeName, place);
+        continue;
+      }
+      const value = await this.evalExpr(arg);
+      bindParameterByVal(env, p, value, span);
+    }
+  }
+
   private snapshotStack(): FrameSnapshot[] {
     return this.stack.snapshot().map((f) => ({
       id: f.id,
@@ -1376,6 +1736,7 @@ function snapshotEnv(env: Environment): VariableSnapshot[] {
       kind: b.kind,
       typeName: b.typeName,
       value: formatValue(b.value),
+      ...(b.byRef ? { byRef: true } : {}),
     });
   }
   return vars;
@@ -1387,39 +1748,71 @@ function typeDisplayName(typeRef: TypeReference): string {
   return 'ARRAY';
 }
 
-function bindParameters(
+function bindParameterByVal(
   env: Environment,
-  params: readonly Parameter[],
-  values: readonly RuntimeValue[],
+  p: Parameter,
+  value: RuntimeValue,
   span: SourceSpan,
 ): void {
-  for (let i = 0; i < params.length; i++) {
-    const p = params[i]!;
-    const value = values[i]!;
-    if (p.typeName.kind === 'NamedType') {
-      if (value.kind === 'OBJECT') {
-        // CLASS parameters are reference types: alias the same instance
-        // (covariance already validated statically by the checker).
-        env.define(p.name.name, 'parameter', value.className, value);
-        continue;
-      }
-      if (value.kind !== 'RECORD' || identKey(value.typeName) !== identKey(p.typeName.name)) {
+  if (p.typeName.kind === 'NamedType') {
+    if (value.kind === 'OBJECT') {
+      // CLASS parameters are reference types: alias the same instance
+      // (covariance already validated statically by the checker).
+      env.define(p.name.name, 'parameter', value.className, value);
+      return;
+    }
+    if (value.kind === 'ENUM') {
+      if (identKey(value.typeName) !== identKey(p.typeName.name)) {
         throw runtimeFail(
           'R_TYPE',
-          `Parameter '${p.name.name}' expects TYPE '${p.typeName.name}' (got ${value.kind}).`,
+          `Parameter '${p.name.name}' expects enum '${p.typeName.name}' (got '${value.typeName}').`,
+          span,
+        );
+      }
+      env.define(p.name.name, 'parameter', p.typeName.name, value);
+      return;
+    }
+    if (value.kind === 'POINTER') {
+      env.define(
+        p.name.name,
+        'parameter',
+        p.typeName.name,
+        pointerValue(p.typeName.name, value.cell),
+      );
+      return;
+    }
+    if (value.kind === 'SET') {
+      if (identKey(value.typeName) !== identKey(p.typeName.name)) {
+        throw runtimeFail(
+          'R_TYPE',
+          `Parameter '${p.name.name}' expects SET '${p.typeName.name}' (got '${value.typeName}').`,
           span,
         );
       }
       env.define(p.name.name, 'parameter', p.typeName.name, cloneValue(value));
-      continue;
+      return;
     }
-    env.define(
-      p.name.name,
-      'parameter',
-      p.typeName.name,
-      coerceAssign(p.typeName.name, value, span),
-    );
+    if (value.kind !== 'RECORD' || identKey(value.typeName) !== identKey(p.typeName.name)) {
+      throw runtimeFail(
+        'R_TYPE',
+        `Parameter '${p.name.name}' expects TYPE '${p.typeName.name}' (got ${value.kind}).`,
+        span,
+      );
+    }
+    env.define(p.name.name, 'parameter', p.typeName.name, cloneValue(value));
+    return;
   }
+  // Arrays: BYVAL deep-clones (Cambridge default).
+  if (value.kind === 'ARRAY') {
+    env.define(p.name.name, 'parameter', 'ARRAY', cloneValue(value));
+    return;
+  }
+  env.define(
+    p.name.name,
+    'parameter',
+    p.typeName.name,
+    coerceAssign(p.typeName.name, value, span),
+  );
 }
 
 function arrayElementTypesEqual(a: ArrayElementType, b: ArrayElementType): boolean {
@@ -1445,7 +1838,14 @@ function coerceAssign(
   value: RuntimeValue,
   span: SourceSpan,
 ): ScalarValue {
-  if (value.kind === 'ARRAY' || value.kind === 'RECORD' || value.kind === 'OBJECT') {
+  if (
+    value.kind === 'ARRAY' ||
+    value.kind === 'RECORD' ||
+    value.kind === 'OBJECT' ||
+    value.kind === 'ENUM' ||
+    value.kind === 'POINTER' ||
+    value.kind === 'SET'
+  ) {
     throw runtimeFail('R_TYPE', `Cannot assign ${value.kind} to scalar.`, span);
   }
   if (value.kind === to) return value;
@@ -1457,6 +1857,13 @@ function valuesEqual(a: RuntimeValue, b: RuntimeValue): boolean {
   if (a.kind === 'ARRAY' || b.kind === 'ARRAY') return false;
   if (a.kind === 'RECORD' || b.kind === 'RECORD') return false;
   if (a.kind === 'OBJECT' || b.kind === 'OBJECT') return false;
+  if (a.kind === 'SET' || b.kind === 'SET') return false;
+  if (a.kind === 'POINTER' || b.kind === 'POINTER') return false;
+  if (a.kind === 'ENUM' && b.kind === 'ENUM') {
+    return (
+      identKey(a.typeName) === identKey(b.typeName) && a.ordinal === b.ordinal
+    );
+  }
   if (
     (a.kind === 'INTEGER' || a.kind === 'REAL') &&
     (b.kind === 'INTEGER' || b.kind === 'REAL')
@@ -1552,6 +1959,21 @@ function compare(
   op: '<' | '<=' | '>' | '>=',
   span: SourceSpan,
 ): boolean {
+  if (left.kind === 'ENUM' && right.kind === 'ENUM') {
+    if (identKey(left.typeName) !== identKey(right.typeName)) {
+      throw runtimeFail(
+        'R_TYPE',
+        `Cannot compare enum '${left.typeName}' with enum '${right.typeName}'.`,
+        span,
+      );
+    }
+    const l = left.ordinal;
+    const r = right.ordinal;
+    if (op === '<') return l < r;
+    if (op === '<=') return l <= r;
+    if (op === '>') return l > r;
+    return l >= r;
+  }
   if (
     (left.kind === 'INTEGER' || left.kind === 'REAL') &&
     (right.kind === 'INTEGER' || right.kind === 'REAL')

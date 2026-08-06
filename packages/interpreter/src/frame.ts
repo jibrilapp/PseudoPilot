@@ -71,6 +71,11 @@ export type StatementHookInfo = {
   readonly step: number;
   /** Call-stack depth including the global frame (≥ 1 while running). */
   readonly depth: number;
+  /**
+   * Open file handles (text + random) when the runtime host uses
+   * {@link VirtualFileSystem}; empty otherwise.
+   */
+  readonly openFiles?: readonly import('./files/VirtualFileSystem.js').OpenFileSnapshot[];
 };
 
 export type StatementHookResult = void | 'continue' | 'pause';

@@ -4,6 +4,7 @@ import {
   asInteger,
   asNumber,
   asStringy,
+  booleanValue,
   charValue,
   dateValue,
   integerValue,
@@ -85,6 +86,35 @@ const BUILTIN_IMPL: Readonly<Record<string, BuiltinImpl>> = {
       );
     }
     return realValue(random.next() * x);
+  },
+  ASC(args, _r, span) {
+    const ch = args[0]!;
+    if (ch.kind !== 'CHAR') {
+      throw runtimeFail('R_TYPE', `ASC expects CHAR, got ${ch.kind}.`, span);
+    }
+    const code = ch.value.codePointAt(0);
+    if (code === undefined) {
+      throw runtimeFail('R_BUILTIN', 'ASC received an empty CHAR.', span);
+    }
+    return integerValue(code);
+  },
+  CHR(args, _r, span) {
+    const x = asInteger(args[0]!, 'CHR');
+    if (x < 0 || x > 0x10ffff) {
+      throw runtimeFail(
+        'R_BUILTIN',
+        `CHR argument ${x} is outside the Unicode code-point range.`,
+        span,
+      );
+    }
+    return charValue(String.fromCodePoint(x));
+  },
+  IS_NUM(args) {
+    const s = asStringy(args[0]!, 'IS_NUM').trim();
+    if (s.length === 0) return booleanValue(false);
+    // Cambridge example: IS_NUM("-12.36") → TRUE. Accept optional sign + digits
+    // with at most one decimal point (no exponent / hex).
+    return booleanValue(/^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(s));
   },
   DAY(args, _r, span) {
     const d = asDate(args[0]!, 'DAY', span);

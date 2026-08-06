@@ -39,10 +39,12 @@ function printIndex(expr: IrIndexExpression): string {
 }
 
 function printMember(expr: IrMemberExpression): string {
-  // `self.Field` is a lowering artifact (Cambridge class bodies reference
-  // their own fields bare, with no `self`/`this`) — strip it back to `Field`.
+  // Reverse of Python `self.Field` / PseudoPilot lowering artifact.
+  // Cambridge examples often use bare field names, but bare names are
+  // ambiguous when a parameter shares the field's name (`name ← name`).
+  // Emit explicit `SELF.Field` so object-field assignments stay field writes.
   if (expr.object.kind === 'IrIdentifier' && expr.object.name === 'self') {
-    return expr.property;
+    return `SELF.${expr.property}`;
   }
   return `${printExpr(expr.object, POSTFIX_PRECEDENCE)}.${expr.property}`;
 }
@@ -55,6 +57,8 @@ function printTarget(target: IrAssignTarget): string {
       return printIndex(target);
     case 'IrMemberExpression':
       return printMember(target);
+    case 'IrDerefExpression':
+      return `${printExpr(target.pointer, POSTFIX_PRECEDENCE)}^`;
     default: {
       const _exhaustive: never = target;
       return _exhaustive;
@@ -85,6 +89,10 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
     case 'IrDeepCopyExpression':
       // Cambridge has no copy operator — identity for reverse print.
       return printExpr(expr.value, parentPrec);
+    case 'IrAddressOfExpression':
+      return `^${printTarget(expr.target)}`;
+    case 'IrDerefExpression':
+      return `${printExpr(expr.pointer, POSTFIX_PRECEDENCE)}^`;
     case 'IrCallExpression':
       return `${expr.callee}(${expr.args.map((a) => printExpr(a, 0)).join(', ')})`;
     case 'IrEofExpression':
@@ -161,6 +169,29 @@ function printBlock(
   return lines;
 }
 
+function printParamList(
+  parameters: readonly { readonly name: string; readonly typeName: IrSimpleType; readonly mode?: 'BYVAL' | 'BYREF' }[],
+): string {
+  let prevMode: 'BYVAL' | 'BYREF' | null = null;
+  return parameters
+    .map((param) => {
+      const mode = param.mode ?? 'BYVAL';
+      const type = printSimpleType(param.typeName);
+      // Emit mode when it differs from the sticky previous mode (Guide §8.3).
+      // Always emit BYREF on first BYREF; omit repeated BYREF; emit BYVAL only
+      // when switching back from BYREF (explicit default is usually omitted).
+      let prefix = '';
+      if (mode === 'BYREF' && prevMode !== 'BYREF') {
+        prefix = 'BYREF ';
+      } else if (mode === 'BYVAL' && prevMode === 'BYREF') {
+        prefix = 'BYVAL ';
+      }
+      prevMode = mode;
+      return `${prefix}${param.name} : ${type}`;
+    })
+    .join(', ');
+}
+
 function printClassMember(
   member: IrClassMember,
   arrow: string,
@@ -173,9 +204,7 @@ function printClassMember(
       `${p}${vis} ${member.names.join(', ')} : ${printTypeRef(member.typeRef)}`,
     ];
   }
-  const params = member.parameters
-    .map((param) => `${param.name} : ${printSimpleType(param.typeName)}`)
-    .join(', ');
+  const params = printParamList(member.parameters);
   if (member.kind === 'IrClassProcedure') {
     const lines = [`${p}${vis} PROCEDURE ${member.name}(${params})`];
     lines.push(...printBlock(member.body, arrow, level + 1));
@@ -266,7 +295,12 @@ function printStatement(
       const stepPart = stmt.step ? ` STEP ${printExpr(stmt.step, 0)}` : '';
       lines.push(`${p}FOR ${stmt.variable} ${arrow} ${printExpr(stmt.start, 0)} TO ${printExpr(stmt.end, 0)}${stepPart}`);
       lines.push(...printBlock(stmt.body, arrow, level + 1));
-      lines.push(`${p}NEXT ${stmt.variable}`);
+      // null → bare NEXT; undefined (Python reverse) / string → NEXT <name>
+      if (stmt.nextVariable === null) {
+        lines.push(`${p}NEXT`);
+      } else {
+        lines.push(`${p}NEXT ${stmt.nextVariable ?? stmt.variable}`);
+      }
       break;
     }
     case 'IrDeclareStatement': {
@@ -280,18 +314,14 @@ function printStatement(
       break;
     }
     case 'IrProcedureDeclaration': {
-      const params = stmt.parameters
-        .map((param) => `${param.name} : ${printSimpleType(param.typeName)}`)
-        .join(', ');
+      const params = printParamList(stmt.parameters);
       lines.push(`${p}PROCEDURE ${stmt.name}(${params})`);
       lines.push(...printBlock(stmt.body, arrow, level + 1));
       lines.push(`${p}ENDPROCEDURE`);
       break;
     }
     case 'IrFunctionDeclaration': {
-      const params = stmt.parameters
-        .map((param) => `${param.name} : ${printSimpleType(param.typeName)}`)
-        .join(', ');
+      const params = printParamList(stmt.parameters);
       lines.push(
         `${p}FUNCTION ${stmt.name}(${params}) RETURNS ${printSimpleType(stmt.returnType)}`,
       );
@@ -307,6 +337,31 @@ function printStatement(
         );
       }
       lines.push(`${p}ENDTYPE`);
+      break;
+    }
+    case 'IrEnumTypeDeclaration': {
+      lines.push(
+        `${p}TYPE ${stmt.name} = (${stmt.members.join(', ')})`,
+      );
+      break;
+    }
+    case 'IrPointerTypeDeclaration': {
+      lines.push(
+        `${p}TYPE ${stmt.name} = ^${printSimpleType(stmt.targetType)}`,
+      );
+      break;
+    }
+    case 'IrSetTypeDeclaration': {
+      lines.push(
+        `${p}TYPE ${stmt.name} = SET OF ${printSimpleType(stmt.elementType)}`,
+      );
+      break;
+    }
+    case 'IrDefineStatement': {
+      const vals = stmt.values.map((v) => printExpr(v, 0)).join(', ');
+      lines.push(
+        `${p}DEFINE ${stmt.name} (${vals}): ${stmt.typeName}`,
+      );
       break;
     }
     case 'IrCallStatement': {
@@ -338,6 +393,21 @@ function printStatement(
     case 'IrCloseFileStatement':
       lines.push(`${p}CLOSEFILE ${printExpr(stmt.fileName, 0)}`);
       break;
+    case 'IrSeekStatement':
+      lines.push(
+        `${p}SEEK ${printExpr(stmt.fileName, 0)}, ${printExpr(stmt.address, 0)}`,
+      );
+      break;
+    case 'IrGetRecordStatement':
+      lines.push(
+        `${p}GETRECORD ${printExpr(stmt.fileName, 0)}, ${printTarget(stmt.target)}`,
+      );
+      break;
+    case 'IrPutRecordStatement':
+      lines.push(
+        `${p}PUTRECORD ${printExpr(stmt.fileName, 0)}, ${printExpr(stmt.value, 0)}`,
+      );
+      break;
     case 'IrClassDeclaration': {
       const inheritsPart = stmt.inherits ? ` INHERITS ${stmt.inherits}` : '';
       lines.push(`${p}CLASS ${stmt.name}${inheritsPart}`);
@@ -368,6 +438,10 @@ function printStatement(
     stmt.kind !== 'IrProcedureDeclaration' &&
     stmt.kind !== 'IrFunctionDeclaration' &&
     stmt.kind !== 'IrTypeDeclaration' &&
+    stmt.kind !== 'IrEnumTypeDeclaration' &&
+    stmt.kind !== 'IrPointerTypeDeclaration' &&
+    stmt.kind !== 'IrSetTypeDeclaration' &&
+    stmt.kind !== 'IrDefineStatement' &&
     stmt.kind !== 'IrClassDeclaration' &&
     trailing.length > 0 &&
     trailing[0]?.startsWith('//')

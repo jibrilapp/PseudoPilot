@@ -28,6 +28,10 @@ export type IrStatement =
   | IrDeclareStatement
   | IrConstantStatement
   | IrTypeDeclaration
+  | IrEnumTypeDeclaration
+  | IrPointerTypeDeclaration
+  | IrSetTypeDeclaration
+  | IrDefineStatement
   | IrProcedureDeclaration
   | IrFunctionDeclaration
   | IrCallStatement
@@ -37,6 +41,9 @@ export type IrStatement =
   | IrReadFileStatement
   | IrWriteFileStatement
   | IrCloseFileStatement
+  | IrSeekStatement
+  | IrGetRecordStatement
+  | IrPutRecordStatement
   | IrClassDeclaration
   | IrExpressionStatement;
 
@@ -45,8 +52,15 @@ type WithTrivia = {
   readonly trailingTrivia: IrTrivia[];
 };
 
-/** Identifier, array element (Scores[1]), or record field (S.Name, Rows[i].Name). */
-export type IrAssignTarget = IrIdentifier | IrIndexExpression | IrMemberExpression;
+/**
+ * Identifier, array element (Scores[1]), record field (S.Name), or pointer
+ * dereference (`P^`) as an assignment destination.
+ */
+export type IrAssignTarget =
+  | IrIdentifier
+  | IrIndexExpression
+  | IrMemberExpression
+  | IrDerefExpression;
 
 /** x ← value / x = value */
 export type IrAssignment = WithTrivia & {
@@ -126,7 +140,12 @@ export type IrRepeatStatement = WithTrivia & {
   readonly condition: IrExpression;
 };
 
-/** FOR <var> ← <start> TO <end> [STEP <step>] — maps to Python for…range. */
+/**
+ * FOR <var> ← <start> TO <end> [STEP <step>] — maps to Python for…range.
+ * `nextVariable` is the identifier after NEXT, or `null` for bare `NEXT`
+ * (Cambridge allows both). Omitted when reverse-lifted from Python (printer
+ * then repeats {@link variable}).
+ */
 export type IrForStatement = WithTrivia & {
   readonly kind: 'IrForStatement';
   readonly variable: string;
@@ -134,6 +153,8 @@ export type IrForStatement = WithTrivia & {
   readonly end: IrExpression;
   readonly step: IrExpression | null;
   readonly body: IrStatement[];
+  /** Identifier after NEXT, or null for bare NEXT. */
+  readonly nextVariable?: string | null;
 };
 
 /** Cambridge scalar type names on procedure parameters / DECLARE / RETURNS. */
@@ -213,10 +234,44 @@ export type IrTypeDeclaration = WithTrivia & {
   readonly fields: IrTypeField[];
 };
 
+/** TYPE Name = (A, B, C) — Cambridge enumerated type → Python Enum/IntEnum. */
+export type IrEnumTypeDeclaration = WithTrivia & {
+  readonly kind: 'IrEnumTypeDeclaration';
+  readonly name: string;
+  readonly members: string[];
+};
+
+/** TYPE Name = ^T — Cambridge pointer type. */
+export type IrPointerTypeDeclaration = WithTrivia & {
+  readonly kind: 'IrPointerTypeDeclaration';
+  readonly name: string;
+  readonly targetType: IrSimpleType;
+};
+
+/** TYPE Name = SET OF T — Cambridge set type (instances via DEFINE). */
+export type IrSetTypeDeclaration = WithTrivia & {
+  readonly kind: 'IrSetTypeDeclaration';
+  readonly name: string;
+  readonly elementType: IrSimpleType;
+};
+
+/**
+ * DEFINE Name (value1, value2, …) : SetType
+ * Creates a set instance with the given element literals.
+ */
+export type IrDefineStatement = WithTrivia & {
+  readonly kind: 'IrDefineStatement';
+  readonly name: string;
+  readonly values: IrExpression[];
+  readonly typeName: string;
+};
+
 export type IrParameter = {
   readonly kind: 'IrParameter';
   readonly name: string;
   readonly typeName: IrSimpleType;
+  /** Cambridge §8.3 — default BYVAL. */
+  readonly mode: 'BYVAL' | 'BYREF';
 };
 
 /** PROCEDURE … ENDPROCEDURE — maps to Python def (no return annotation). */
@@ -254,11 +309,11 @@ export type IrBreakStatement = WithTrivia & {
   readonly kind: 'IrBreakStatement';
 };
 
-/** OPENFILE path FOR READ|WRITE|APPEND */
+/** OPENFILE path FOR READ|WRITE|APPEND|RANDOM */
 export type IrOpenFileStatement = WithTrivia & {
   readonly kind: 'IrOpenFileStatement';
   readonly fileName: IrExpression;
-  readonly mode: 'READ' | 'WRITE' | 'APPEND';
+  readonly mode: 'READ' | 'WRITE' | 'APPEND' | 'RANDOM';
 };
 
 /** READFILE path, target */
@@ -279,6 +334,27 @@ export type IrWriteFileStatement = WithTrivia & {
 export type IrCloseFileStatement = WithTrivia & {
   readonly kind: 'IrCloseFileStatement';
   readonly fileName: IrExpression;
+};
+
+/** SEEK path, address — Cambridge §9.2 */
+export type IrSeekStatement = WithTrivia & {
+  readonly kind: 'IrSeekStatement';
+  readonly fileName: IrExpression;
+  readonly address: IrExpression;
+};
+
+/** GETRECORD path, target — Cambridge §9.2 */
+export type IrGetRecordStatement = WithTrivia & {
+  readonly kind: 'IrGetRecordStatement';
+  readonly fileName: IrExpression;
+  readonly target: IrAssignTarget;
+};
+
+/** PUTRECORD path, value — Cambridge §9.2 */
+export type IrPutRecordStatement = WithTrivia & {
+  readonly kind: 'IrPutRecordStatement';
+  readonly fileName: IrExpression;
+  readonly value: IrExpression;
 };
 
 export type IrVisibility = 'PUBLIC' | 'PRIVATE';
@@ -354,7 +430,21 @@ export type IrExpression =
   | IrDeepCopyExpression
   | IrSuperExpression
   | IrNewExpression
-  | IrMethodCallExpression;
+  | IrMethodCallExpression
+  | IrAddressOfExpression
+  | IrDerefExpression;
+
+/** `^Var` — address-of a variable / place (Cambridge pointer). */
+export type IrAddressOfExpression = {
+  readonly kind: 'IrAddressOfExpression';
+  readonly target: IrAssignTarget;
+};
+
+/** `Ptr^` — dereference a pointer. */
+export type IrDerefExpression = {
+  readonly kind: 'IrDerefExpression';
+  readonly pointer: IrExpression;
+};
 
 /** `SUPER` — only meaningful as the `object` of an {@link IrMethodCallExpression}. */
 export type IrSuperExpression = {

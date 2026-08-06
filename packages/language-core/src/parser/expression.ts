@@ -94,6 +94,26 @@ export class ExpressionParser {
       };
     }
 
+    // Cambridge pointer address-of: ^Var / ^Place
+    if (token.kind === TokenKind.Caret) {
+      this.cursor.advance();
+      const target = this.parseAssignTarget();
+      if (!target) {
+        pushError(
+          this.diagnostics,
+          'Expected variable after ^ (address-of).',
+          token,
+          'E_ADDRESS_OF',
+        );
+        return null;
+      }
+      return {
+        kind: 'AddressOfExpression',
+        target,
+        span: span(token.span.start, target.span.end),
+      };
+    }
+
     return this.parsePrimary();
   }
 
@@ -215,7 +235,7 @@ export class ExpressionParser {
     }
   }
 
-  /** Postfix `[…]` and `.field` chains. */
+  /** Postfix `[…]`, `.field`, and `^` (dereference) chains. */
   private parsePostfix(base: Expression): Expression {
     let expr = base;
     for (;;) {
@@ -251,6 +271,14 @@ export class ExpressionParser {
         };
         continue;
       }
+      if (this.cursor.match(TokenKind.Caret)) {
+        expr = {
+          kind: 'DerefExpression',
+          pointer: expr,
+          span: span(expr.span.start, this.cursor.previous().span.end),
+        };
+        continue;
+      }
       break;
     }
     return expr;
@@ -262,6 +290,10 @@ export class ExpressionParser {
     if (token.kind === TokenKind.New) {
       this.cursor.advance();
       return { kind: 'Identifier', name: 'NEW', span: token.span };
+    }
+    if (token.kind === TokenKind.Set) {
+      this.cursor.advance();
+      return { kind: 'Identifier', name: token.lexeme, span: token.span };
     }
     return this.parseIdentifier();
   }
@@ -411,7 +443,7 @@ export class ExpressionParser {
   }
 
   /**
-   * Parse an assignable location: Name, Name[i], S.Field, Students[i].Name, …
+   * Parse an assignable location: Name, Name[i], S.Field, Ptr^, …
    */
   parseAssignTarget(): AssignTarget | null {
     const id = this.parseIdentifier();
@@ -420,7 +452,8 @@ export class ExpressionParser {
     if (
       target.kind !== 'Identifier' &&
       target.kind !== 'IndexExpression' &&
-      target.kind !== 'MemberExpression'
+      target.kind !== 'MemberExpression' &&
+      target.kind !== 'DerefExpression'
     ) {
       pushError(
         this.diagnostics,

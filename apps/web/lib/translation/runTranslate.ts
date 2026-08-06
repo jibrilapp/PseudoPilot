@@ -1,5 +1,6 @@
 import {
   translatePseudocodeToPython,
+  translatePythonToPseudocode,
   type TranslateDiagnostic,
   type TranslateResult,
 } from '@pseudopilot/translator';
@@ -33,13 +34,12 @@ function toIdeDiagnostic(d: TranslateDiagnostic, index: number): IdeDiagnostic {
   };
 }
 
-/**
- * Thin, crash-safe adapter around `translatePseudocodeToPython`.
- * Never throws — unexpected failures become UI diagnostics.
- */
-export function runPseudocodeToPython(source: string): SafeTranslateResult {
+function wrapTranslate(
+  run: () => TranslateResult,
+  crashCode: string,
+): SafeTranslateResult {
   try {
-    const result: TranslateResult = translatePseudocodeToPython(source);
+    const result = run();
     return {
       ok: result.ok,
       code: result.code,
@@ -56,9 +56,31 @@ export function runPseudocodeToPython(source: string): SafeTranslateResult {
           id: 'ui-translate-crash',
           severity: 'error',
           message: `Translation crashed: ${message}`,
-          code: 'UI_TRANSLATE_CRASH',
+          code: crashCode,
         },
       ],
     };
   }
+}
+
+/**
+ * Thin, crash-safe adapter around `translatePseudocodeToPython`.
+ * Never throws — unexpected failures become UI diagnostics.
+ */
+export function runPseudocodeToPython(source: string): SafeTranslateResult {
+  return wrapTranslate(
+    () => translatePseudocodeToPython(source),
+    'UI_TRANSLATE_CRASH',
+  );
+}
+
+/**
+ * Thin, crash-safe adapter around `translatePythonToPseudocode`.
+ * Never throws — unexpected failures become UI diagnostics.
+ */
+export function runPythonToPseudocode(source: string): SafeTranslateResult {
+  return wrapTranslate(
+    () => translatePythonToPseudocode(source),
+    'UI_REVERSE_TRANSLATE_CRASH',
+  );
 }

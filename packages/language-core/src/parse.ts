@@ -15,6 +15,11 @@ export type ParseOptions = {
    * Default: {@link DEFAULT_MAX_SOURCE_CHARS}. Capped by {@link ABSOLUTE_MAX_SOURCE_CHARS}.
    */
   readonly maxSourceChars?: number;
+  /**
+   * Enforce Cambridge real-literal digit-both-sides rule as errors
+   * (`.5` / `5.`). Default: accept with `W_REAL_LITERAL` warning.
+   */
+  readonly strictCambridge?: boolean;
 };
 
 export type ParseResult = {
@@ -60,7 +65,7 @@ export function parse(source: string, options?: ParseOptions): ParseResult {
     };
   }
 
-  const lexed = lex(source);
+  const lexed = lex(source, { strictCambridge: options?.strictCambridge });
   const diagnostics: Diagnostic[] = [...lexed.diagnostics];
   const parser = new Parser(lexed.tokens, diagnostics);
   const ast = parser.parseProgram();

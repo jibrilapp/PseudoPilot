@@ -24,10 +24,10 @@ apps/web RuntimeController ──► WorkerController ──► Web Worker
                                    WorkerDebuggerBridge + WorkerRuntimeHost
                                                           │
                                                    runPseudocode + VFS
-         Translator stays independent (live Python pane; file IR mapping)
+         Translator stays independent (bidirectional live Pseudocode ↔ Python panes)
          Language service stays independent (IDE intelligence only)
          Compiler-service is the shared incremental frontend cache
-         Monaco (apps/web CodeSurface) adapts language-service providers only
+         Monaco (apps/web CodeSurface) adapts language-service + origin-aware translate sync
 ```
 
 Semantic rules live only in `@pseudopilot/checker` (`C_*` diagnostics).  

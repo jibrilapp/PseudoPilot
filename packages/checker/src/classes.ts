@@ -275,8 +275,21 @@ function bindMember(
   const params = member.parameters.map((p: Parameter) =>
     resolveUserTypeRef(p.typeName, host.typeTable, host.diag),
   );
+  const paramModes = member.parameters.map((p: Parameter) => p.mode);
   const isConstructor = mkey === 'new';
   const kind = member.kind === 'ClassFunctionDeclaration' ? 'function' : 'procedure';
+  if (kind === 'function') {
+    for (const p of member.parameters) {
+      if (p.mode === 'BYREF') {
+        host.diag({
+          code: 'C_BYREF_ON_FUNCTION',
+          message: `FUNCTION method parameters cannot be BYREF (Cambridge §8.3); parameter '${p.name.name}' is BYREF.`,
+          span: p.span,
+          help: 'Use a PROCEDURE method with BYREF, or pass BYVAL and return a new value.',
+        });
+      }
+    }
+  }
   const returns =
     member.kind === 'ClassFunctionDeclaration'
       ? resolveUserTypeRef(member.returnType, host.typeTable, host.diag)
@@ -287,6 +300,7 @@ function bindMember(
     kind,
     visibility,
     params,
+    paramModes,
     returns,
     span: member.name.span,
     isConstructor,
@@ -302,7 +316,20 @@ function rebindTypeRefDeep(t: PpType, table: TypeTable): PpType {
       kind: 'array',
       dimensions: t.dimensions,
       element: rebindTypeRefDeep(t.element, table),
+      ...(t.bounds ? { bounds: t.bounds } : {}),
     };
+  }
+  if (t.kind === 'pointer') {
+    const named = t.name !== '' ? table.get(identKey(t.name)) : undefined;
+    if (named && named.kind === 'pointer') return named;
+    return {
+      kind: 'pointer',
+      name: t.name,
+      target: rebindTypeRefDeep(t.target, table),
+    };
+  }
+  if (t.kind === 'enum' || t.kind === 'set') {
+    return table.get(identKey(t.name)) ?? t;
   }
   return t;
 }

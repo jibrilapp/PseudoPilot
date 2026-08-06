@@ -1,7 +1,7 @@
 # Cambridge Interpreter
 
 **Package:** `@pseudopilot/interpreter` `0.4.0`  
-**Status:** Core AST execution + async RuntimeHost + AbortSignal + **text-file VFS** + debugger hooks  
+**Status:** Core AST execution + async RuntimeHost + AbortSignal + **text + random file VFS** + debugger hooks
 **IDE:** Execution runs in a **Web Worker** (`apps/web/lib/worker`) — UI never calls `runPseudocode` on the main thread.
 
 ---
@@ -44,7 +44,7 @@ IR remains the **translation** IR only (ADR 0006). A future execution IR would n
 | Component | Role |
 | --- | --- |
 | `RuntimeHost` | Pluggable `readInput` / `writeOutput` (web, tests, CLI) |
-| `RuntimeValue` | INTEGER / REAL / BOOLEAN / STRING / CHAR / DATE / ARRAY / RECORD / OBJECT |
+| `RuntimeValue` | INTEGER / REAL / BOOLEAN / STRING / CHAR / DATE / ARRAY / RECORD / OBJECT / ENUM / POINTER / SET |
 | `Environment` | Case-insensitive bindings; parent chain for globals |
 | `StackFrame` / `CallStack` | Global + procedure/function frames |
 | `executeBuiltin` | Registry-driven Core builtins |
@@ -52,10 +52,20 @@ IR remains the **translation** IR only (ADR 0006). A future execution IR would n
 
 ### Scope model
 
-- **Global** frame owns top-level `DECLARE` / `CONSTANT`.
+- **Global** frame owns top-level `DECLARE` / `CONSTANT` / enum members / `DEFINE` sets.
 - **Routine** frames nest under global (`new Environment(global)`).
 - Locals/parameters shadow globals; Cambridge case-insensitive keys via checker `identKey`.
 - Control-flow blocks do **not** create scopes (matches checker).
+
+### User types (enum / pointer / SET)
+
+| Form | Runtime |
+| --- | --- |
+| `TYPE E = (A, B, …)` | Members injected as global constants; `DECLARE` defaults to first member; `E ± INTEGER` is ordinal arithmetic (`R_ENUM_RANGE` if out of bounds); OUTPUT prints the member name |
+| `TYPE P = ^T` | `DECLARE` defaults to NIL (`cell = null`); `^place` wraps a BYREF-style `ValuePlace` cell; `Ptr^` reads/writes through the cell (`R_NULL_POINTER` on NIL); pointer assign copies the cell reference |
+| `TYPE S = SET OF T` / `DEFINE` | `DECLARE` defaults to empty; `DEFINE` evaluates elements into a `SET` value; assign clones elements |
+
+`FOR`’s optional `nextVariable` is ignored at runtime (same binder behaviour as before).
 
 ### Call stack
 
@@ -71,6 +81,10 @@ IR remains the **translation** IR only (ADR 0006). A future execution IR would n
 ### Builtins
 
 Reuse `CORE_BUILTINS` from language-core. Runtime strategies in `builtins.ts` (not a call-site mega-switch). `RIGHT(..., 0)` → `""`. `MID` is 1-based. `RAND` uses injectable `RandomSource`.
+
+### Arithmetic (`DIV` / `MOD`)
+
+`DIV` and `MOD` use **truncation toward zero** (`Math.trunc`), including for negatives (D4): `(-7) DIV 3 = -2`, `(-7) MOD 3 = -1`. Python emission uses `_pp_div` / `_pp_mod` with the same truncating policy (not raw `//` / `%`).
 
 ### OUTPUT
 
@@ -130,11 +144,14 @@ Avoided anti-patterns: no source-less IR execution, no flattening spans away, no
 | `R_STEP_LIMIT` | Instruction budget |
 | `R_INPUT` | Bad INPUT text for target type / exhausted host buffer |
 | `R_CANCELLED` | AbortSignal / Stop |
-| `R_FILE_*` | Virtual file I/O (`NOT_FOUND`, `ALREADY_OPEN`, `NOT_OPEN`, `MODE`, `EOF`, `PATH`) |
+| `R_FILE_*` | Virtual file I/O (`NOT_FOUND`, `ALREADY_OPEN`, `NOT_OPEN`, `MODE`, `EOF`, `PATH`, `SEEK`, `NO_RECORD`, `RECORD_TYPE`) |
 | `R_RETURN_OUTSIDE` / `R_NO_RETURN` | Invalid RETURN / missing FUNCTION return |
 | `R_BUILTIN` / `R_BUILTIN_ARGS` | Builtin execution failure |
 | `R_ASSIGN_CONSTANT` | Mutating CONSTANT |
 | `R_TYPE` / `R_ARG_COUNT` / `R_PROC_AS_EXPR` | Dynamic type / call misuse |
+| `R_NULL_POINTER` | Dereference (`Ptr^`) of NIL |
+| `R_ENUM_RANGE` | Enum ± INTEGER produced an out-of-range ordinal |
+| `R_UNKNOWN_TYPE` | Missing TYPE / SET / enum registry entry |
 
 Checker `C_*` diagnostics still gate the run when `semanticCheck: true`.
 
@@ -147,9 +164,10 @@ Checker `C_*` diagnostics still gate the run when `semanticCheck: true`.
 - No definite-assignment at runtime beyond undeclared reads
 - Not a security sandbox (instruction/depth/array-size caps only — no memory/CPU isolation, no string-size cap, no untrusted-host isolation)
 - `debugger.pause` aborts rather than suspending
-- BYREF / RANDOM files unsupported
+- Random files supported (`OPENFILE FOR RANDOM`, `SEEK`, `GETRECORD`, `PUTRECORD`) — see [`FILE_IO.md`](./FILE_IO.md)
+- BYREF is supported
+- Text + random files use VirtualFileSystem only (see `packages/interpreter/src/files/README.md`)
 - DATE uses structured `{day,month,year}` values (not Python `datetime` objects); display is `dd/mm/yyyy`
-- Text files use VirtualFileSystem only (see `packages/interpreter/src/files/README.md`)
 - JS `number` precision (INTEGER beyond `Number.MAX_SAFE_INTEGER` is not Cambridge-arbitrary-precision)
 
 ---

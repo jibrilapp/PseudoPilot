@@ -1,14 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  DUMMY_AI,
   DUMMY_FILES,
   DUMMY_PSEUDOCODE,
   DUMMY_TABS,
 } from '@/lib/dummy';
 import { usePseudocodeTranslation } from '@/hooks/usePseudocodeTranslation';
 import { usePseudocodeRuntime } from '@/hooks/usePseudocodeRuntime';
+import { setEditorSelection, useAICoach } from '@/lib/aiCoach';
 import { ActivityBar, type ActivityId } from './ActivityBar';
 import { AiAssistantPanel } from './AiAssistantPanel';
 import { ConsolePanel } from './ConsolePanel';
@@ -29,21 +29,88 @@ export function IdeShell() {
   const [rightOpen, setRightOpen] = useState(true);
   const [consoleOpen, setConsoleOpen] = useState(true);
   const [activeFileId, setActiveFileId] = useState('main-pseudo');
-  const [rightTab, setRightTab] = useState<'ai' | 'vars'>('vars');
+  const [rightTab, setRightTab] = useState<'ai' | 'vars'>('ai');
   const [mobileView, setMobileView] = useState<MobileView>('editors');
   const [mounted, setMounted] = useState(false);
+  /** Avoid mounting desktop + mobile DualEditors together (CSS-hidden still runs Monaco). */
+  const [isDesktop, setIsDesktop] = useState(false);
 
   const {
     pseudocode,
     setPseudocode,
     python,
+    setPython,
     diagnostics: translationDiagnostics,
     status: translationStatus,
+    errorSide: translationErrorSide,
   } = usePseudocodeTranslation(DUMMY_PSEUDOCODE);
 
   const runtime = usePseudocodeRuntime();
 
-  useEffect(() => setMounted(true), []);
+  const runtimeSnapshot = useMemo(
+    () => ({
+      state: runtime.state,
+      consoleLines: runtime.consoleLines,
+      diagnostics: runtime.diagnostics,
+      variables: runtime.variables,
+      frameName: runtime.frameName,
+      steps: runtime.steps,
+      awaitingInput: runtime.awaitingInput,
+      paused: runtime.paused,
+      pauseLocation: runtime.pauseLocation,
+      callStack: runtime.callStack,
+      breakpoints: runtime.breakpoints,
+    }),
+    [
+      runtime.state,
+      runtime.consoleLines,
+      runtime.diagnostics,
+      runtime.variables,
+      runtime.frameName,
+      runtime.steps,
+      runtime.awaitingInput,
+      runtime.paused,
+      runtime.pauseLocation,
+      runtime.callStack,
+      runtime.breakpoints,
+    ],
+  );
+
+  const coach = useAICoach({
+    pseudocode,
+    python,
+    translationStatus,
+    translationErrorSide,
+    translationDiagnostics,
+    runtime: runtimeSnapshot,
+  });
+
+  const onPseudocodeSelectionChange = useCallback((text: string) => {
+    setEditorSelection(text, 'pseudocode');
+  }, []);
+  const onPythonSelectionChange = useCallback((text: string) => {
+    setEditorSelection(text, 'python');
+  }, []);
+
+  const handleActivityChange = useCallback((id: ActivityId) => {
+    setActivity(id);
+    if (id === 'ai') {
+      setRightTab('ai');
+      setRightOpen(true);
+    }
+    if (id === 'debug') {
+      setSidebarOpen(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const sync = () => setIsDesktop(mq.matches);
+    sync();
+    setMounted(true);
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
 
   useEffect(() => {
     if (
@@ -94,6 +161,15 @@ export function IdeShell() {
   };
 
   const activeLine = runtime.pauseLocation?.line ?? null;
+
+  const coachPanel = (
+    <AiAssistantPanel
+      messages={coach.messages}
+      busy={coach.busy}
+      onAsk={coach.ask}
+      providerId={coach.providerId}
+    />
+  );
 
   const consoleNode = (
     <ConsolePanel
@@ -159,8 +235,9 @@ export function IdeShell() {
       />
 
       <div className="relative flex min-h-0 flex-1">
-        <div className="hidden min-h-0 flex-1 md:flex">
-          <ActivityBar active={activity} onChange={setActivity} />
+        {!mounted ? null : isDesktop ? (
+        <div className="flex min-h-0 flex-1">
+          <ActivityBar active={activity} onChange={handleActivityChange} />
 
           <aside
             className={cn(
@@ -190,7 +267,12 @@ export function IdeShell() {
                 pseudocode={pseudocode}
                 python={python}
                 onPseudocodeChange={setPseudocode}
+                onPythonChange={setPython}
+                onPseudocodeSelectionChange={onPseudocodeSelectionChange}
+                onPythonSelectionChange={onPythonSelectionChange}
                 translationStatus={translationStatus}
+                translationErrorSide={translationErrorSide}
+                translationDiagnostics={translationDiagnostics}
                 activeLine={activeLine}
                 breakpoints={runtime.breakpoints}
                 onToggleBreakpoint={runtime.toggleBreakpoint}
@@ -234,18 +316,14 @@ export function IdeShell() {
                   </button>
                 </div>
                 <div className="min-h-0 flex-1 animate-panel-in" key={rightTab}>
-                  {rightTab === 'ai' ? (
-                    <AiAssistantPanel messages={DUMMY_AI} />
-                  ) : (
-                    varsNode
-                  )}
+                  {rightTab === 'ai' ? coachPanel : varsNode}
                 </div>
               </>
             )}
           </aside>
         </div>
-
-        <div className="flex min-h-0 flex-1 flex-col md:hidden">
+        ) : (
+        <div className="flex min-h-0 flex-1 flex-col">
           {mobileView === 'explorer' && (
             <FileExplorer
               tree={DUMMY_FILES}
@@ -264,7 +342,12 @@ export function IdeShell() {
               pseudocode={pseudocode}
               python={python}
               onPseudocodeChange={setPseudocode}
+              onPythonChange={setPython}
+              onPseudocodeSelectionChange={onPseudocodeSelectionChange}
+              onPythonSelectionChange={onPythonSelectionChange}
               translationStatus={translationStatus}
+              translationErrorSide={translationErrorSide}
+              translationDiagnostics={translationDiagnostics}
               stacked
               activeLine={activeLine}
               breakpoints={runtime.breakpoints}
@@ -272,9 +355,10 @@ export function IdeShell() {
             />
           )}
           {mobileView === 'console' && consoleNode}
-          {mobileView === 'ai' && <AiAssistantPanel messages={DUMMY_AI} />}
+          {mobileView === 'ai' && coachPanel}
           {mobileView === 'vars' && varsNode}
         </div>
+        )}
       </div>
 
       <StatusBar

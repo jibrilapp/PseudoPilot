@@ -420,6 +420,66 @@ CLOSEFILE "f.txt"
     expect(result.ok).toBe(true);
   });
 
+  it('accepts OPENFILE FOR RANDOM with SEEK / GETRECORD / PUTRECORD', () => {
+    const { result } = checkSource(`
+TYPE Student
+  DECLARE LastName : STRING
+ENDTYPE
+DECLARE Pupil : Student
+OPENFILE "f.dat" FOR RANDOM
+SEEK "f.dat", 0
+PUTRECORD "f.dat", Pupil
+GETRECORD "f.dat", Pupil
+CLOSEFILE "f.dat"
+`);
+    expect(result.ok).toBe(true);
+  });
+
+  it('flags SEEK / GETRECORD / PUTRECORD mode and type errors', () => {
+    expect(
+      codes(`
+OPENFILE "f.txt" FOR WRITE
+SEEK "f.txt", 0
+CLOSEFILE "f.txt"
+`),
+    ).toContain('C_FILE_MODE');
+    expect(
+      codes(`
+TYPE T
+  DECLARE N : INTEGER
+ENDTYPE
+DECLARE R : T
+OPENFILE "f.dat" FOR RANDOM
+SEEK "f.dat", 1.5
+CLOSEFILE "f.dat"
+`),
+    ).toContain('C_FILE_SEEK_TYPE');
+    expect(
+      codes(`
+DECLARE N : INTEGER
+OPENFILE "f.dat" FOR RANDOM
+GETRECORD "f.dat", N
+CLOSEFILE "f.dat"
+`),
+    ).toContain('C_FILE_RECORD_TYPE');
+    expect(
+      codes(`
+DECLARE N : INTEGER
+OPENFILE "f.dat" FOR RANDOM
+PUTRECORD "f.dat", N
+CLOSEFILE "f.dat"
+`),
+    ).toContain('C_FILE_RECORD_TYPE');
+    expect(
+      codes(`
+DECLARE L : STRING
+OPENFILE "f.dat" FOR RANDOM
+READFILE "f.dat", L
+CLOSEFILE "f.dat"
+`),
+    ).toContain('C_FILE_MODE');
+  });
+
   it('flags READFILE / CLOSEFILE / EOF on unopened literal paths', () => {
     expect(
       codes(`
@@ -529,5 +589,45 @@ DECLARE D : DATE
 D ← 1
 `),
     ).toContain('C_ASSIGN_TYPE');
+  });
+});
+
+describe('operator type combos (D9)', () => {
+  it('rejects + on STRING (use &)', () => {
+    expect(
+      codes(`
+DECLARE S : STRING
+OUTPUT S + "x"
+`),
+    ).toContain('C_BINARY_TYPE');
+  });
+
+  it('rejects DIV on REAL', () => {
+    expect(
+      codes(`
+DECLARE X : REAL
+OUTPUT X DIV 2
+`),
+    ).toContain('C_BINARY_TYPE');
+  });
+
+  it('rejects AND with INTEGER operands', () => {
+    expect(
+      codes(`
+DECLARE A : INTEGER
+OUTPUT A AND 1
+`),
+    ).toContain('C_BINARY_TYPE');
+  });
+
+  it('rejects comparing INTEGER to STRING', () => {
+    expect(
+      codes(`
+DECLARE N : INTEGER
+IF N = "1" THEN
+  OUTPUT N
+ENDIF
+`),
+    ).toContain('C_COMPARE_TYPE');
   });
 });

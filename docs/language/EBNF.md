@@ -28,7 +28,7 @@ integer_lit  = digit { digit } ;
 real_lit     = digit { digit } "." digit { digit } ;   (* strict Cambridge *)
 
 string_lit   = '"' { string_char } '"' ;
-char_lit     = "'" char_char "'" ;                    (* ❌ not lexer-complete *)
+char_lit     = "'" char_char "'" ;                    (* ✅ *)
 
 comment      = "//" { any_char_except_NL } NL ;
 
@@ -67,7 +67,7 @@ block           = { NL } { ( statement | NL ) } ;
 ```ebnf
 routine_decl    = procedure_decl                          (* ✅ *)
                 | function_decl                           (* ✅ *)
-                | type_decl                               (* ❌ Extended *)
+                | type_decl                               (* ✅ Extended — all forms *)
                 | class_decl                              (* ✅ Extended *)
                 ;
 
@@ -84,13 +84,14 @@ function_decl   = "FUNCTION" identifier [ param_list ]
 
 param_list      = "(" [ param_group { "," param_group } ] ")" ;  (* ✅ *)
 
-param_group     = identifier { "," identifier } ":" type_name ;
+param_group     = [ "BYVAL" | "BYREF" ] identifier { "," identifier } ":" type_name ;
                   (* Expanded to one Parameter AST node per identifier.
-                     BYVAL/BYREF ❌; grouped Ident list ✅ Cambridge 9618 *)
+                     Mode sticky across groups when omitted (Guide §8.3);
+                     default BYVAL. Grouped Ident list ✅ Cambridge 9618 *)
 
-(* Legacy alias — each expanded param is still Ident ":" TypeName in the AST. *)
+(* Legacy alias — each expanded param is Ident ":" TypeName (+ mode) in the AST. *)
 param           = [ "BYVAL" | "BYREF" ] identifier ":" type_name ;
-                  (* BYVAL/BYREF ❌; produced by expanding param_group *)
+                  (* ✅; produced by expanding param_group *)
 
 declare_stmt    = "DECLARE" identifier { "," identifier }
                   ":" type_ref ;                          (* ✅ *)
@@ -118,7 +119,7 @@ dimension       = expression ":" expression ;             (* ✅ *)
 
 ```ebnf
 statement       = declare_stmt                            (* ✅ *)
-                | constant_stmt                           (* ❌ *)
+                | constant_stmt                           (* ✅ *)
                 | assign_stmt                             (* ✅ *)
                 | input_stmt                              (* ✅ *)
                 | output_stmt                             (* ✅ *)
@@ -133,9 +134,10 @@ statement       = declare_stmt                            (* ✅ *)
                 | readfile_stmt                           (* ✅ *)
                 | writefile_stmt                          (* ✅ *)
                 | closefile_stmt                          (* ✅ *)
-                | seek_stmt                               (* ❌ *)
-                | getrecord_stmt                          (* ❌ *)
-                | putrecord_stmt                          (* ❌ *)
+                | seek_stmt                               (* ✅ *)
+                | getrecord_stmt                          (* ✅ *)
+                | putrecord_stmt                          (* ✅ *)
+                | define_stmt                             (* ✅ SET instance *)
                 ;
 ```
 
@@ -187,7 +189,7 @@ for_stmt        = "FOR" identifier assign_op expression
                   "TO" expression
                   [ "STEP" expression ] NL
                   block
-                  "NEXT" identifier ;                     (* ✅ *)
+                  "NEXT" [ identifier ] ;                 (* ✅ bare NEXT OK *)
 
 while_stmt      = "WHILE" expression ["DO"] NL
                   block
@@ -214,7 +216,7 @@ arg_list        = expression { "," expression } ;
 openfile_stmt   = "OPENFILE" expression "FOR" file_mode ; (* ✅ text modes *)
 
 file_mode       = "READ" | "WRITE" | "APPEND"             (* ✅ *)
-                | "RANDOM" ;                              (* ❌ *)
+                | "RANDOM" ;                              (* ✅ *)
 
 readfile_stmt   = "READFILE" expression "," assign_target ; (* ✅ *)
 
@@ -222,11 +224,11 @@ writefile_stmt  = "WRITEFILE" expression "," expression ; (* ✅ *)
 
 closefile_stmt  = "CLOSEFILE" expression ;                (* ✅ *)
 
-seek_stmt       = "SEEK" expression "," expression ;      (* ❌ *)
+seek_stmt       = "SEEK" expression "," expression ;      (* ✅ *)
 
-getrecord_stmt  = "GETRECORD" expression "," assign_target ; (* ❌ *)
+getrecord_stmt  = "GETRECORD" expression "," assign_target ; (* ✅ *)
 
-putrecord_stmt  = "PUTRECORD" expression "," expression ; (* ❌ *)
+putrecord_stmt  = "PUTRECORD" expression "," expression ; (* ✅ *)
 ```
 
 ---
@@ -254,19 +256,20 @@ postfix_expr    = primary
                   { "(" [ arg_list ] ")"                  (* call ✅ *)
                   | "[" expression { "," expression } "]" (* index ✅ *)
                   | "." identifier                        (* member ✅ *)
-                  | "^"                                   (* deref ❌ *)
+                  | "^"                                   (* deref ✅ *)
                   } ;
 
 primary         = literal
                 | identifier
                 | "EOF" "(" expression ")"                (* ✅ *)
+                | "^" assign_target                       (* address-of ✅ *)
                 | "(" expression ")"
                 ;
 
 literal         = integer_lit                             (* ✅ *)
-                | real_lit                                (* ✅ / 🟡 strict form *)
+                | real_lit                                (* ✅; W_REAL_LITERAL / strict E_REAL_LITERAL *)
                 | string_lit                              (* ✅ *)
-                | char_lit                                (* ❌ *)
+                | char_lit                                (* ✅ *)
                 | "TRUE" | "FALSE"                        (* ✅ *)
                 | date_lit                                (* ✅ dd/mm/yyyy *)
                 ;
@@ -291,17 +294,19 @@ type_decl       = enum_type
                 | set_type ;
 
 enum_type       = "TYPE" identifier "="
-                  "(" identifier { "," identifier } ")" ;                (* ❌ *)
+                  "(" identifier { "," identifier } ")" ;                (* ✅ *)
 
-pointer_type    = "TYPE" identifier "=" "^" type_name ;                  (* ❌ *)
+pointer_type    = "TYPE" identifier "=" "^" type_name ;                  (* ✅ *)
 
 record_type     = "TYPE" identifier NL
                   { declare_stmt NL }
                   "ENDTYPE" ;                                            (* ✅ records *)
 
-set_type        = "TYPE" identifier "=" "SET" "OF" type_name NL
-                  "DEFINE" identifier
-                  "(" literal { "," literal } ")" ":" identifier ;       (* ❌ *)
+set_type        = "TYPE" identifier "=" "SET" "OF" type_name ;           (* ✅ *)
+
+define_stmt     = "DEFINE" identifier
+                  "(" [ literal { "," literal } ] ")"
+                  ":" identifier ;                                       (* ✅ *)
 
 class_decl      = "CLASS" identifier [ "INHERITS" identifier ] NL
                   { class_member }
@@ -344,17 +349,18 @@ class_function  = [ "PUBLIC" | "PRIVATE" ] "FUNCTION" identifier
 | CASE / ENDCASE | ✅ |
 | WHILE / ENDWHILE | ✅ |
 | REPEAT / UNTIL | ✅ |
-| FOR | ✅ |
+| FOR (+ bare `NEXT`) | ✅ |
 | PROCEDURE / FUNCTION / CALL / RETURN | ✅ |
-| BYVAL / BYREF | ❌ |
+| BYVAL / BYREF | ✅ |
 | Text files + EOF | ✅ |
-| Random files | ❌ |
+| Random files | ✅ |
 | Core expression operators | ✅ |
 | `&` concat | ✅ |
 | Builtins LENGTH/RIGHT/… | ✅ |
 | CHAR / DATE literals | ✅ / ✅ |
 | TYPE records / member access | ✅ |
-| TYPE enum / pointer / set | ❌ |
+| TYPE enum / pointer / set + DEFINE | ✅ |
+| Pointer `^Var` / `Ptr^` | ✅ |
 | CLASS / ENDCLASS / PUBLIC / PRIVATE / INHERITS / SUPER / NEW | ✅ |
 
-Exact itemised checklists: [PARSER_COVERAGE.md](./PARSER_COVERAGE.md).
+Exact itemised checklists: [PARSER_COVERAGE.md](./PARSER_COVERAGE.md). Full-stack status: [../CONFORMANCE.md](../CONFORMANCE.md).

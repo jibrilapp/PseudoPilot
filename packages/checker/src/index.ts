@@ -32,8 +32,13 @@ export {
   scalar,
   recordType,
   classType,
+  enumType,
+  pointerType,
+  setType,
+  typeDefaultHint,
+  addressOfType,
 } from './type-system.js';
-export type { RecordFieldInfo, ClassFieldInfo, ClassMethodInfo } from './types.js';
+export type { RecordFieldInfo, ClassFieldInfo, ClassMethodInfo, ArrayBound, TypeDefaultHint } from './types.js';
 
 export { Scope, makeSymbol, identKey, lookupSymbol } from './scope.js';
 export {

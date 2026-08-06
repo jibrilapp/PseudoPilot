@@ -85,6 +85,12 @@ importers:
       '@monaco-editor/react':
         specifier: 4.7.0
         version: 4.7.0(monaco-editor@0.52.2)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@pseudopilot/ai-coach':
+        specifier: workspace:*
+        version: link:../../packages/ai-coach
+      '@pseudopilot/checker':
+        specifier: workspace:*
+        version: link:../../packages/checker
       '@pseudopilot/compiler-service':
         specifier: workspace:*
         version: link:../../packages/compiler-service

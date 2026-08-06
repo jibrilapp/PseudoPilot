@@ -146,6 +146,19 @@ function walkStatement(ctx: BinderCtx, stmt: Statement): void {
       walkTypeRef(ctx, stmt.typeRef);
       return;
     case 'ConstantStatement':
+      walkExpr(ctx, stmt.value);
+      return;
+    case 'EnumTypeDeclaration':
+      return;
+    case 'PointerTypeDeclaration':
+      walkSimpleTypeRef(ctx, stmt.targetType);
+      return;
+    case 'SetTypeDeclaration':
+      walkSimpleTypeRef(ctx, stmt.elementType);
+      return;
+    case 'DefineStatement':
+      addTypeRef(ctx, stmt.typeName.name, stmt.typeName.span);
+      for (const value of stmt.values) walkExpr(ctx, value);
       return;
     case 'TypeDeclaration':
       for (const field of stmt.fields) {
@@ -186,6 +199,7 @@ function walkStatement(ctx: BinderCtx, stmt: Statement): void {
       walkExpr(ctx, stmt.start);
       walkExpr(ctx, stmt.end);
       if (stmt.step) walkExpr(ctx, stmt.step);
+      if (stmt.nextVariable) addRef(ctx, stmt.nextVariable, stmt.span, 'reference');
       for (const s of stmt.body) walkStatement(ctx, s);
       return;
     case 'CaseStatement':
@@ -258,6 +272,18 @@ function walkStatement(ctx: BinderCtx, stmt: Statement): void {
     case 'CloseFileStatement':
       walkExpr(ctx, stmt.fileName);
       return;
+    case 'SeekStatement':
+      walkExpr(ctx, stmt.fileName);
+      walkExpr(ctx, stmt.address);
+      return;
+    case 'GetRecordStatement':
+      walkExpr(ctx, stmt.fileName);
+      walkAssignTarget(ctx, stmt.target, 'write');
+      return;
+    case 'PutRecordStatement':
+      walkExpr(ctx, stmt.fileName);
+      walkExpr(ctx, stmt.value);
+      return;
     case 'ClassDeclaration': {
       for (const member of stmt.members) {
         if (member.kind === 'ClassPropertyDeclaration') {
@@ -312,6 +338,10 @@ function walkAssignTarget(
   if (target.kind === 'MemberExpression') {
     walkExpr(ctx, target.object);
     addFieldRef(ctx, target.object, target.property.name, target.property.span, kind);
+    return;
+  }
+  if (target.kind === 'DerefExpression') {
+    walkExpr(ctx, target.pointer);
     return;
   }
   walkExpr(ctx, target.array);
@@ -456,6 +486,10 @@ function resolveExprType(ctx: BinderCtx, expr: Expression): PpType | null {
     }
     case 'GroupingExpression':
       return resolveExprType(ctx, expr.expression);
+    case 'DerefExpression': {
+      const ptr = resolveExprType(ctx, expr.pointer);
+      return ptr?.kind === 'pointer' ? ptr.target : null;
+    }
     default:
       return null;
   }
@@ -474,6 +508,15 @@ function walkTypeRef(ctx: BinderCtx, ref: TypeReference): void {
     if (ref.elementType.kind === 'NamedType') {
       addTypeRef(ctx, ref.elementType.name, ref.elementType.span);
     }
+  }
+}
+
+function walkSimpleTypeRef(
+  ctx: BinderCtx,
+  ref: Extract<TypeReference, { kind: 'NamedType' | 'TypeName' }>,
+): void {
+  if (ref.kind === 'NamedType') {
+    addTypeRef(ctx, ref.name, ref.span);
   }
 }
 
@@ -527,6 +570,9 @@ function walkExpr(ctx: BinderCtx, expr: Expression): void {
       walkExpr(ctx, expr.object);
       addFieldRef(ctx, expr.object, expr.property.name, expr.property.span, 'reference');
       return;
+    case 'AddressOfExpression':
+      walkAssignTarget(ctx, expr.target, 'reference');
+      return;
     case 'CallExpression':
       addRef(ctx, expr.callee.name, expr.callee.span, 'reference');
       for (const a of expr.args) walkExpr(ctx, a);
@@ -542,6 +588,9 @@ function walkExpr(ctx: BinderCtx, expr: Expression): void {
     case 'NewExpression':
       addTypeRef(ctx, expr.className.name, expr.className.span);
       for (const a of expr.args) walkExpr(ctx, a);
+      return;
+    case 'DerefExpression':
+      walkExpr(ctx, expr.pointer);
       return;
     case 'SuperExpression':
       return;

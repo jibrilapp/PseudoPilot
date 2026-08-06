@@ -1,66 +1,91 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { runPseudocodeToPython } from '@/lib/translation/runTranslate';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  TRANSLATE_DEBOUNCE_MS,
-  TRANSLATE_LARGE_DEBOUNCE_MS,
-  TRANSLATE_LARGE_SOURCE_CHARS,
-  type IdeDiagnostic,
-  type TranslationStatus,
-} from '@/lib/translation/types';
+  createBidirectionalSync,
+  type BidirectionalSyncState,
+  type EditOrigin,
+} from '@/lib/translation/bidirectionalSync';
+import {
+  runPseudocodeToPython,
+  runPythonToPseudocode,
+} from '@/lib/translation/runTranslate';
+import type { IdeDiagnostic, TranslationStatus } from '@/lib/translation/types';
 
-export type UsePseudocodeTranslationResult = {
+export type UseBidirectionalTranslationResult = {
   readonly pseudocode: string;
   readonly setPseudocode: (value: string) => void;
-  /** Last successful Python output (unchanged when translation fails). */
   readonly python: string;
+  readonly setPython: (value: string) => void;
   readonly diagnostics: IdeDiagnostic[];
   readonly status: TranslationStatus;
+  /** Which pane's last translate attempt failed (null when ok/idle). */
+  readonly errorSide: EditOrigin | null;
+};
+
+const IDLE: BidirectionalSyncState = {
+  pseudocode: '',
+  python: '',
+  diagnostics: [],
+  status: 'idle',
+  errorSide: null,
 };
 
 /**
- * Debounced live translation: pseudocode edits → Python pane.
- * On failure, keeps the previous successful Python text and surfaces diagnostics.
+ * Origin-aware live translation: Pseudocode ↔ Python.
+ *
+ * - Pseudocode edits → forward translate → update Python (no reverse).
+ * - Python edits → reverse translate → update Pseudocode (no forward).
+ * - Failures keep the last good peer buffer and surface diagnostics.
  */
 export function usePseudocodeTranslation(
   initialPseudocode: string,
-): UsePseudocodeTranslationResult {
-  const [pseudocode, setPseudocode] = useState(initialPseudocode);
-  const [python, setPython] = useState('');
-  const [diagnostics, setDiagnostics] = useState<IdeDiagnostic[]>([]);
-  const [status, setStatus] = useState<TranslationStatus>('idle');
-  const lastGoodPython = useRef('');
+): UseBidirectionalTranslationResult {
+  const [state, setState] = useState<BidirectionalSyncState>(() => ({
+    ...IDLE,
+    pseudocode: initialPseudocode,
+  }));
+
+  const syncRef = useRef<ReturnType<typeof createBidirectionalSync> | null>(
+    null,
+  );
 
   useEffect(() => {
-    const delay =
-      pseudocode.length > TRANSLATE_LARGE_SOURCE_CHARS
-        ? TRANSLATE_LARGE_DEBOUNCE_MS
-        : TRANSLATE_DEBOUNCE_MS;
-    const timer = window.setTimeout(() => {
-      const result = runPseudocodeToPython(pseudocode);
-      setDiagnostics(result.diagnostics);
+    const sync = createBidirectionalSync({
+      initialPseudocode,
+      translateForward: runPseudocodeToPython,
+      translateReverse: runPythonToPseudocode,
+    });
+    syncRef.current = sync;
+    const unsub = sync.subscribe(() => {
+      setState(sync.getState());
+    });
+    sync.bootstrap();
+    setState(sync.getState());
+    return () => {
+      unsub();
+      sync.dispose();
+      syncRef.current = null;
+    };
+    // Bootstrap once per mount for the initial buffer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-      if (result.ok) {
-        lastGoodPython.current = result.code;
-        setPython(result.code);
-        setStatus('ok');
-        return;
-      }
+  const setPseudocode = useCallback((value: string) => {
+    syncRef.current?.editPseudocode(value);
+  }, []);
 
-      // Keep previous successful translation visible.
-      setPython(lastGoodPython.current);
-      setStatus('error');
-    }, delay);
-
-    return () => window.clearTimeout(timer);
-  }, [pseudocode]);
+  const setPython = useCallback((value: string) => {
+    syncRef.current?.editPython(value);
+  }, []);
 
   return {
-    pseudocode,
+    pseudocode: state.pseudocode,
     setPseudocode,
-    python,
-    diagnostics,
-    status,
+    python: state.python,
+    setPython,
+    diagnostics: state.diagnostics,
+    status: state.status,
+    errorSide: state.errorSide,
   };
 }

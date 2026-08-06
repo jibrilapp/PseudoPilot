@@ -5,9 +5,13 @@
  * REPEAT/UNTIL, FOR/TO/STEP/NEXT, CASE OF/OTHERWISE/ENDCASE,
  * PROCEDURE/CALL, FUNCTION/RETURNS/RETURN, expression calls, DECLARE,
  * CONSTANT, literals, variables, arithmetic / relational / logical
- * expressions, CHAR, array indexes, Core builtins, text file I/O,
- * TYPE/ENDTYPE records, CLASS/ENDCLASS (incl. inheritance) — both directions.
- * Not supported: BYREF, RANDOM files, general Python (lambda, async, with, …).
+ * expressions, CHAR, array indexes, Core builtins, text + random file I/O,
+ * TYPE/ENDTYPE records, enum / pointer / SET TYPE + DEFINE, CLASS/ENDCLASS
+ * (incl. inheritance) — both directions for PseudoPilot emit shapes.
+ * Not supported: general Python (lambda, async, with, …).
+ * BYREF scalars use `_pp_cell` list cells; pointers reuse the same cell shape
+ * (`_pp_addr` / `_pp_pload` / `_pp_pstore`). DIV/MOD use truncating `_pp_div` /
+ * `_pp_mod`; RIGHT uses `_pp_right` (see TRANSLATION.md).
  *
  * @see docs/language/TRANSLATION.md
  * @see docs/adr/0006-canonical-ir-translation.md

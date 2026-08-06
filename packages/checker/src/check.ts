@@ -20,6 +20,7 @@ import {
 } from '@pseudopilot/language-core';
 import { makeSymbol, Scope, identKey } from './scope.js';
 import {
+  addressOfType,
   binaryResultType,
   errorType,
   formatType,
@@ -281,12 +282,26 @@ function hoistRoutine(
   const params = stmt.parameters.map((p) =>
     resolveUserTypeRef(p.typeName, ctx.typeTable, (partial) => diag(ctx, partial)),
   );
+  const paramModes = stmt.parameters.map((p) => p.mode);
+  if (kind === 'function') {
+    for (const p of stmt.parameters) {
+      if (p.mode === 'BYREF') {
+        diag(ctx, {
+          code: 'C_BYREF_ON_FUNCTION',
+          message: `FUNCTION parameters cannot be BYREF (Cambridge §8.3); parameter '${p.name.name}' is BYREF.`,
+          span: p.span,
+          help: 'Use a PROCEDURE with BYREF, or pass BYVAL and return a new value.',
+        });
+      }
+    }
+  }
   const type: PpType =
     kind === 'procedure'
-      ? { kind: 'procedure', params }
+      ? { kind: 'procedure', params, paramModes }
       : {
           kind: 'function',
           params,
+          paramModes,
           returns: resolveSimpleType(
             (stmt as FunctionDeclaration).returnType,
             ctx.typeTable,
@@ -304,6 +319,15 @@ function checkStatement(ctx: Ctx, stmt: Statement): void {
         checkTypeRefBounds(ctx, field.typeRef);
       }
       return;
+    case 'EnumTypeDeclaration':
+    case 'PointerTypeDeclaration':
+    case 'SetTypeDeclaration':
+      // Registered in pass 0.
+      return;
+    case 'DefineStatement': {
+      checkDefine(ctx, stmt);
+      return;
+    }
     case 'DeclareStatement': {
       const type = resolveUserTypeRef(stmt.typeRef, ctx.typeTable, (partial) =>
         diag(ctx, partial),
@@ -509,6 +533,9 @@ function checkStatement(ctx: Ctx, stmt: Statement): void {
     case 'ReadFileStatement':
     case 'WriteFileStatement':
     case 'CloseFileStatement':
+    case 'SeekStatement':
+    case 'GetRecordStatement':
+    case 'PutRecordStatement':
       checkFileStatement(
         {
           openFiles: ctx.openFiles,
@@ -527,6 +554,50 @@ function checkStatement(ctx: Ctx, stmt: Statement): void {
       return _exhaustive;
     }
   }
+}
+
+function checkDefine(
+  ctx: Ctx,
+  stmt: Extract<Statement, { kind: 'DefineStatement' }>,
+): void {
+  const key = identKey(stmt.typeName.name);
+  const setTy = ctx.typeTable.get(key);
+  if (!setTy) {
+    diag(ctx, {
+      code: 'C_UNKNOWN_TYPE',
+      message: `Unknown TYPE '${stmt.typeName.name}'.`,
+      span: stmt.typeName.span,
+      help: 'DEFINE requires a set TYPE (TYPE Name = SET OF T).',
+    });
+    for (const v of stmt.values) inferExpr(ctx, v);
+    return;
+  }
+  if (setTy.kind !== 'set') {
+    diag(ctx, {
+      code: 'C_NOT_SET',
+      message: `TYPE '${stmt.typeName.name}' is not a SET type.`,
+      span: stmt.typeName.span,
+      help: 'DEFINE only creates instances of TYPE Name = SET OF T.',
+    });
+    for (const v of stmt.values) inferExpr(ctx, v);
+    return;
+  }
+  for (const v of stmt.values) {
+    const vt = inferExpr(ctx, v);
+    if (vt.kind === 'error') continue;
+    if (!isAssignable(setTy.element, vt, ctx.typeTable)) {
+      diag(ctx, {
+        code: 'C_DEFINE_ELEMENT_TYPE',
+        message: `DEFINE element type ${formatType(vt)} is not assignable to SET element type ${formatType(setTy.element)}.`,
+        span: v.span,
+      });
+    }
+  }
+  // Cambridge DEFINE creates a named set instance — treat as a writable variable.
+  defineSymbol(
+    ctx,
+    makeSymbol(stmt.name.name, 'variable', setTy, stmt.name.span),
+  );
 }
 
 function checkTypeRefBounds(ctx: Ctx, ref: TypeReference): void {
@@ -834,6 +905,21 @@ function resolveImplicitClassField(
   return found.field.type;
 }
 
+/**
+ * `SELF` (case-insensitive) is the optional explicit receiver inside a CLASS
+ * method — equivalent to the implicit bare-field form Cambridge examples use.
+ */
+function resolveSelfReceiverType(ctx: Ctx): PpType | undefined {
+  if (!ctx.currentClass) return undefined;
+  const selfType = ctx.typeTable.get(identKey(ctx.currentClass));
+  if (!selfType || selfType.kind !== 'class') return undefined;
+  return selfType;
+}
+
+function isSelfReceiverName(name: string): boolean {
+  return identKey(name) === 'self';
+}
+
 /** Shared argument-count / argument-type checking for calls, methods, and NEW. */
 function checkArgTypes(
   ctx: Ctx,
@@ -841,6 +927,7 @@ function checkArgTypes(
   args: Expression[],
   span: SourceSpan,
   label: string,
+  paramModes?: readonly ('BYVAL' | 'BYREF')[],
 ): void {
   if (args.length !== params.length) {
     diag(ctx, {
@@ -855,13 +942,20 @@ function checkArgTypes(
       if (i < args.length) inferExpr(ctx, args[i]!);
       continue;
     }
-    const at = inferExpr(ctx, args[i]!);
+    const arg = args[i]!;
+    const at = inferExpr(ctx, arg);
     const pt = params[i]!;
+    const mode = paramModes?.[i] ?? 'BYVAL';
+    if (mode === 'BYREF') {
+      // Strip "Method '...'" / similar down to a short callee label for messages.
+      const callee = label.replace(/^Method '/, '').replace(/'$/, '') || label;
+      checkByRefArgument(ctx, arg, callee, i + 1);
+    }
     if (!isAssignable(pt, at, ctx.typeTable)) {
       diag(ctx, {
         code: 'C_ARG_TYPE',
         message: `Argument ${i + 1} of ${label} has type ${formatType(at)}; expected ${formatType(pt)}.`,
-        span: args[i]!.span,
+        span: arg.span,
       });
     }
   }
@@ -921,7 +1015,7 @@ function checkMethodCallCore(
     });
   }
 
-  checkArgTypes(ctx, m.params, args, span, `Method '${m.name}'`);
+  checkArgTypes(ctx, m.params, args, span, `Method '${m.name}'`, m.paramModes);
 
   if (mode === 'call-expr' && m.kind === 'procedure') {
     diag(ctx, {
@@ -990,7 +1084,7 @@ function checkSuperCall(
     });
   }
 
-  checkArgTypes(ctx, m.params, args, span, `Method '${m.name}'`);
+  checkArgTypes(ctx, m.params, args, span, `Method '${m.name}'`, m.paramModes);
   return m.kind === 'function' ? (m.returns ?? errorType()) : errorType();
 }
 
@@ -1035,6 +1129,7 @@ function checkNewExpression(
     expr.args,
     expr.span,
     `Constructor of CLASS '${classT.name}'`,
+    ctor.paramModes,
   );
   return classT;
 }
@@ -1129,25 +1224,98 @@ function checkCall(
     });
   }
 
+  const modes = sig.paramModes;
   const n = Math.max(args.length, sig.params.length);
   for (let i = 0; i < n; i++) {
     if (i >= args.length || i >= sig.params.length) {
       if (i < args.length) inferExpr(ctx, args[i]!);
       continue;
     }
-    const at = inferExpr(ctx, args[i]!);
+    const arg = args[i]!;
+    const at = inferExpr(ctx, arg);
     const pt = sig.params[i]!;
+    const paramMode = modes?.[i] ?? 'BYVAL';
+    if (paramMode === 'BYREF') {
+      checkByRefArgument(ctx, arg, name, i + 1);
+    }
     if (!isAssignable(pt, at, ctx.typeTable)) {
       diag(ctx, {
         code: 'C_ARG_TYPE',
         message: `Argument ${i + 1} of '${name}' has type ${formatType(at)}; expected ${formatType(pt)}.`,
-        span: args[i]!.span,
+        span: arg.span,
       });
     }
   }
 
   if (sig.kind === 'function') return sig.returns;
   return errorType();
+}
+
+/**
+ * Cambridge §8.3: BYREF arguments must be assignable locations — not
+ * literals, constants, temporaries, or other rvalue expressions.
+ */
+function checkByRefArgument(
+  ctx: Ctx,
+  arg: Expression,
+  calleeName: string,
+  argIndex: number,
+): void {
+  if (arg.kind === 'Identifier') {
+    const sym = ctx.scope.lookup(arg.name);
+    if (!sym) {
+      // Undeclared already reported via inferExpr / later assignability.
+      const implicit = resolveImplicitClassField(ctx, arg.name, arg.span);
+      if (implicit) return; // class field is a mutable location
+      return;
+    }
+    if (sym.kind === 'constant') {
+      diag(ctx, {
+        code: 'C_BYREF_CONSTANT',
+        message: `Cannot pass CONSTANT '${arg.name}' BYREF to '${calleeName}' (argument ${argIndex}).`,
+        span: arg.span,
+        help: 'BYREF requires a mutable variable, array element, or field.',
+      });
+      return;
+    }
+    if (sym.kind === 'procedure' || sym.kind === 'function') {
+      diag(ctx, {
+        code: 'C_BYREF_TEMPORARY',
+        message: `Cannot pass ${sym.kind.toUpperCase()} '${arg.name}' BYREF to '${calleeName}' (argument ${argIndex}).`,
+        span: arg.span,
+      });
+      return;
+    }
+    // variable / parameter — OK
+    return;
+  }
+
+  if (arg.kind === 'IndexExpression' || arg.kind === 'MemberExpression') {
+    // Element / field locations are mutable (assignability checked separately).
+    return;
+  }
+
+  // Literals, calls, operators, NEW, groupings of non-lvalues, etc.
+  const kindLabel =
+    arg.kind === 'IntegerLiteral' ||
+    arg.kind === 'RealLiteral' ||
+    arg.kind === 'StringLiteral' ||
+    arg.kind === 'CharLiteral' ||
+    arg.kind === 'BooleanLiteral' ||
+    arg.kind === 'DateLiteral'
+      ? 'literal'
+      : arg.kind === 'CallExpression' || arg.kind === 'MethodCallExpression'
+        ? 'call result'
+        : arg.kind === 'NewExpression'
+          ? 'NEW expression'
+          : 'expression';
+
+  diag(ctx, {
+    code: kindLabel === 'literal' ? 'C_BYREF_LITERAL' : 'C_BYREF_TEMPORARY',
+    message: `Cannot pass ${kindLabel} BYREF to '${calleeName}' (argument ${argIndex}).`,
+    span: arg.span,
+    help: 'BYREF arguments must be variables, array elements, or record/object fields.',
+  });
 }
 
 function checkBuiltinCall(
@@ -1264,6 +1432,10 @@ function checkAssignableTarget(
     return inferMemberAccess(ctx, target, /*asAssign*/ true, what);
   }
 
+  if (target.kind === 'DerefExpression') {
+    return checkDeref(ctx, target.pointer, target.span, /*asAssign*/ true, what);
+  }
+
   // Index expression
   if (target.array.kind === 'Identifier') {
     const arr = ctx.scope.lookup(target.array.name);
@@ -1321,6 +1493,45 @@ function inferMemberAccess(
   asAssign: boolean,
   what: string,
 ): PpType {
+  // Explicit `SELF.Field` inside a CLASS method (reverse-translation form).
+  if (
+    expr.object.kind === 'Identifier' &&
+    isSelfReceiverName(expr.object.name)
+  ) {
+    const selfType = resolveSelfReceiverType(ctx);
+    if (!selfType || selfType.kind !== 'class') {
+      diag(ctx, {
+        code: 'C_UNDECL_IDENT',
+        message: `'SELF' is only valid inside a CLASS method body.`,
+        span: expr.object.span,
+      });
+      return errorType();
+    }
+    const found = findClassFieldOwner(
+      selfType,
+      expr.property.name,
+      ctx.typeTable,
+    );
+    if (!found) {
+      diag(ctx, {
+        code: 'C_UNKNOWN_FIELD',
+        message: `Unknown property '${expr.property.name}' on CLASS '${selfType.name}'.`,
+        span: expr.property.span,
+        help: 'Property names are case-insensitive.',
+      });
+      return errorType();
+    }
+    if (!isAccessible(found.field.visibility, found.owner, ctx.currentClass)) {
+      diag(ctx, {
+        code: 'C_PRIVATE_ACCESS',
+        message: `Property '${found.field.name}' is PRIVATE to CLASS '${found.owner}'.`,
+        span: expr.property.span,
+      });
+      return errorType();
+    }
+    return found.field.type;
+  }
+
   const objType = inferExpr(ctx, expr.object);
   if (objType.kind === 'error') return errorType();
 
@@ -1419,21 +1630,98 @@ function expectBoolean(
   }
 }
 
+function checkDeref(
+  ctx: Ctx,
+  pointerExpr: Expression,
+  span: Expression['span'],
+  asAssign: boolean,
+  what: string,
+): PpType {
+  const ptrType = inferExpr(ctx, pointerExpr);
+  if (ptrType.kind === 'error') return errorType();
+  if (ptrType.kind !== 'pointer') {
+    diag(ctx, {
+      code: 'C_NOT_POINTER',
+      message: asAssign
+        ? `Cannot ${what} through non-pointer type ${formatType(ptrType)}.`
+        : `Cannot dereference non-pointer type ${formatType(ptrType)}.`,
+      span,
+      help: 'Dereference (Ptr^) requires a pointer TYPE variable.',
+    });
+    return errorType();
+  }
+  return ptrType.target;
+}
+
+function checkAddressOf(ctx: Ctx, target: AssignTarget): PpType {
+  // Address-of requires a mutable place; result is an anonymous pointer-to-place.
+  if (target.kind === 'Identifier') {
+    const sym = ctx.scope.lookup(target.name);
+    if (!sym) {
+      const implicit = resolveImplicitClassField(ctx, target.name, target.span);
+      if (implicit) return addressOfType(implicit);
+      diag(ctx, {
+        code: 'C_UNDECL_IDENT',
+        message: `Undeclared identifier '${target.name}'.`,
+        span: target.span,
+        help: `Add DECLARE ${target.name} : <TYPE> before taking its address.`,
+      });
+      return errorType();
+    }
+    if (sym.kind === 'constant') {
+      diag(ctx, {
+        code: 'C_ASSIGN_TO_CONSTANT',
+        message: `Cannot take the address of CONSTANT '${target.name}'.`,
+        span: target.span,
+      });
+      return errorType();
+    }
+    if (
+      sym.kind === 'procedure' ||
+      sym.kind === 'function' ||
+      sym.kind === 'type' ||
+      sym.kind === 'field' ||
+      sym.kind === 'class' ||
+      sym.kind === 'method'
+    ) {
+      diag(ctx, {
+        code: 'C_ASSIGN_TO_ROUTINE',
+        message: `Cannot take the address of ${sym.kind} '${target.name}'.`,
+        span: target.span,
+      });
+      return errorType();
+    }
+    return addressOfType(sym.type);
+  }
+  const placeType = checkAssignableTarget(ctx, target, target.span, 'assign');
+  if (placeType.kind === 'error') return errorType();
+  return addressOfType(placeType);
+}
+
 /** Types that may be compared with relational / equality operators. */
 function comparableTypes(left: PpType, right: PpType): boolean {
   if (left.kind === 'error' || right.kind === 'error') return true;
   if (isNumeric(left) && isNumeric(right)) return true;
+  if (left.kind === 'enum' && right.kind === 'enum') {
+    return identKey(left.name) === identKey(right.name);
+  }
   if (left.kind === 'scalar' && right.kind === 'scalar') {
     return left.name === right.name;
   }
-  // Whole ARRAY / RECORD values are not comparable (Cambridge compares
-  // elements / fields). Keeping them here would silence diagnostics while the
-  // interpreter treats every RECORD/ARRAY equality as false.
+  // Whole ARRAY / RECORD / SET / CLASS values are not comparable (Cambridge
+  // compares elements / fields). Keeping them here would silence diagnostics
+  // while the interpreter treats every RECORD/ARRAY equality as false.
   return false;
 }
 
 function isCompositeType(t: PpType): boolean {
-  return t.kind === 'array' || t.kind === 'record' || t.kind === 'class';
+  return (
+    t.kind === 'array' ||
+    t.kind === 'record' ||
+    t.kind === 'class' ||
+    t.kind === 'set' ||
+    t.kind === 'pointer'
+  );
 }
 
 function isStringy(t: PpType): boolean {
@@ -1450,6 +1738,15 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
     case 'DateLiteral':
       return literalType(expr) ?? errorType();
     case 'Identifier': {
+      // Bare `SELF` is not a value; use `SELF.Field` for explicit field access.
+      if (isSelfReceiverName(expr.name) && ctx.currentClass) {
+        diag(ctx, {
+          code: 'C_SELF_BARE',
+          message: `'SELF' cannot be used as a value; access a field with SELF.Name.`,
+          span: expr.span,
+        });
+        return errorType();
+      }
       const sym = ctx.scope.lookup(expr.name);
       if (!sym) {
         const implicit = resolveImplicitClassField(ctx, expr.name, expr.span);
@@ -1707,6 +2004,10 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
       return checkMethodCallCore(ctx, expr.object, expr.method, expr.args, expr.span, 'call-expr');
     case 'NewExpression':
       return checkNewExpression(ctx, expr);
+    case 'AddressOfExpression':
+      return checkAddressOf(ctx, expr.target);
+    case 'DerefExpression':
+      return checkDeref(ctx, expr.pointer, expr.span, false, 'dereference');
     case 'SuperExpression':
       diag(ctx, {
         code: 'C_SUPER_OUTSIDE',

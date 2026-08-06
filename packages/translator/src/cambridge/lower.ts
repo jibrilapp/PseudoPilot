@@ -27,10 +27,6 @@ import {
   type IrVisibility,
 } from '../ir/nodes.js';
 import { cambridgeBinaryToIr, cambridgeUnaryToIr } from '../rules/operators.js';
-import {
-  isPythonSyntaxKeyword,
-  isPythonTranslatorBuiltin,
-} from '../rules/python-names.js';
 import { attachTriviaToStatements } from '../trivia/attach.js';
 import type { TranslateDiagnostic } from '../types.js';
 
@@ -63,10 +59,17 @@ type ScopeBinding = {
   readonly kind: BindingKind;
   readonly canonical: string;
   readonly shape: ValueShape;
+  /** Scalar BYREF param — Python cell; access via `[0]`. */
+  readonly byRefCell?: boolean;
 };
 
 type ScopeFrame = {
   readonly bindings: Map<string, ScopeBinding>;
+};
+
+type ParamSpec = {
+  readonly shape: ValueShape;
+  readonly mode: 'BYVAL' | 'BYREF';
 };
 
 type LowerCtx = {
@@ -76,8 +79,8 @@ type LowerCtx = {
   readonly recordFields: Map<string, Map<string, string>>;
   /** typeKey → (fieldKey → field value shape) for nested copy/casing */
   readonly recordFieldShapes: Map<string, Map<string, ValueShape>>;
-  /** routineKey → parameter shapes (for by-value arg copies) */
-  readonly routineParams: Map<string, readonly ValueShape[]>;
+  /** routineKey → parameter shapes + modes (for by-value arg copies / BYREF) */
+  readonly routineParams: Map<string, readonly ParamSpec[]>;
   /** classKey set — distinguishes CLASS NamedType refs from TYPE (record) refs. */
   readonly classNames: Set<string>;
   /** classKey → declared display-case name (for canonicalizing NamedType refs). */
@@ -98,6 +101,10 @@ type LowerCtx = {
   currentClassFields: Map<string, string> | null;
   /** Display-case name of the CLASS whose method body is currently being lowered. */
   currentClassName: string | null;
+  /** typeKey set — enum / pointer / SET TYPE names (not record TYPE). */
+  readonly enumNames: Set<string>;
+  readonly pointerNames: Set<string>;
+  readonly setNames: Set<string>;
 };
 
 function scalarShape(typeName: IrTypeName | null = null): ValueShape {
@@ -142,12 +149,18 @@ function registerBinding(
   name: string,
   kind: BindingKind,
   shape: ValueShape = scalarShape(),
+  byRefCell = false,
 ): string {
   const key = bindingKey(name);
   const frame = ctx.scopes[ctx.scopes.length - 1]!;
   const existing = frame.bindings.get(key);
   if (existing) return existing.canonical;
-  frame.bindings.set(key, { kind, canonical: name, shape });
+  frame.bindings.set(key, {
+    kind,
+    canonical: name,
+    shape,
+    ...(byRefCell ? { byRefCell: true } : {}),
+  });
   return name;
 }
 
@@ -165,16 +178,32 @@ function lookupShape(ctx: LowerCtx, name: string): ValueShape {
   return scalarShape();
 }
 
+function lookupByRefCell(ctx: LowerCtx, name: string): boolean {
+  const key = bindingKey(name);
+  for (let i = ctx.scopes.length - 1; i >= 0; i--) {
+    const found = ctx.scopes[i]!.bindings.get(key);
+    if (found) return found.byRefCell === true;
+  }
+  return false;
+}
+
 function isCompositeShape(shape: ValueShape): boolean {
   return shape.kind === 'record' || shape.kind === 'array';
 }
 
-/** NamedType → 'class' shape when the name is a known CLASS, else 'record' (TYPE). */
+/** NamedType → 'class' / scalar-like enum·pointer·set / else 'record' (TYPE). */
 function namedTypeShape(ctx: LowerCtx, name: string): ValueShape {
   const key = bindingKey(name);
-  return ctx.classNames.has(key)
-    ? { kind: 'class', typeKey: key }
-    : { kind: 'record', typeKey: key };
+  if (ctx.classNames.has(key)) return { kind: 'class', typeKey: key };
+  // Enum / pointer / SET are not Cambridge by-value composites — no deepcopy.
+  if (
+    ctx.enumNames.has(key) ||
+    ctx.pointerNames.has(key) ||
+    ctx.setNames.has(key)
+  ) {
+    return scalarShape();
+  }
+  return { kind: 'record', typeKey: key };
 }
 
 function shapeFromTypeRef(typeRef: TypeReference, ctx: LowerCtx): ValueShape {
@@ -401,27 +430,14 @@ function bindName(
   span: Statement['span'],
   what: 'DECLARE' | 'CONSTANT',
   shape: ValueShape = scalarShape(),
+  byRefCell = false,
 ): string | null {
   // Language duplicate / type rules live in `@pseudopilot/checker`.
-  // Lower only enforces Python-target name constraints.
-  if (isPythonSyntaxKeyword(name)) {
-    ctx.diagnostics.push({
-      severity: 'error',
-      code: 'T_DECL_PY_KEYWORD',
-      message: `${what} name '${name}' is a Python keyword and cannot be translated.`,
-      span,
-    });
-    return null;
-  }
-  if (isPythonTranslatorBuiltin(name)) {
-    ctx.diagnostics.push({
-      severity: 'warning',
-      code: 'T_DECL_SHADOWS_BUILTIN',
-      message: `${what} name '${name}' shadows a Python builtin used by the translator (print/input/range).`,
-      span,
-    });
-  }
-  return registerBinding(ctx, name, kind, shape);
+  // Python-keyword / builtin collisions are sanitized at print time
+  // (see identifier-sanitizer.ts) — IR keeps Cambridge names.
+  void span;
+  void what;
+  return registerBinding(ctx, name, kind, shape, byRefCell);
 }
 
 function lookupBinding(ctx: LowerCtx, name: string): BindingKind | undefined {
@@ -464,11 +480,24 @@ function lowerTarget(
   target: AssignTarget,
   ctx: LowerCtx,
 ): IrAssignTarget | null {
+  if (target.kind === 'DerefExpression') {
+    const pointer = lowerExpression(target.pointer, ctx);
+    if (!pointer) return null;
+    return { kind: 'IrDerefExpression', pointer };
+  }
   const lowered = lowerExpression(target, ctx);
   if (!lowered) return null;
-  // AssignTarget is a subset of Expression (Identifier | IndexExpression | MemberExpression);
-  // lowerExpression preserves that shape for these three kinds.
-  return lowered as IrAssignTarget;
+  // AssignTarget is Identifier | IndexExpression | MemberExpression | DerefExpression;
+  // lowerExpression preserves that shape for the first three kinds (BYREF cells
+  // may rewrite Identifier → IndexExpression[0]).
+  if (
+    lowered.kind === 'IrIdentifier' ||
+    lowered.kind === 'IrIndexExpression' ||
+    lowered.kind === 'IrMemberExpression'
+  ) {
+    return lowered;
+  }
+  return null;
 }
 
 function resolveFieldName(
@@ -550,6 +579,17 @@ function canonicalTypeName(ctx: LowerCtx, name: string): string {
   return ctx.classCanonicalName.get(bindingKey(name)) ?? name;
 }
 
+function maybeByRefCellLoad(ctx: LowerCtx, name: string): IrExpression {
+  if (lookupByRefCell(ctx, name)) {
+    return {
+      kind: 'IrIndexExpression',
+      array: { kind: 'IrIdentifier', name },
+      indices: [{ kind: 'IrIntegerLiteral', value: 0 }],
+    };
+  }
+  return { kind: 'IrIdentifier', name };
+}
+
 function lowerExpression(
   expr: Expression,
   ctx: LowerCtx,
@@ -575,9 +615,11 @@ function lowerExpression(
       };
     case 'Identifier': {
       const scoped = tryResolveScopedName(ctx, expr.name);
-      if (scoped !== null) return { kind: 'IrIdentifier', name: scoped };
+      if (scoped !== null) {
+        return maybeByRefCellLoad(ctx, scoped);
+      }
       // Unbound inside a class method body and matches a known field
-      // (own or inherited) → implicit `self.Field` (Cambridge has no `self`).
+      // (own or inherited) → implicit `self.Field` (Cambridge often omits SELF).
       if (ctx.currentClassFields) {
         const canonical = ctx.currentClassFields.get(bindingKey(expr.name));
         if (canonical) {
@@ -612,8 +654,15 @@ function lowerExpression(
       };
     }
     case 'MemberExpression': {
-      const object = lowerExpression(expr.object, ctx);
+      let object = lowerExpression(expr.object, ctx);
       if (!object) return null;
+      // Reverse print emits `SELF.Field`; map back to the Python `self` receiver.
+      if (
+        object.kind === 'IrIdentifier' &&
+        bindingKey(object.name) === 'self'
+      ) {
+        object = { kind: 'IrIdentifier', name: 'self' };
+      }
       const property = resolveFieldName(ctx, expr.object, expr.property.name);
       return {
         kind: 'IrMemberExpression',
@@ -647,24 +696,20 @@ function lowerExpression(
       return { kind: 'IrGroupingExpression', expression: inner };
     }
     case 'CallExpression': {
-      if (isPythonSyntaxKeyword(expr.callee.name)) {
-        diagnostics.push({
-          severity: 'error',
-          code: 'T_CALL_PY_KEYWORD',
-          message: `Function name '${expr.callee.name}' is a Python keyword and cannot be translated.`,
-          span: expr.callee.span,
-        });
-        return null;
-      }
       const callee = resolveName(ctx, expr.callee.name);
-      const paramShapes = ctx.routineParams.get(bindingKey(callee)) ?? [];
+      const paramSpecs = ctx.routineParams.get(bindingKey(callee)) ?? [];
       const args: IrExpression[] = [];
       for (let i = 0; i < expr.args.length; i++) {
         const arg = expr.args[i]!;
         let lowered = lowerExpression(arg, ctx);
         if (!lowered) return null;
-        const shape = paramShapes[i] ?? exprShape(ctx, arg);
-        lowered = maybeDeepCopy(ctx, lowered, shape);
+        const spec = paramSpecs[i];
+        const shape = spec?.shape ?? exprShape(ctx, arg);
+        const mode = spec?.mode ?? 'BYVAL';
+        if (mode === 'BYVAL') {
+          lowered = maybeDeepCopy(ctx, lowered, shape);
+        }
+        // Function calls cannot legally have BYREF (checker); treat as BYVAL.
         args.push(lowered);
       }
       return {
@@ -720,6 +765,16 @@ function lowerExpression(
         span: expr.span,
       });
       return null;
+    case 'AddressOfExpression': {
+      const target = lowerTarget(expr.target, ctx);
+      if (!target) return null;
+      return { kind: 'IrAddressOfExpression', target };
+    }
+    case 'DerefExpression': {
+      const pointer = lowerExpression(expr.pointer, ctx);
+      if (!pointer) return null;
+      return { kind: 'IrDerefExpression', pointer };
+    }
     default: {
       const _exhaustive: never = expr;
       return _exhaustive;
@@ -735,9 +790,8 @@ function lowerBlock(
   const out: IrStatement[] = [];
   for (const stmt of statements) {
     const lowered = lowerStatement(stmt, ctx);
-    if (lowered) {
-      out.push(lowered.ir);
-    }
+    if (!lowered) continue;
+    out.push(...lowered.statements);
   }
   return out;
 }
@@ -770,45 +824,6 @@ function lowerTypeRef(
   };
 }
 
-function validateRoutineBinding(
-  kind: 'PROCEDURE' | 'FUNCTION',
-  name: { readonly name: string; readonly span: Statement['span'] },
-  parameters: readonly { readonly name: { readonly name: string; readonly span: Statement['span'] } }[],
-  diagnostics: TranslateDiagnostic[],
-): boolean {
-  if (isPythonSyntaxKeyword(name.name)) {
-    diagnostics.push({
-      severity: 'error',
-      code: 'T_PROC_PY_KEYWORD',
-      message: `${kind} name '${name.name}' is a Python keyword and cannot be translated to 'def ${name.name}(...):'.`,
-      span: name.span,
-    });
-    return false;
-  }
-  if (isPythonTranslatorBuiltin(name.name)) {
-    diagnostics.push({
-      severity: 'warning',
-      code: 'T_PROC_SHADOWS_BUILTIN',
-      message: `${kind} name '${name.name}' shadows a Python builtin used by the translator (print/input/range).`,
-      span: name.span,
-    });
-  }
-  for (const p of parameters) {
-    const pname = p.name.name;
-    if (isPythonSyntaxKeyword(pname)) {
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_PROC_PY_KEYWORD',
-        message: `Parameter name '${pname}' is a Python keyword and cannot be translated.`,
-        span: p.name.span,
-      });
-      return false;
-    }
-    // Duplicate parameters are diagnosed by `@pseudopilot/checker`.
-  }
-  return true;
-}
-
 /**
  * Lower one CLASS member (property, PROCEDURE, or FUNCTION). Assumes the
  * caller has already set `ctx.currentClassFields` / `ctx.currentClassName`
@@ -819,23 +834,11 @@ function lowerClassMember(
   member: ClassMember,
   ctx: LowerCtx,
 ): IrClassMember | null {
-  const diagnostics = ctx.diagnostics;
   const visibility: IrVisibility = member.visibility ?? 'PUBLIC';
 
   if (member.kind === 'ClassPropertyDeclaration') {
     const typeRef = lowerTypeRef(member.typeRef, ctx);
     if (!typeRef) return null;
-    for (const id of member.names) {
-      if (isPythonSyntaxKeyword(id.name)) {
-        diagnostics.push({
-          severity: 'error',
-          code: 'T_DECL_PY_KEYWORD',
-          message: `Property name '${id.name}' is a Python keyword and cannot be translated ('self.${id.name}' is invalid Python).`,
-          span: id.span,
-        });
-        return null;
-      }
-    }
     return {
       kind: 'IrClassProperty',
       names: member.names.map((id) => id.name),
@@ -845,38 +848,18 @@ function lowerClassMember(
   }
 
   // ClassProcedureDeclaration | ClassFunctionDeclaration
-  const isConstructor = bindingKey(member.name.name) === 'new';
-  if (!isConstructor && isPythonSyntaxKeyword(member.name.name)) {
-    diagnostics.push({
-      severity: 'error',
-      code: 'T_PROC_PY_KEYWORD',
-      message: `Method name '${member.name.name}' is a Python keyword and cannot be translated.`,
-      span: member.name.span,
-    });
-    return null;
-  }
-  for (const p of member.parameters) {
-    if (isPythonSyntaxKeyword(p.name.name)) {
-      diagnostics.push({
-        severity: 'error',
-        code: 'T_PROC_PY_KEYWORD',
-        message: `Parameter name '${p.name.name}' is a Python keyword and cannot be translated.`,
-        span: p.name.span,
-      });
-      return null;
-    }
-  }
-
   pushScope(ctx);
   const parameters = member.parameters.map((p) => {
     const shape = shapeFromSimpleType(p.typeName, ctx);
+    const byRefCell = p.mode === 'BYREF' && shape.kind === 'scalar';
     const pname =
-      bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape) ??
+      bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape, byRefCell) ??
       p.name.name;
     return {
       kind: 'IrParameter' as const,
       name: pname,
       typeName: lowerSimpleType(p.typeName, ctx),
+      mode: p.mode,
     };
   });
   const body = lowerBlock(member.body, ctx);
@@ -904,7 +887,7 @@ function lowerClassMember(
 function lowerStatement(
   stmt: Statement,
   ctx: LowerCtx,
-): { ir: IrStatement; span: Statement['span'] } | null {
+): { statements: IrStatement[]; span: Statement['span'] } | null {
   const diagnostics = ctx.diagnostics;
   switch (stmt.kind) {
     case 'AssignmentStatement': {
@@ -919,11 +902,13 @@ function lowerStatement(
       }
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
-          kind: 'IrAssignment' as const,
-          target,
-          value,
-        }),
+        statements: [
+          withEmptyTrivia({
+            kind: 'IrAssignment' as const,
+            target,
+            value,
+          }),
+        ],
       };
     }
     case 'InputStatement': {
@@ -935,12 +920,14 @@ function lowerStatement(
         shape.kind === 'scalar' && shape.typeName ? shape.typeName : null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrInput' as const,
           target,
           prompt: null,
           valueType,
-        }),
+}),
+        ],
       };
     }
     case 'OutputStatement': {
@@ -952,10 +939,12 @@ function lowerStatement(
       }
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrOutput' as const,
           values,
-        }),
+}),
+        ],
       };
     }
     case 'IfStatement': {
@@ -976,13 +965,15 @@ function lowerStatement(
         stmt.alternate === null ? null : lowerBlock(stmt.alternate, ctx);
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrIfStatement' as const,
           condition,
           consequent,
           elseIfClauses,
           alternate,
-        }),
+}),
+        ],
       };
     }
     case 'CaseStatement': {
@@ -1011,12 +1002,14 @@ function lowerStatement(
         stmt.otherwise === null ? null : lowerBlock(stmt.otherwise, ctx);
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrCaseStatement' as const,
           discriminant,
           arms,
           otherwise,
-        }),
+}),
+        ],
       };
     }
     case 'WhileStatement': {
@@ -1024,11 +1017,13 @@ function lowerStatement(
       if (!condition) return null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrWhileStatement' as const,
           condition,
           body: lowerBlock(stmt.body, ctx),
-        }),
+}),
+        ],
       };
     }
     case 'RepeatStatement': {
@@ -1036,11 +1031,13 @@ function lowerStatement(
       if (!condition) return null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrRepeatStatement' as const,
           body: lowerBlock(stmt.body, ctx),
           condition,
-        }),
+}),
+        ],
       };
     }
     case 'ForStatement': {
@@ -1056,16 +1053,23 @@ function lowerStatement(
         if (!step) return null;
       }
       const variable = registerBinding(ctx, stmt.variable, 'var');
+      const nextVariable =
+        stmt.nextVariable === null
+          ? null
+          : resolveName(ctx, stmt.nextVariable);
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrForStatement' as const,
           variable,
           start,
           end,
           step,
           body: lowerBlock(stmt.body, ctx),
-        }),
+          nextVariable,
+}),
+        ],
       };
     }
     case 'DeclareStatement': {
@@ -1088,11 +1092,13 @@ function lowerStatement(
       if (names.length === 0) return null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrDeclareStatement' as const,
           names,
           typeRef,
-        }),
+}),
+        ],
       };
     }
     case 'TypeDeclaration': {
@@ -1117,11 +1123,87 @@ function lowerStatement(
       ctx.recordFieldShapes.set(typeKey, fieldShapes);
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrTypeDeclaration' as const,
           name: stmt.name.name,
           fields,
-        }),
+}),
+        ],
+      };
+    }
+    case 'EnumTypeDeclaration': {
+      const typeKey = bindingKey(stmt.name.name);
+      ctx.enumNames.add(typeKey);
+      const members: string[] = [];
+      for (const m of stmt.members) {
+        // Enum members are global identifiers (interpreter/checker bind them).
+        const canonical = registerBinding(ctx, m.name, 'const', scalarShape());
+        members.push(canonical);
+      }
+      return {
+        span: stmt.span,
+        statements: [
+          withEmptyTrivia({
+            kind: 'IrEnumTypeDeclaration' as const,
+            name: stmt.name.name,
+            members,
+          }),
+        ],
+      };
+    }
+    case 'PointerTypeDeclaration': {
+      ctx.pointerNames.add(bindingKey(stmt.name.name));
+      return {
+        span: stmt.span,
+        statements: [
+          withEmptyTrivia({
+            kind: 'IrPointerTypeDeclaration' as const,
+            name: stmt.name.name,
+            targetType: lowerSimpleType(stmt.targetType, ctx),
+          }),
+        ],
+      };
+    }
+    case 'SetTypeDeclaration': {
+      ctx.setNames.add(bindingKey(stmt.name.name));
+      return {
+        span: stmt.span,
+        statements: [
+          withEmptyTrivia({
+            kind: 'IrSetTypeDeclaration' as const,
+            name: stmt.name.name,
+            elementType: lowerSimpleType(stmt.elementType, ctx),
+          }),
+        ],
+      };
+    }
+    case 'DefineStatement': {
+      const values: IrExpression[] = [];
+      for (const e of stmt.values) {
+        const lowered = lowerExpression(e, ctx);
+        if (!lowered) return null;
+        values.push(lowered);
+      }
+      const name = bindName(
+        ctx,
+        stmt.name.name,
+        'var',
+        stmt.name.span,
+        'DECLARE',
+        scalarShape(),
+      );
+      if (name === null) return null;
+      return {
+        span: stmt.span,
+        statements: [
+          withEmptyTrivia({
+            kind: 'IrDefineStatement' as const,
+            name,
+            values,
+            typeName: stmt.typeName.name,
+          }),
+        ],
       };
     }
     case 'ConstantStatement': {
@@ -1137,69 +1219,56 @@ function lowerStatement(
       if (name === null) return null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrConstantStatement' as const,
           name,
           value,
-        }),
+}),
+        ],
       };
     }
     case 'ProcedureDeclaration': {
-      if (
-        !validateRoutineBinding(
-          'PROCEDURE',
-          stmt.name,
-          stmt.parameters,
-          diagnostics,
-        )
-      ) {
-        return null;
-      }
       const procName = registerName(ctx, stmt.name.name);
       pushScope(ctx);
-      const paramShapes: ValueShape[] = [];
+      const paramSpecs: ParamSpec[] = [];
       const parameters = stmt.parameters.map((p) => {
         const shape = shapeFromSimpleType(p.typeName, ctx);
-        paramShapes.push(shape);
+        const mode = p.mode;
+        const byRefCell = mode === 'BYREF' && shape.kind === 'scalar';
+        paramSpecs.push({ shape, mode });
         const pname =
-          bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape) ??
+          bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape, byRefCell) ??
           p.name.name;
         return {
           kind: 'IrParameter' as const,
           name: pname,
           typeName: lowerSimpleType(p.typeName, ctx),
+          mode,
         };
       });
-      ctx.routineParams.set(bindingKey(procName), paramShapes);
+      ctx.routineParams.set(bindingKey(procName), paramSpecs);
       const body = lowerBlock(stmt.body, ctx);
       popScope(ctx);
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrProcedureDeclaration' as const,
           name: procName,
           parameters,
           body,
-        }),
+}),
+        ],
       };
     }
     case 'FunctionDeclaration': {
-      if (
-        !validateRoutineBinding(
-          'FUNCTION',
-          stmt.name,
-          stmt.parameters,
-          diagnostics,
-        )
-      ) {
-        return null;
-      }
       const fnName = registerName(ctx, stmt.name.name);
       pushScope(ctx);
-      const paramShapes: ValueShape[] = [];
+      const paramSpecs: ParamSpec[] = [];
       const parameters = stmt.parameters.map((p) => {
         const shape = shapeFromSimpleType(p.typeName, ctx);
-        paramShapes.push(shape);
+        paramSpecs.push({ shape, mode: p.mode });
         const pname =
           bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape) ??
           p.name.name;
@@ -1207,21 +1276,24 @@ function lowerStatement(
           kind: 'IrParameter' as const,
           name: pname,
           typeName: lowerSimpleType(p.typeName, ctx),
+          mode: p.mode,
         };
       });
-      ctx.routineParams.set(bindingKey(fnName), paramShapes);
+      ctx.routineParams.set(bindingKey(fnName), paramSpecs);
       const body = lowerBlock(stmt.body, ctx);
       popScope(ctx);
       // Missing RETURN / unreachable-after-RETURN: `@pseudopilot/checker` (`C_*`).
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrFunctionDeclaration' as const,
           name: fnName,
           parameters,
           returnType: lowerSimpleType(stmt.returnType, ctx),
           body,
-        }),
+}),
+        ],
       };
     }
     case 'CallStatement': {
@@ -1238,40 +1310,85 @@ function lowerStatement(
         }
         return {
           span: stmt.span,
-          ir: withEmptyTrivia({
-            kind: 'IrExpressionStatement' as const,
-            expression: { kind: 'IrMethodCallExpression', object, method, args },
-          }),
+          statements: [
+            withEmptyTrivia({
+              kind: 'IrExpressionStatement' as const,
+              expression: { kind: 'IrMethodCallExpression', object, method, args },
+            }),
+          ],
         };
       }
       const calleeRaw = stmt.callee.name;
-      if (isPythonSyntaxKeyword(calleeRaw)) {
-        diagnostics.push({
-          severity: 'error',
-          code: 'T_CALL_PY_KEYWORD',
-          message: `CALL target '${calleeRaw}' is a Python keyword and cannot be translated to a Python call.`,
-          span: stmt.callee.span,
-        });
-        return null;
-      }
       const callee = resolveName(ctx, calleeRaw);
-      const paramShapes = ctx.routineParams.get(bindingKey(callee)) ?? [];
+      const paramSpecs = ctx.routineParams.get(bindingKey(callee)) ?? [];
+      const prelude: IrStatement[] = [];
+      const postlude: IrStatement[] = [];
       const args: IrExpression[] = [];
       for (let i = 0; i < stmt.args.length; i++) {
         const arg = stmt.args[i]!;
         let lowered = lowerExpression(arg, ctx);
         if (!lowered) return null;
-        const shape = paramShapes[i] ?? exprShape(ctx, arg);
-        lowered = maybeDeepCopy(ctx, lowered, shape);
+        const spec = paramSpecs[i];
+        const shape = spec?.shape ?? exprShape(ctx, arg);
+        const mode = spec?.mode ?? 'BYVAL';
+        if (mode === 'BYREF' && shape.kind === 'scalar') {
+          if (
+            arg.kind !== 'Identifier' &&
+            arg.kind !== 'IndexExpression' &&
+            arg.kind !== 'MemberExpression'
+          ) {
+            diagnostics.push({
+              severity: 'error',
+              code: 'T_BYREF_TEMPORARY',
+              message: `Cannot translate BYREF temporary argument to '${callee}'.`,
+              span: arg.span,
+            });
+            return null;
+          }
+          const target = lowerTarget(arg, ctx);
+          if (!target) return null;
+          const cell = `_pp_ref_${i}`;
+          prelude.push(
+            withEmptyTrivia({
+              kind: 'IrAssignment' as const,
+              target: { kind: 'IrIdentifier', name: cell },
+              value: {
+                kind: 'IrCallExpression',
+                callee: '_pp_cell',
+                args: [lowered],
+              },
+            }),
+          );
+          args.push({ kind: 'IrIdentifier', name: cell });
+          postlude.push(
+            withEmptyTrivia({
+              kind: 'IrAssignment' as const,
+              target,
+              value: {
+                kind: 'IrIndexExpression',
+                array: { kind: 'IrIdentifier', name: cell },
+                indices: [{ kind: 'IrIntegerLiteral', value: 0 }],
+              },
+            }),
+          );
+          continue;
+        }
+        if (mode === 'BYVAL') {
+          lowered = maybeDeepCopy(ctx, lowered, shape);
+        }
         args.push(lowered);
       }
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
-          kind: 'IrCallStatement' as const,
-          callee,
-          args,
-        }),
+        statements: [
+          ...prelude,
+          withEmptyTrivia({
+            kind: 'IrCallStatement' as const,
+            callee,
+            args,
+          }),
+          ...postlude,
+        ],
       };
     }
     case 'ReturnStatement': {
@@ -1280,10 +1397,12 @@ function lowerStatement(
       value = maybeDeepCopy(ctx, value, exprShape(ctx, stmt.value));
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrReturnStatement' as const,
           value,
-        }),
+}),
+        ],
       };
     }
     case 'OpenFileStatement': {
@@ -1291,11 +1410,13 @@ function lowerStatement(
       if (!fileName) return null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrOpenFileStatement' as const,
           fileName,
           mode: stmt.mode,
-        }),
+}),
+        ],
       };
     }
     case 'ReadFileStatement': {
@@ -1305,11 +1426,13 @@ function lowerStatement(
       if (!fileName || !target) return null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrReadFileStatement' as const,
           fileName,
           target,
-        }),
+}),
+        ],
       };
     }
     case 'WriteFileStatement': {
@@ -1318,11 +1441,13 @@ function lowerStatement(
       if (!fileName || !value) return null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrWriteFileStatement' as const,
           fileName,
           value,
-        }),
+}),
+        ],
       };
     }
     case 'CloseFileStatement': {
@@ -1330,22 +1455,61 @@ function lowerStatement(
       if (!fileName) return null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrCloseFileStatement' as const,
           fileName,
-        }),
+}),
+        ],
+      };
+    }
+    case 'SeekStatement': {
+      const fileName = lowerExpression(stmt.fileName, ctx);
+      const address = lowerExpression(stmt.address, ctx);
+      if (!fileName || !address) return null;
+      return {
+        span: stmt.span,
+        statements: [
+          withEmptyTrivia({
+            kind: 'IrSeekStatement' as const,
+            fileName,
+            address,
+          }),
+        ],
+      };
+    }
+    case 'GetRecordStatement': {
+      if (!checkAssignToConstant(ctx, stmt.target)) return null;
+      const fileName = lowerExpression(stmt.fileName, ctx);
+      const target = lowerTarget(stmt.target, ctx);
+      if (!fileName || !target) return null;
+      return {
+        span: stmt.span,
+        statements: [
+          withEmptyTrivia({
+            kind: 'IrGetRecordStatement' as const,
+            fileName,
+            target,
+          }),
+        ],
+      };
+    }
+    case 'PutRecordStatement': {
+      const fileName = lowerExpression(stmt.fileName, ctx);
+      const value = lowerExpression(stmt.value, ctx);
+      if (!fileName || !value) return null;
+      return {
+        span: stmt.span,
+        statements: [
+          withEmptyTrivia({
+            kind: 'IrPutRecordStatement' as const,
+            fileName,
+            value,
+          }),
+        ],
       };
     }
     case 'ClassDeclaration': {
-      if (isPythonSyntaxKeyword(stmt.name.name)) {
-        diagnostics.push({
-          severity: 'error',
-          code: 'T_DECL_PY_KEYWORD',
-          message: `CLASS name '${stmt.name.name}' is a Python keyword and cannot be translated.`,
-          span: stmt.name.span,
-        });
-        return null;
-      }
       const classKey = bindingKey(stmt.name.name);
       const savedFields = ctx.currentClassFields;
       const savedName = ctx.currentClassName;
@@ -1367,12 +1531,14 @@ function lowerStatement(
 
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrClassDeclaration' as const,
           name: stmt.name.name,
           inherits,
           members,
-        }),
+}),
+        ],
       };
     }
     case 'ExpressionStatement': {
@@ -1380,10 +1546,12 @@ function lowerStatement(
       if (!expression) return null;
       return {
         span: stmt.span,
-        ir: withEmptyTrivia({
+        statements: [
+          withEmptyTrivia({
           kind: 'IrExpressionStatement' as const,
           expression,
-        }),
+}),
+        ],
       };
     }
     default: {
@@ -1418,7 +1586,22 @@ export function lowerCambridgeProgram(
     classMethods: classRegistry.methods,
     currentClassFields: null,
     currentClassName: null,
+    enumNames: new Set(),
+    pointerNames: new Set(),
+    setNames: new Set(),
   };
+
+  // Hoist user TYPE / enum / pointer / SET names before DECLARE bodies so
+  // NamedType refs aren't misclassified as record composites.
+  for (const stmt of program.body) {
+    if (stmt.kind === 'EnumTypeDeclaration') {
+      ctx.enumNames.add(bindingKey(stmt.name.name));
+    } else if (stmt.kind === 'PointerTypeDeclaration') {
+      ctx.pointerNames.add(bindingKey(stmt.name.name));
+    } else if (stmt.kind === 'SetTypeDeclaration') {
+      ctx.setNames.add(bindingKey(stmt.name.name));
+    }
+  }
 
   // Hoist routine names so CALL-before-def still emits first-declaration casing.
   for (const stmt of program.body) {
@@ -1434,7 +1617,9 @@ export function lowerCambridgeProgram(
   for (const stmt of program.body) {
     const lowered = lowerStatement(stmt, ctx);
     if (lowered) {
-      paired.push({ stmt: lowered.ir, span: lowered.span });
+      for (const ir of lowered.statements) {
+        paired.push({ stmt: ir, span: lowered.span });
+      }
     }
   }
 

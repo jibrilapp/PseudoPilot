@@ -86,6 +86,19 @@ OUTPUT 7 / 2
     expect(host.outputs).toEqual(['10', '3', '1', '3.5']);
   });
 
+  it('DIV/MOD on negatives truncates toward zero (D4)', async () => {
+    // PseudoPilot policy: trunc toward zero (JS Math.trunc), not Python floor.
+    // (-7) DIV 3 → -2; (-7) MOD 3 → -1. Translator Python // / % differ.
+    const { result, host } = await run(`
+OUTPUT (-7) DIV 3
+OUTPUT (-7) MOD 3
+OUTPUT 7 DIV (-3)
+OUTPUT 7 MOD (-3)
+`);
+    expect(result.ok).toBe(true);
+    expect(host.outputs).toEqual(['-2', '-1', '-2', '1']);
+  });
+
   it('errors on division by zero', async () => {    const { result } = await run(`OUTPUT 1 / 0`);
     expect(result.ok).toBe(false);
     expect(result.diagnostics[0]?.code).toBe('R_DIV_ZERO');
@@ -355,6 +368,23 @@ OUTPUT INT(4.9)
     expect(v).toBeGreaterThanOrEqual(0);
     expect(v).toBeLessThan(10);
   });
+
+  it('executes ASC / CHR / IS_NUM (Paper 2 insert)', async () => {
+    const { host } = await run(`
+OUTPUT ASC('A')
+OUTPUT CHR(66)
+OUTPUT IS_NUM("-12.36")
+OUTPUT IS_NUM("abc")
+OUTPUT IS_NUM("")
+`);
+    expect(host.outputs).toEqual(['65', 'B', 'TRUE', 'FALSE', 'FALSE']);
+  });
+
+  it('rejects CHR outside Unicode range', async () => {
+    const { result } = await run(`OUTPUT CHR(-1)`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'R_BUILTIN')).toBe(true);
+  });
 });
 
 describe('runtime limits and errors', () => {
@@ -437,14 +467,21 @@ OUTPUT A[2]
     expect(host.outputs).toEqual(['7', '9']);
   });
 
-  it('rejects whole-array assign when bounds differ but length matches', async () => {    const { result } = await run(`
+  it('rejects whole-array assign when bounds differ but length matches', async () => {
+    // D5: checker rejects mismatched literal bounds (`C_ASSIGN_TYPE`); runtime
+    // still enforces shape via `R_TYPE` if semanticCheck is skipped.
+    const { result } = await run(`
 DECLARE A : ARRAY[1:3] OF INTEGER
 DECLARE B : ARRAY[0:2] OF INTEGER
 A[1] ← 1
 B ← A
 `);
     expect(result.ok).toBe(false);
-    expect(result.diagnostics.some((d) => d.code === 'R_TYPE')).toBe(true);
+    expect(
+      result.diagnostics.some(
+        (d) => d.code === 'C_ASSIGN_TYPE' || d.code === 'R_TYPE',
+      ),
+    ).toBe(true);
   });
 
   it('maps exhausted MemoryHost INPUT to R_INPUT', async () => {    const { result } = await run(

@@ -18,20 +18,31 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Turbo builds workspace deps
 Pseudocode and Python panes use Monaco (`components/ide/CodeSurface.tsx`).
 
 - Pseudocode: Monarch highlighting, LS providers (hover, completion, definition, rename, …), breakpoints, exec-line highlight
-- Python: read-only highlighting of the live translation
+- Python: **editable** first-class peer — live reverse translation into Pseudocode
 
 Details: [`docs/ide/MONACO.md`](../../docs/ide/MONACO.md).
 
-## Live translation
+## Live bidirectional translation
 
-Editing the **Pseudocode** pane debounces (~250ms) and calls
-`translatePseudocodeToPython()` from `@pseudopilot/translator`.
+Origin-aware sync (`lib/translation/bidirectionalSync.ts`):
 
-- On success, the **Python** pane updates.
-- On failure, the last successful Python text stays visible and diagnostics
-  appear in the Console panel (and as Monaco markers from the language service).
+| Edit | Action |
+| --- | --- |
+| Pseudocode | Debounced forward `translatePseudocodeToPython` → update Python (**no** reverse) |
+| Python | Debounced reverse `translatePythonToPseudocode` → update Pseudocode (**no** forward) |
+
+- On success, the peer pane updates via Monaco `executeEdits` (undo/cursor/scroll preserved where practical).
+- On failure, the last successful peer text stays visible; diagnostics go to the Console (and Python Monaco markers for reverse errors). CompilerService / breakpoints / debugger state are not cleared.
+- Run/Debug always executes the Pseudocode buffer.
 
 ## Run / Debug
 
 Toolbar Run uses `RuntimeController` → Web Worker → `@pseudopilot/interpreter`.
 Debugger: breakpoints (glyph margin), Continue / Pause / Step Into / Over / Out, Restart, Stop.
+
+## AI Coach
+
+Dockable **AI** panel (`AiAssistantPanel`) talks only to `AICoachService`.
+Context is assembled from LanguageService / CompilerService / RuntimeController /
+translation buffers — see [`docs/ai/AI_COACH.md`](../../docs/ai/AI_COACH.md).
+

@@ -12,7 +12,7 @@ The checker validates programs **after parsing** and **before** IR lowering / tr
 | Owns | Does not own |
 | --- | --- |
 | Symbol tables & lexical scopes | Lexing / parsing |
-| DECLARE / CONSTANT / parameter bindings | Python keyword legality (`T_DECL_PY_KEYWORD`) |
+| DECLARE / CONSTANT / parameter bindings | Python keyword/builtin sanitization (translator `IdentifierSanitizer`) |
 | PROCEDURE / FUNCTION / **builtin** signatures | Unsupported-construct translation (`T_UNSUPPORTED_*`) |
 | Type compatibility of assignments & calls | Runtime evaluation / RNG seeding |
 | Undeclared identifiers / routines | Layout / trivia |
@@ -52,7 +52,8 @@ If the FOR control variable is not yet bound, the checker **implicitly** introdu
 ## 3. Types
 
 Scalars: `INTEGER`, `REAL`, `STRING`, `BOOLEAN`, `CHAR`, `DATE`  
-Arrays: `ARRAY[…] OF <scalar>` (dimensionality checked on indexing)
+Arrays: `ARRAY[…] OF <element>` (dimensionality checked on indexing)  
+User types: record / enum / pointer / SET — see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md)
 
 Cambridge 9618 does not define a standalone `TIME` datatype; PseudoPilot does not invent one.
 
@@ -65,7 +66,8 @@ Cambridge 9618 does not define a standalone `TIME` datatype; PseudoPilot does no
 | `REAL` → `INTEGER` | ❌ (use `INT(...)`) |
 | `CHAR` ↔ `STRING` | ❌ (distinct) |
 | `DATE` ↔ other scalars | ❌ (use `SETDATE` / component builtins) |
-| Arrays | ✅ only if element type **and** rank match |
+| Same enum / pointer / SET named type | ✅ |
+| Arrays | ✅ only if element type, rank, **and** (when known) identical bounds match |
 
 `INPUT` / `READFILE` require an assignable target (declared, not CONSTANT) but do **not** enforce a source type (Cambridge I/O is untyped at the language level).
 
@@ -85,13 +87,24 @@ Signatures live in `language-core` `CORE_BUILTINS` (types only). Python emission
 | `LCASE` / `UCASE` | same as arg | Guide: CHAR→CHAR; PseudoPilot also STRING→STRING |
 | `INT(x)` | INTEGER | REAL or INTEGER; truncate toward zero |
 | `RAND(x)` | **REAL** | `[0, x)`; `x` must be INTEGER |
+| `ASC(c)` | INTEGER | CHAR → code point (Paper 2 insert) |
+| `CHR(x)` | CHAR | INTEGER code point → CHAR (Paper 2 insert) |
+| `IS_NUM(s)` | BOOLEAN | STRING or CHAR looks like a signed decimal (Paper 2 insert) |
+| DATE helpers | see [`BUILTINS.md`](./BUILTINS.md) | `DAY` / `MONTH` / `YEAR` / `DAYINDEX` / `SETDATE` / `TODAY` |
 | `DAY` / `MONTH` / `YEAR` / `DAYINDEX` | INTEGER | DATE insert helpers |
 | `SETDATE(d, m, y)` | DATE | Construct calendar date |
 | `TODAY()` | DATE | Current calendar date |
 
 DATE values may be compared with `=` / `<>` / `<` / `<=` / `>` / `>=`. Arithmetic on DATE is rejected (`C_BINARY_TYPE`).
 
-Builtin names are **soft-reserved against redefinition** (SPEC §1.9): `DECLARE Length` / `FUNCTION LENGTH` collide with the injected Core builtin (`C_DUP_FUNCTION`).
+Builtin names are **soft-reserved** via injection into the global scope (SPEC §1.9):
+
+- `DECLARE Length : INTEGER` **may** shadow the Core builtin (Cambridge allows ordinary identifiers).
+- `FUNCTION LENGTH …` / `PROCEDURE LENGTH …` still collide (`C_DUP_FUNCTION`).
+
+### Arithmetic notes
+
+`DIV` / `MOD` truncate toward zero (including negatives), matching the interpreter and Python helpers `_pp_div` / `_pp_mod`.
 
 ### String concatenation `&`
 
@@ -107,6 +120,8 @@ Operands must be STRING or CHAR (`C_CONCAT_TYPE`). Result is STRING. Same preced
 | `C_UNDECL_IDENT` / `C_UNDECL_ARRAY` / `C_UNDECL_ROUTINE` / `C_UNDECL_FUNCTION` | Missing declaration |
 | `C_ASSIGN_TO_CONSTANT` / `C_ASSIGN_TO_ROUTINE` / `C_ASSIGN_TYPE` | Bad assignment |
 | `C_ARG_COUNT` / `C_ARG_TYPE` | Call mismatch |
+| `C_BYREF_ON_FUNCTION` | `BYREF` parameter on a FUNCTION |
+| `C_BYREF_LITERAL` / `C_BYREF_CONSTANT` / `C_BYREF_TEMPORARY` | Illegal BYREF argument |
 | `C_PROC_AS_EXPR` / `C_FUNC_AS_VALUE` / `C_NOT_CALLABLE` | Misused routines |
 | `C_RETURN_OUTSIDE` / `C_RETURN_TYPE` / `C_FUNC_NO_RETURN` | RETURN rules |
 | `C_ARRAY_RANK` / `C_INDEX_TYPE` / `C_ARRAY_BOUND_TYPE` / `C_NOT_ARRAY` | Arrays |
@@ -115,6 +130,8 @@ Operands must be STRING or CHAR (`C_CONCAT_TYPE`). Result is STRING. Same preced
 | `C_CONCAT_TYPE` | `&` operand not STRING/CHAR |
 | `C_FILE_PATH_TYPE` | File path not STRING/CHAR |
 | `C_FILE_NOT_OPEN` / `C_FILE_ALREADY_OPEN` / `C_FILE_MODE` | Open-state (literal paths, best-effort) |
+| `C_FILE_SEEK_TYPE` | SEEK address not INTEGER |
+| `C_FILE_RECORD_TYPE` | GETRECORD / PUTRECORD not a TYPE record |
 | `C_UNKNOWN_TYPE` / `C_DUP_TYPE` / `C_RECURSIVE_TYPE` | TYPE … ENDTYPE |
 | `C_UNKNOWN_FIELD` / `C_DUP_FIELD` / `C_NOT_RECORD` | Record fields |
 | `C_UNKNOWN_CLASS` / `C_DUP_CLASS` / `C_INVALID_INHERITS` / `C_CYCLIC_INHERITANCE` | CLASS declaration |
@@ -152,23 +169,23 @@ const { ok, diagnostics, globalSymbols } = check(ast);
 - No path-sensitive “all paths return” analysis (only “any RETURN present”).
 - Unreachable-after-RETURN is **same-block** only (including nested IF/loop/CASE bodies); does not prove a branch always returns.
 - No definite-assignment / use-before-init beyond undeclared names.
-- File I/O: open-state for literal paths (`C_FILE_*`), READFILE assignability to STRING, path types.
-- No BYREF / enum-pointer-SET TYPE forms.
-- Record `TYPE` … `ENDTYPE` is supported — see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md).
+- File I/O: open-state for literal paths (`C_FILE_*`), READFILE assignability to STRING, SEEK INTEGER address, GETRECORD/PUTRECORD TYPE-record checks — see [`FILE_IO.md`](./FILE_IO.md).
+- All Cambridge `TYPE` forms (record / enum / pointer / SET + `DEFINE`) are supported — see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md). Recursive records forbidden; pointer fields OK.
+- `BYVAL` / `BYREF` (Cambridge §8.3) are supported — sticky mode, BYREF lvalue checks,
+  interpreter aliases, translator `_pp_cell` mapping.
 - `CLASS` OOP (single inheritance, `PUBLIC`/`PRIVATE`, `SUPER`, `NEW`) is supported — see
   [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md). `C_OVERRIDE_MISMATCH`
   is a warning only, not enforced strictly.
-- Expression typing is best-effort; some operator combinations may under-report.
-- NEXT/FOR variable mismatch and CASE duplicate labels remain **parser** structural diagnostics (`E_*`).
+- Expression typing is best-effort; golden cases expanded (D9) but some combinations may still under-report.
+- NEXT/FOR variable mismatch (when binder present) and CASE duplicate labels remain **parser** structural diagnostics (`E_*`). Bare `NEXT` is legal.
 - Runtime execution lives in `@pseudopilot/interpreter` (see [`INTERPRETER.md`](./INTERPRETER.md)); checker does not evaluate code.
-- `RIGHT(S, 0)` Python mapping differs from interpreter (`""` at runtime) — documented in interpreter + translation docs.
+- `RIGHT(S, 0)` → `""` at runtime; Python emit uses `_pp_right` (aligned).
 
 ---
 
 ## 7. Future work
 
 - Reuse `globalSymbols` + per-routine scopes in the debugger UI
-- Wire interpreter into `apps/web` via `RuntimeHost`
 - Stricter definite assignment
-- Exam-insert builtin packs (ASC/CHR/…) extending the registry
+- Additional per-paper exam-insert packs beyond the standard ASC/CHR/IS_NUM + DATE set
 - AI coach explanations keyed by `C_*` / `R_*` codes

@@ -53,7 +53,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | Precedence / parentheses | ✅ | — | ✅ | ✅ | ✅ |
 | Index expressions | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Function call expressions | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Member `.` / pointer `^` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Member `.` / pointer `^` | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -108,7 +108,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | PROCEDURE definition | ✅ | ✅ | ✅ | ✅ | ✅ |
 | FUNCTION + RETURNS | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Typed parameters (incl. grouped `a, b : T`) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYVAL` / `BYREF` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `BYVAL` / `BYREF` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `CALL` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `RETURN` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Recursion (runtime stack) | ✅ | ✅ | ✅ | 🟡 | 🟡 |
@@ -122,8 +122,8 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | --- | --- | --- | --- | --- | --- |
 | 1D / 2D (+ N-D) declare | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Element read/write | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Bounds checking | — | ❌ | ✅ | — | — |
-| Whole-array assign | 🟡 | ❌ | 🟡 | ❌ | ❌ |
+| Bounds checking | — | 🟡 | ✅ | — | — | Index arity in checker; range values runtime |
+| Whole-array assign | ✅ | ✅ | ✅ | ✅ | ✅ | Bounds match when known (D5) |
 
 ---
 
@@ -137,7 +137,9 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | `RIGHT` / `MID` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `LCASE` / `UCASE` | ✅ | ✅ | ✅ | ✅ | ✅ | CHAR or STRING |
 | `INT` / `RAND` | ✅ | ✅ | ✅ | ✅ | ✅ | RAND → REAL |
-| Exam-insert packs | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `ASC` / `CHR` / `IS_NUM` | ✅ | ✅ | ✅ | ✅ | ✅ | Paper 2 insert |
+| `DAY` / `MONTH` / `YEAR` / `DAYINDEX` / `SETDATE` / `TODAY` | ✅ | ✅ | ✅ | ✅ | ✅ | DATE insert |
+| Other one-off exam packs | ❌ | ❌ | ❌ | ❌ | ❌ | Future registry |
 
 ---
 
@@ -155,9 +157,11 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 
 | Feature | Parse | Check | Run | Py→ | →Py |
 | --- | --- | --- | --- | --- | --- |
-| Enum / pointer / set `TYPE` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Enum `TYPE Name = (…)` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Pointer `TYPE Name = ^T` + `^Var` / `Ptr^` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Set `TYPE = SET OF T` + `DEFINE` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Record `TYPE` … `ENDTYPE` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Random files SEEK/GET/PUT | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Random files SEEK/GET/PUT | ✅ | ✅ | ✅ | ✅ | ✅ |
 | OOP CLASS / INHERITS / NEW | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
@@ -166,7 +170,7 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 
 | Feature | Status |
 | --- | --- |
-| Pseudocode ↔ Python translator | 🟢 | Control flow + routines + DECLARE/CONSTANT + check + builtins/`&` + text files + **TYPE** + **CLASS** (bidirectional for PseudoPilot emit shapes); no BYREF / general Python |
+| Pseudocode ↔ Python translator | 🟢 | Control flow + routines + DECLARE/CONSTANT + check + builtins/`&` + text files + **TYPE** (record/enum/pointer/SET) + **CLASS** + **BYREF** (`_pp_cell`); DIV/MOD `_pp_div`/`_pp_mod`; RIGHT `_pp_right`; reverse best on PseudoPilot emit shapes |
 | **Cambridge interpreter** | ✅ | AST execution via `@pseudopilot/interpreter` — see [`INTERPRETER.md`](./INTERPRETER.md) |
 | **Web IDE Run integration** | ✅ | `apps/web/lib/runtime` — Run/Stop/Restart, Console INPUT, Variables |
 | **Web IDE Debugger** | ✅ | `apps/web/lib/debugger` — breakpoints, pause/continue, step into/over/out |
@@ -180,28 +184,32 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 | IDE Monaco / CodeSurface binding to language service | ✅ | Monaco + LS providers — see [`../ide/MONACO.md`](../ide/MONACO.md) |
 | Debugger UI (breakpoints / step) | ✅ | See [`apps/web/lib/debugger/README.md`](../../apps/web/lib/debugger/README.md) |
 | LSP server process | ❌ | Protocol types aligned; adapter TBD |
-| AI coach grounded on this dialect | ❌ |
+| AI coach grounded on this dialect | ✅ | Heuristic + `AIContext` — see [`../ai/AI_COACH.md`](../ai/AI_COACH.md) |
 
 ---
 
 ## Recommended implementation order
 
-1. ✅ Iteration: `WHILE` ✅, `REPEAT` ✅, `FOR` ✅ (+ `STEP`)
+1. ✅ Iteration: `WHILE` ✅, `REPEAT` ✅, `FOR` ✅ (+ `STEP`; bare `NEXT`)
 2. ✅ String `&` + builtins `LENGTH` / `LEFT` / `RIGHT` / `MID` / `LCASE` / `UCASE`
-3. ✅ Numeric builtins `INT` / `RAND`
+3. ✅ Numeric builtins `INT` / `RAND` + insert `ASC` / `CHR` / `IS_NUM` + DATE helpers — see [`BUILTINS.md`](./BUILTINS.md)
 4. ✅ `CONSTANT` (literal values); ✅ `DATE`
 5. ✅ `CASE OF`
-6. ❌ `BYVAL` / `BYREF`
+6. ✅ `BYVAL` / `BYREF`
 7. ✅ Semantic checker (scopes, types, calls, builtins) — see [`SEMANTICS.md`](./SEMANTICS.md)
 8. ✅ Interpreter (Core AST execution) — see [`INTERPRETER.md`](./INTERPRETER.md)
-9. 🟡 Translator (V12 subset ↔ Python; Core incomplete — no BYREF)
+9. 🟡 Translator (Core + all TYPE forms + CLASS + BYREF ↔ Python; reverse fidelity gaps remain)
 10. ✅ Language service (IDE intelligence) — see [`LANGUAGE_SERVICE.md`](./LANGUAGE_SERVICE.md)
 11. ✅ Incremental compilation / document cache — see [`INCREMENTAL_COMPILATION.md`](./INCREMENTAL_COMPILATION.md)
 12. ✅ Conformance & reliability suite — see [`../TESTING.md`](../TESTING.md)
 13. ✅ Monaco IDE editor — see [`../ide/MONACO.md`](../ide/MONACO.md)
 14. ✅ Record TYPE … ENDTYPE — see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md)
-15. ✅ OOP CLASS / INHERITS / NEW — see [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md)
-16. ❌ Extended enum/pointer/SET TYPE / RANDOM files / OS sandbox
+15. ✅ Enum / pointer / SET TYPE + DEFINE — see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md)
+16. ✅ OOP CLASS / INHERITS / NEW — see [`OBJECT_ORIENTED_PROGRAMMING.md`](./OBJECT_ORIENTED_PROGRAMMING.md)
+17. ✅ Random files (`RANDOM` / `SEEK` / `GETRECORD` / `PUTRECORD`)
+18. ❌ Product stubs: OS sandbox / LSP process / `curriculum-cambridge`
+
+**Notes:** Soft-reserve — `DECLARE Length` may shadow a Core builtin; `FUNCTION LENGTH` still rejected. `NEXT` identifier optional (Cambridge-legal bare `NEXT`).
 
 **Gate for “run in IDE” milestone:** ✅ `RuntimeController` + Run/Stop/INPUT wired in `apps/web`.  
 **Gate for “worker execution” milestone:** ✅ Web Worker + message protocol (`apps/web/lib/worker`) — UI thread does not execute pseudocode.
@@ -211,3 +219,4 @@ Spec authority: [SPECIFICATION.md](./SPECIFICATION.md) · Runtime: [INTERPRETER.
 **Gate for “incremental compilation” milestone:** ✅ `@pseudopilot/compiler-service` staged caches (hash / AST / semantics / invalidation).
 **Gate for “conformance suite” milestone:** ✅ `@pseudopilot/conformance` corpus + round-trip / stress / fuzz / benches (`docs/TESTING.md`).
 **Gate for “TYPE / ENDTYPE records” milestone:** ✅ see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md).
+**Gate for “enum / pointer / SET TYPE” milestone:** ✅ see [`TYPE_SYSTEM.md`](./TYPE_SYSTEM.md).

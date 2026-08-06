@@ -1,5 +1,5 @@
 /**
- * Cambridge text-file semantic checks (OPENFILE / READFILE / WRITEFILE / CLOSEFILE / EOF).
+ * Cambridge file semantic checks (§9.1 text + §9.2 random).
  * Open-state tracking is best-effort for string-literal paths (control-flow insensitive).
  */
 import type {
@@ -37,11 +37,65 @@ function isStringy(t: PpType): boolean {
   return t.kind === 'scalar' && (t.name === 'STRING' || t.name === 'CHAR');
 }
 
+function isIntegerType(t: PpType): boolean {
+  return t.kind === 'scalar' && t.name === 'INTEGER';
+}
+
+function isRecordType(t: PpType): boolean {
+  return t.kind === 'record';
+}
+
 /** Resolve a constant string path for open-state tracking; null if dynamic. */
 export function literalFilePath(expr: Expression): string | null {
   if (expr.kind === 'StringLiteral') return expr.value;
   if (expr.kind === 'CharLiteral') return expr.value;
   return null;
+}
+
+function checkPathType(
+  helpers: FileCheckHelpers,
+  fileName: Expression,
+  via: string,
+): void {
+  const pathType = helpers.inferExpr(fileName);
+  if (!isStringy(pathType) && pathType.kind !== 'error') {
+    helpers.diag({
+      code: 'C_FILE_PATH_TYPE',
+      message: `${via} path has type ${pathType.kind === 'scalar' ? pathType.name : pathType.kind}; expected STRING.`,
+      span: fileName.span,
+    });
+  }
+}
+
+function requireOpenMode(
+  helpers: FileCheckHelpers,
+  path: string | null,
+  span: SourceSpan,
+  via: string,
+  allowed: readonly FileMode[],
+): FileOpenState | null {
+  if (path === null) return null;
+  const st = helpers.openFiles.get(path);
+  if (!st) {
+    helpers.diag({
+      code: 'C_FILE_NOT_OPEN',
+      message: `${via} '${path}' but the file is not open.`,
+      span,
+    });
+    return null;
+  }
+  if (!allowed.includes(st.mode)) {
+    const want =
+      allowed.length === 1
+        ? `OPENFILE FOR ${allowed[0]}`
+        : `OPENFILE FOR ${allowed.join(' or ')}`;
+    helpers.diag({
+      code: 'C_FILE_MODE',
+      message: `${via} '${path}' requires ${want} (open for ${st.mode}).`,
+      span,
+    });
+  }
+  return st;
 }
 
 export function checkFileStatement(
@@ -52,18 +106,14 @@ export function checkFileStatement(
     | { kind: 'ReadFileStatement' }
     | { kind: 'WriteFileStatement' }
     | { kind: 'CloseFileStatement' }
+    | { kind: 'SeekStatement' }
+    | { kind: 'GetRecordStatement' }
+    | { kind: 'PutRecordStatement' }
   >,
 ): void {
   switch (stmt.kind) {
     case 'OpenFileStatement': {
-      const pathType = helpers.inferExpr(stmt.fileName);
-      if (!isStringy(pathType) && pathType.kind !== 'error') {
-        helpers.diag({
-          code: 'C_FILE_PATH_TYPE',
-          message: `OPENFILE path has type ${pathType.kind === 'scalar' ? pathType.name : pathType.kind}; expected STRING.`,
-          span: stmt.fileName.span,
-        });
-      }
+      checkPathType(helpers, stmt.fileName, 'OPENFILE');
       const path = literalFilePath(stmt.fileName);
       if (path !== null) {
         if (helpers.openFiles.has(path)) {
@@ -97,72 +147,27 @@ export function checkFileStatement(
           help: 'READFILE targets must be STRING (or a STRING array element).',
         });
       }
-      const pathType = helpers.inferExpr(stmt.fileName);
-      if (!isStringy(pathType) && pathType.kind !== 'error') {
-        helpers.diag({
-          code: 'C_FILE_PATH_TYPE',
-          message: `READFILE path has type ${pathType.kind === 'scalar' ? pathType.name : pathType.kind}; expected STRING.`,
-          span: stmt.fileName.span,
-        });
-      }
-      const path = literalFilePath(stmt.fileName);
-      if (path !== null) {
-        const st = helpers.openFiles.get(path);
-        if (!st) {
-          helpers.diag({
-            code: 'C_FILE_NOT_OPEN',
-            message: `READFILE '${path}' but the file is not open.`,
-            span: stmt.span,
-          });
-        } else if (st.mode !== 'READ') {
-          helpers.diag({
-            code: 'C_FILE_MODE',
-            message: `READFILE '${path}' requires OPENFILE FOR READ (open for ${st.mode}).`,
-            span: stmt.span,
-          });
-        }
-      }
+      checkPathType(helpers, stmt.fileName, 'READFILE');
+      requireOpenMode(helpers, literalFilePath(stmt.fileName), stmt.span, 'READFILE', [
+        'READ',
+      ]);
       return;
     }
     case 'WriteFileStatement': {
-      const pathType = helpers.inferExpr(stmt.fileName);
-      if (!isStringy(pathType) && pathType.kind !== 'error') {
-        helpers.diag({
-          code: 'C_FILE_PATH_TYPE',
-          message: `WRITEFILE path has type ${pathType.kind === 'scalar' ? pathType.name : pathType.kind}; expected STRING.`,
-          span: stmt.fileName.span,
-        });
-      }
+      checkPathType(helpers, stmt.fileName, 'WRITEFILE');
       // Values are formatted at runtime; any typed expression is accepted.
       helpers.inferExpr(stmt.value);
-      const path = literalFilePath(stmt.fileName);
-      if (path !== null) {
-        const st = helpers.openFiles.get(path);
-        if (!st) {
-          helpers.diag({
-            code: 'C_FILE_NOT_OPEN',
-            message: `WRITEFILE '${path}' but the file is not open.`,
-            span: stmt.span,
-          });
-        } else if (st.mode === 'READ') {
-          helpers.diag({
-            code: 'C_FILE_MODE',
-            message: `WRITEFILE '${path}' requires OPENFILE FOR WRITE or APPEND.`,
-            span: stmt.span,
-          });
-        }
-      }
+      requireOpenMode(
+        helpers,
+        literalFilePath(stmt.fileName),
+        stmt.span,
+        'WRITEFILE',
+        ['WRITE', 'APPEND'],
+      );
       return;
     }
     case 'CloseFileStatement': {
-      const pathType = helpers.inferExpr(stmt.fileName);
-      if (!isStringy(pathType) && pathType.kind !== 'error') {
-        helpers.diag({
-          code: 'C_FILE_PATH_TYPE',
-          message: `CLOSEFILE path has type ${pathType.kind === 'scalar' ? pathType.name : pathType.kind}; expected STRING.`,
-          span: stmt.fileName.span,
-        });
-      }
+      checkPathType(helpers, stmt.fileName, 'CLOSEFILE');
       const path = literalFilePath(stmt.fileName);
       if (path !== null) {
         if (!helpers.openFiles.has(path)) {
@@ -175,6 +180,66 @@ export function checkFileStatement(
           helpers.openFiles.delete(path);
         }
       }
+      return;
+    }
+    case 'SeekStatement': {
+      checkPathType(helpers, stmt.fileName, 'SEEK');
+      const addrType = helpers.inferExpr(stmt.address);
+      if (!isIntegerType(addrType) && addrType.kind !== 'error') {
+        helpers.diag({
+          code: 'C_FILE_SEEK_TYPE',
+          message: `SEEK address has type ${helpers.formatType(addrType)}; expected INTEGER.`,
+          span: stmt.address.span,
+          help: 'Cambridge §9.2: the address is an INTEGER record number (records from the start of the file).',
+        });
+      }
+      requireOpenMode(helpers, literalFilePath(stmt.fileName), stmt.span, 'SEEK', [
+        'RANDOM',
+      ]);
+      return;
+    }
+    case 'GetRecordStatement': {
+      const lhs = helpers.checkAssignableTarget(
+        stmt.target,
+        stmt.span,
+        'GETRECORD',
+      );
+      if (lhs.kind !== 'error' && !isRecordType(lhs)) {
+        helpers.diag({
+          code: 'C_FILE_RECORD_TYPE',
+          message: `GETRECORD target has type ${helpers.formatType(lhs)}; expected a TYPE record.`,
+          span: stmt.target.span,
+          help: 'Cambridge §9.2: the variable must be of the appropriate record data type (usually a user-defined TYPE). CLASS objects are not records.',
+        });
+      }
+      checkPathType(helpers, stmt.fileName, 'GETRECORD');
+      requireOpenMode(
+        helpers,
+        literalFilePath(stmt.fileName),
+        stmt.span,
+        'GETRECORD',
+        ['RANDOM'],
+      );
+      return;
+    }
+    case 'PutRecordStatement': {
+      checkPathType(helpers, stmt.fileName, 'PUTRECORD');
+      const valueType = helpers.inferExpr(stmt.value);
+      if (valueType.kind !== 'error' && !isRecordType(valueType)) {
+        helpers.diag({
+          code: 'C_FILE_RECORD_TYPE',
+          message: `PUTRECORD value has type ${helpers.formatType(valueType)}; expected a TYPE record.`,
+          span: stmt.value.span,
+          help: 'Cambridge §9.2: PUTRECORD writes a record value (usually a user-defined TYPE). CLASS objects are not records.',
+        });
+      }
+      requireOpenMode(
+        helpers,
+        literalFilePath(stmt.fileName),
+        stmt.span,
+        'PUTRECORD',
+        ['RANDOM'],
+      );
       return;
     }
     default: {

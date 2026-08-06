@@ -104,6 +104,46 @@ OPENFILE Path FOR APPEND
     ]);
   });
 
+  it('parses OPENFILE FOR RANDOM', () => {
+    const stmt = parseOk(`OPENFILE "StudentFile.Dat" FOR RANDOM`)
+      .body[0] as OpenFileStatement;
+    expect(stmt).toMatchObject({
+      kind: 'OpenFileStatement',
+      mode: 'RANDOM',
+      fileName: { kind: 'StringLiteral', value: 'StudentFile.Dat' },
+    });
+  });
+
+  it('parses SEEK / GETRECORD / PUTRECORD', () => {
+    const ast = parseOk(`
+SEEK "StudentFile.Dat", Position
+GETRECORD "StudentFile.Dat", Pupil
+PUTRECORD "StudentFile.Dat", NewPupil
+`);
+    expect(ast.body[0]).toMatchObject({
+      kind: 'SeekStatement',
+      fileName: { kind: 'StringLiteral', value: 'StudentFile.Dat' },
+      address: { kind: 'Identifier', name: 'Position' },
+    });
+    expect(ast.body[1]).toMatchObject({
+      kind: 'GetRecordStatement',
+      target: { kind: 'Identifier', name: 'Pupil' },
+    });
+    expect(ast.body[2]).toMatchObject({
+      kind: 'PutRecordStatement',
+      value: { kind: 'Identifier', name: 'NewPupil' },
+    });
+  });
+
+  it('parses GETRECORD into an array element of records', () => {
+    const stmt = parseOk(`GETRECORD "f.dat", Pupils[1]`).body[0] as {
+      kind: string;
+      target: { kind: string };
+    };
+    expect(stmt.kind).toBe('GetRecordStatement');
+    expect(stmt.target.kind).toBe('IndexExpression');
+  });
+
   it('parses READFILE into a variable and array element', () => {
     const ast = parseOk(`
 DECLARE Line : STRING

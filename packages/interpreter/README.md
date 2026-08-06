@@ -35,11 +35,13 @@ OUTPUT "Hello " & Name
 
 ## Supported
 
-DECLARE / CONSTANT, assignment, INPUT/OUTPUT (via `RuntimeHost`; multi-value OUTPUT space-separated), IF / CASE / WHILE / REPEAT / FOR, PROCEDURE / FUNCTION / RETURN / recursion, arrays with bounds checks, Core builtins, `&`, arithmetic / logic / comparisons (AND/OR short-circuit).
+DECLARE / CONSTANT, assignment, INPUT/OUTPUT (via `RuntimeHost`; multi-value OUTPUT space-separated), IF / CASE / WHILE / REPEAT / FOR, PROCEDURE / FUNCTION / RETURN / recursion, arrays with bounds checks, Core builtins, `&`, arithmetic / logic / comparisons (AND/OR short-circuit), BYREF, DATE, record `TYPE`, OOP `CLASS`, random files, enum / pointer / SET `TYPE` + `DEFINE`.
+
+`DIV`/`MOD` truncate toward zero (including negatives).
 
 ## Not yet
 
-BYREF, DATE, OOP, RANDOM files, security sandbox.
+Security sandbox (OS isolation).
 
 ## Test
 

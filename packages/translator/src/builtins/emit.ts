@@ -7,8 +7,8 @@
  * MID indexing policy (Cambridge 1-based → Python 0-based):
  *   MID(S, start, length) → S[(start) - 1 : (start) - 1 + (length)]
  *
- * RIGHT: always `S[-(n):]` so `RIGHT(S, x+1)` is `S[-(x + 1):]`,
- * never `S[-x + 1:]` (wrong precedence).
+ * RIGHT: `_pp_right(s, n)` so `RIGHT(s, 0)` is `""` (Python `s[-0:]`
+ * would incorrectly yield the full string). Caller emits the helper.
  *
  * RAND: `random.random() * (x)` with mul parent precedence so
  * `RAND(n+1)` is not `random.random() * n + 1`.
@@ -26,11 +26,14 @@ type PrintExpr = (expr: IrExpression, parentPrec: number) => string;
 type BuiltinPythonEmit =
   | { readonly kind: 'len' }
   | { readonly kind: 'slice_left' }
-  | { readonly kind: 'slice_right' }
+  | { readonly kind: 'right' }
   | { readonly kind: 'slice_mid' }
   | { readonly kind: 'method'; readonly method: 'lower' | 'upper' }
   | { readonly kind: 'int' }
   | { readonly kind: 'rand' }
+  | { readonly kind: 'ord' }
+  | { readonly kind: 'chr' }
+  | { readonly kind: 'is_num' }
   | { readonly kind: 'attr'; readonly attr: string }
   | { readonly kind: 'date_ctor' }
   | { readonly kind: 'today' }
@@ -40,12 +43,15 @@ type BuiltinPythonEmit =
 const PYTHON_EMIT: Readonly<Record<string, BuiltinPythonEmit>> = {
   LENGTH: { kind: 'len' },
   LEFT: { kind: 'slice_left' },
-  RIGHT: { kind: 'slice_right' },
+  RIGHT: { kind: 'right' },
   MID: { kind: 'slice_mid' },
   LCASE: { kind: 'method', method: 'lower' },
   UCASE: { kind: 'method', method: 'upper' },
   INT: { kind: 'int' },
   RAND: { kind: 'rand' },
+  ASC: { kind: 'ord' },
+  CHR: { kind: 'chr' },
+  IS_NUM: { kind: 'is_num' },
   DAY: { kind: 'attr', attr: 'day' },
   MONTH: { kind: 'attr', attr: 'month' },
   YEAR: { kind: 'attr', attr: 'year' },
@@ -84,20 +90,9 @@ function emitPython(
       return `len(${printExpr(args[0]!, 0)})`;
     case 'slice_left':
       return `${parenIfNeeded(args[0]!, printExpr)}[:${printExpr(args[1]!, 0)}]`;
-    case 'slice_right': {
-      // Atoms: S[-n:] / S[-x:] (unary binds tightly).
-      // Compounds: S[-(n + 1):] so `-` applies to the whole count.
-      const count = args[1]!;
-      const n = printExpr(count, 0);
-      const atom =
-        count.kind === 'IrIntegerLiteral' ||
-        count.kind === 'IrIdentifier' ||
-        count.kind === 'IrCallExpression' ||
-        count.kind === 'IrIndexExpression' ||
-        count.kind === 'IrGroupingExpression';
-      const neg = atom ? `-${n}` : `-(${n})`;
-      return `${parenIfNeeded(args[0]!, printExpr)}[${neg}:]`;
-    }
+    case 'right':
+      // Helper: RIGHT(s, 0) → "" (s[-0:] is the full string in Python).
+      return `_pp_right(${printExpr(args[0]!, 0)}, ${printExpr(args[1]!, 0)})`;
     case 'slice_mid': {
       // Parenthesize start/length so binary `-`/`+` cannot mis-associate.
       const s = parenIfNeeded(args[0]!, printExpr);
@@ -112,6 +107,12 @@ function emitPython(
     case 'rand':
       // Parenthesize with `*` precedence: RAND(n+1) → random.random() * (n + 1)
       return `random.random() * ${printExpr(args[0]!, BINARY_PRECEDENCE['*'])}`;
+    case 'ord':
+      return `ord(${printExpr(args[0]!, 0)})`;
+    case 'chr':
+      return `chr(${printExpr(args[0]!, 0)})`;
+    case 'is_num':
+      return `_pp_is_num(${printExpr(args[0]!, 0)})`;
     case 'attr':
       return `${parenIfNeeded(args[0]!, printExpr)}.${emit.attr}`;
     case 'date_ctor':
@@ -155,6 +156,14 @@ export function cambridgeBuiltinFromPythonCall(
       return 'LENGTH';
     case 'int':
       return 'INT';
+    case 'ord':
+      return 'ASC';
+    case 'chr':
+      return 'CHR';
+    case '_pp_is_num':
+      return 'IS_NUM';
+    case '_pp_right':
+      return 'RIGHT';
     default:
       return lookupBuiltin(callee)?.name;
   }

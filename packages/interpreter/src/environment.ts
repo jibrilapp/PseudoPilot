@@ -1,5 +1,5 @@
 import { identKey } from '@pseudopilot/checker';
-import type { Binding, BindingKind, RuntimeValue } from './value.js';
+import type { Binding, BindingKind, RuntimeValue, ValuePlace } from './value.js';
 import { runtimeFail } from './value.js';
 
 /**
@@ -25,6 +25,36 @@ export class Environment {
       );
     }
     this.bindings.set(key, { name, kind, typeName, value });
+  }
+
+  /**
+   * Bind a BYREF parameter so reads/writes go through `place` (caller alias).
+   */
+  defineByRef(
+    name: string,
+    typeName: string,
+    place: ValuePlace,
+  ): void {
+    const key = identKey(name);
+    if (this.bindings.has(key)) {
+      throw runtimeFail(
+        'R_DUP_BINDING',
+        `Duplicate binding '${name}' in this scope.`,
+      );
+    }
+    const binding: Binding = {
+      name,
+      kind: 'parameter',
+      typeName,
+      byRef: true,
+      get value() {
+        return place.get();
+      },
+      set value(v: RuntimeValue) {
+        place.set(v);
+      },
+    };
+    this.bindings.set(key, binding);
   }
 
   /** Look up binding walking parents (Cambridge case-insensitive). */

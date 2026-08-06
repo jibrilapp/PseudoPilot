@@ -56,8 +56,9 @@ Count ← 2 + 3 * 4
 Q ← 10 DIV 3
 R ← 10 MOD 3
 `);
-    expect(result.ok).toBe(true);
-    expect(norm(result.code)).toBe('Q = 10 // 3\nR = 10 % 3\n');
+    expect(result.code).toContain('def _pp_div(a, b):');
+    expect(norm(result.code)).toContain('Q = _pp_div(10, 3)\n');
+    expect(norm(result.code)).toContain('R = _pp_mod(10, 3)\n');
   });
 
   it('translates INPUT and OUTPUT', () => {
@@ -436,6 +437,61 @@ CLOSEFILE Path
     expect(norm(back.code)).toContain('OPENFILE Path FOR WRITE');
     expect(norm(back.code)).toContain('WRITEFILE Path, "x"');
     expect(norm(back.code)).toContain('CLOSEFILE Path');
+  });
+
+  it('translates OPENFILE FOR RANDOM / SEEK / GETRECORD / PUTRECORD', () => {
+    const result = translatePseudocodeToPython(`
+TYPE Student
+  DECLARE LastName : STRING
+ENDTYPE
+DECLARE Pupil : Student
+OPENFILE "StudentFile.Dat" FOR RANDOM
+SEEK "StudentFile.Dat", 0
+PUTRECORD "StudentFile.Dat", Pupil
+GETRECORD "StudentFile.Dat", Pupil
+CLOSEFILE "StudentFile.Dat"
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('_pp_random_open(');
+    expect(result.code).toContain('_pp_random_seek(');
+    expect(result.code).toContain('_pp_random_put(');
+    expect(result.code).toContain('_pp_random_get(');
+    expect(result.code).toContain('_pp_random_close(');
+    expect(result.code).toContain('import copy');
+  });
+
+  it('round-trips random file I/O through Python', () => {
+    const src = `
+TYPE Student
+  DECLARE LastName : STRING
+ENDTYPE
+DECLARE Pupil : Student
+OPENFILE "StudentFile.Dat" FOR RANDOM
+SEEK "StudentFile.Dat", 10
+PUTRECORD "StudentFile.Dat", Pupil
+GETRECORD "StudentFile.Dat", Pupil
+CLOSEFILE "StudentFile.Dat"
+`;
+    const py = translatePseudocodeToPython(src);
+    expect(py.ok).toBe(true);
+    const back = translatePythonToPseudocode(py.code);
+    expect(back.ok).toBe(true);
+    expect(norm(back.code)).toContain('OPENFILE "StudentFile.Dat" FOR RANDOM');
+    expect(norm(back.code)).toContain('SEEK "StudentFile.Dat", 10');
+    expect(norm(back.code)).toContain('PUTRECORD "StudentFile.Dat", Pupil');
+    expect(norm(back.code)).toContain('GETRECORD "StudentFile.Dat", Pupil');
+    expect(norm(back.code)).toContain('CLOSEFILE "StudentFile.Dat"');
+  });
+
+  it('does not break sequential file emission when random helpers are unused', () => {
+    const result = translatePseudocodeToPython(`
+OPENFILE "f.txt" FOR WRITE
+WRITEFILE "f.txt", "hi"
+CLOSEFILE "f.txt"
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).not.toContain('_pp_random');
+    expect(result.code).toContain('open("f.txt", "w")');
   });
 
   it('translates DECLARE scalars', () => {
@@ -1457,14 +1513,14 @@ PROCEDURE Bad()
     expect(result.ok).toBe(false);
   });
 
-  it('rejects Python-keyword procedure names', () => {
+  it('sanitizes Python-keyword procedure names', () => {
     const result = translatePseudocodeToPython(`
 PROCEDURE import()
     OUTPUT 1
 ENDPROCEDURE
 `);
-    expect(result.ok).toBe(false);
-    expect(result.diagnostics.some((d) => d.code === 'T_PROC_PY_KEYWORD')).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain('def import_():');
   });
 
   it('rejects duplicate procedure parameters', () => {
@@ -1493,14 +1549,14 @@ ENDPROCEDURE
     expect(result.diagnostics.some((d) => d.code === 'T_CALL_BEFORE_PROC')).toBe(true);
   });
 
-  it('warns when procedure shadows print', () => {
+  it('sanitizes procedure names that collide with print', () => {
     const result = translatePseudocodeToPython(`
 PROCEDURE print()
     OUTPUT 1
 ENDPROCEDURE
 `);
     expect(result.ok).toBe(true);
-    expect(result.diagnostics.some((d) => d.code === 'T_PROC_SHADOWS_BUILTIN')).toBe(true);
+    expect(result.code).toContain('def print_():');
   });
 });
 
@@ -1992,20 +2048,18 @@ NEXT I
     expect(result.code).not.toContain('for I in range');
   });
 
-  it('diagnostics: REJECT Python keyword DECLARE/CONSTANT names', () => {
+  it('sanitizes Python keyword DECLARE/CONSTANT names', () => {
     const decl = translatePseudocodeToPython(`DECLARE lambda : INTEGER\n`, {
       semanticCheck: false,
     });
-    expect(decl.ok).toBe(false);
-    expect(decl.diagnostics.some((d) => d.code === 'T_DECL_PY_KEYWORD')).toBe(true);
-    expect(decl.code).not.toContain('lambda:');
+    expect(decl.ok).toBe(true);
+    expect(decl.code).toContain('lambda_: int');
 
     const cons = translatePseudocodeToPython(`CONSTANT def = 1\n`, {
       semanticCheck: false,
     });
-    expect(cons.ok).toBe(false);
-    expect(cons.diagnostics.some((d) => d.code === 'T_DECL_PY_KEYWORD')).toBe(true);
-    expect(cons.code).not.toContain('def =');
+    expect(cons.ok).toBe(true);
+    expect(cons.code).toContain('def_ = 1  # CONSTANT');
   });
 
   it('diagnostics: DECLARE then CONSTANT same name', () => {
@@ -2020,14 +2074,12 @@ CONSTANT X = 1
     expect(result.diagnostics.some((d) => d.code === 'C_DUP_CONSTANT')).toBe(true);
   });
 
-  it('warns when DECLARE shadows translator builtins', () => {
+  it('sanitizes DECLARE that would shadow translator builtins', () => {
     const result = translatePseudocodeToPython(`DECLARE print : INTEGER\n`, {
       semanticCheck: false,
     });
     expect(result.ok).toBe(true);
-    expect(result.diagnostics.some((d) => d.code === 'T_DECL_SHADOWS_BUILTIN')).toBe(
-      true,
-    );
+    expect(result.code).toContain('print_: int');
   });
 
   it('semantic check: undeclared identifier fails translate ok', () => {
@@ -2140,7 +2192,7 @@ OUTPUT Name & "!"
     const code = result.code;
     expect(code).toContain('len(Name)');
     expect(code).toContain('Name[:3]');
-    expect(code).toContain('Name[-2:]');
+    expect(code).toContain('_pp_right(Name, 2)');
     expect(code).toContain('Name[(2) - 1 : (2) - 1 + (3)]');
     expect(code).toContain('Name.lower()');
     expect(code).toContain('Name.upper()');
@@ -2159,8 +2211,8 @@ OUTPUT RAND(N + 1)
       { semanticCheck: true },
     );
     expect(result.ok).toBe(true);
-    // Must NOT emit S[-N + 1:] or random.random() * N + 1
-    expect(result.code).toContain('S[-(N + 1):]');
+    // RIGHT uses helper (RIGHT(s,0) fidelity); RAND must parenthesize count.
+    expect(result.code).toContain('_pp_right(S, N + 1)');
     expect(result.code).not.toMatch(/S\[-N \+ 1:\]/);
     expect(result.code).toContain('random.random() * (N + 1)');
     expect(result.code).not.toMatch(/random\.random\(\) \* N \+ 1/);
@@ -2178,6 +2230,34 @@ OUTPUT RAND(10)
     expect(result.code).toContain('import random');
     expect(result.code).toContain('int(4.8)');
     expect(result.code).toContain('random.random() * 10');
+  });
+
+  it('translates ASC / CHR / IS_NUM and reverses ord/chr/_pp_is_num', () => {
+    const fwd = translatePseudocodeToPython(
+      `
+DECLARE C : CHAR
+DECLARE N : INTEGER
+DECLARE Ok : BOOLEAN
+N ← ASC('A')
+C ← CHR(65)
+Ok ← IS_NUM("-12.36")
+OUTPUT N
+OUTPUT C
+OUTPUT Ok
+`,
+      { semanticCheck: true },
+    );
+    expect(fwd.ok, JSON.stringify(fwd.diagnostics)).toBe(true);
+    expect(fwd.code).toContain("ord('A')");
+    expect(fwd.code).toContain('chr(65)');
+    expect(fwd.code).toContain('_pp_is_num("-12.36")');
+    expect(fwd.code).toContain('def _pp_is_num');
+
+    const back = translatePythonToPseudocode(fwd.code);
+    expect(back.ok, JSON.stringify(back.diagnostics)).toBe(true);
+    expect(back.code).toContain('ASC');
+    expect(back.code).toContain('CHR');
+    expect(back.code).toContain('IS_NUM');
   });
 
   it('round-trips builtins via Python', () => {
@@ -2794,10 +2874,10 @@ OUTPUT "ok"
         'CLASS Pet',
         '    PRIVATE Name : STRING',
         '    PUBLIC PROCEDURE NEW(GivenName : STRING)',
-        '        Name ← GivenName',
+        '        SELF.Name ← GivenName',
         '    ENDPROCEDURE',
         '    PUBLIC FUNCTION GetName() RETURNS STRING',
-        '        RETURN Name',
+        '        RETURN SELF.Name',
         '    ENDFUNCTION',
         'ENDCLASS',
         '',
@@ -2805,7 +2885,7 @@ OUTPUT "ok"
         '    PRIVATE Breed : STRING',
         '    PUBLIC PROCEDURE NEW(GivenName : STRING, GivenBreed : STRING)',
         '        SUPER.NEW(GivenName)',
-        '        Breed ← GivenBreed',
+        '        SELF.Breed ← GivenBreed',
         '    ENDPROCEDURE',
         'ENDCLASS',
         '',
@@ -2823,17 +2903,17 @@ OUTPUT "ok"
         'CLASS Pet',
         '    PRIVATE Name : STRING',
         '    PUBLIC PROCEDURE NEW(GivenName : STRING)',
-        '        Name ← GivenName',
+        '        SELF.Name ← GivenName',
         '    ENDPROCEDURE',
         '    PUBLIC FUNCTION GetName() RETURNS STRING',
-        '        RETURN Name',
+        '        RETURN SELF.Name',
         '    ENDFUNCTION',
         'ENDCLASS',
         'CLASS Cat INHERITS Pet',
         '    PRIVATE Breed : STRING',
         '    PUBLIC PROCEDURE NEW(GivenName : STRING, GivenBreed : STRING)',
         '        SUPER.NEW(GivenName)',
-        '        Breed ← GivenBreed',
+        '        SELF.Breed ← GivenBreed',
         '    ENDPROCEDURE',
         'ENDCLASS',
         'DECLARE MyCat : Cat',
@@ -3085,5 +3165,119 @@ OUTPUT YEAR(D)
     expect(back).toContain('DECLARE D : DATE');
     expect(back).toMatch(/SETDATE|04\/10\/2003/);
     expect(back).toContain('YEAR(D)');
+  });
+});
+
+describe('reverse CLASS recovery correctness', () => {
+  it('recovers self.field = parameter as SELF.field ← parameter', () => {
+    const result = translatePythonToPseudocode(`
+class Player:
+    def __init__(self, name: str) -> None:
+        self.name = name
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(norm(result.code)).toContain('SELF.name ← name');
+    expect(norm(result.code)).toContain('PRIVATE name : STRING');
+    expect(norm(result.code)).toContain('NEW(name : STRING)');
+    expect(norm(result.code)).not.toMatch(/(^|\n)\s+name ← name\s*(\n|$)/);
+  });
+
+  it('infers field type from literal assignment', () => {
+    const result = translatePythonToPseudocode(`
+class Player:
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.label = "x"
+        self.flag = True
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(norm(result.code)).toContain('PRIVATE attempts : INTEGER');
+    expect(norm(result.code)).toContain('PRIVATE label : STRING');
+    expect(norm(result.code)).toContain('PRIVATE flag : BOOLEAN');
+    expect(norm(result.code)).toContain('SELF.attempts ← 0');
+  });
+
+  it('does not invent INTEGER for unannotated constructor params', () => {
+    const result = translatePythonToPseudocode(`
+class Player:
+    def __init__(self, name) -> None:
+        self.name = name
+`);
+    expect(norm(result.code)).toContain('name : UNKNOWN');
+    expect(norm(result.code)).toContain('PRIVATE name : UNKNOWN');
+    expect(
+      result.diagnostics.some((d) => d.code === 'T_CLASS_PARAM_UNKNOWN_TYPE'),
+    ).toBe(true);
+    expect(
+      result.diagnostics.some((d) => d.code === 'T_PROC_DEFAULT_TYPE'),
+    ).toBe(false);
+  });
+
+  it('errors on undefined RHS identifier without inventing a binding', () => {
+    const result = translatePythonToPseudocode(`
+class Player:
+    def __init__(self, name) -> None:
+        self.name = name
+        self.age = age
+`);
+    expect(result.ok).toBe(false);
+    expect(
+      result.diagnostics.some((d) => d.code === 'T_CLASS_UNDECL_IDENT'),
+    ).toBe(true);
+    expect(norm(result.code)).toContain('SELF.age ← age');
+    expect(norm(result.code)).toContain('PRIVATE age : UNKNOWN');
+  });
+
+  it('supports mixed inferred types from annotations and literals', () => {
+    const result = translatePythonToPseudocode(`
+class Player:
+    def __init__(self, name: str, score: int) -> None:
+        self.name = name
+        self.score = score
+        self.lives = 3
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(norm(result.code)).toContain('PRIVATE name : STRING');
+    expect(norm(result.code)).toContain('PRIVATE score : INTEGER');
+    expect(norm(result.code)).toContain('PRIVATE lives : INTEGER');
+    expect(norm(result.code)).toContain(
+      'PUBLIC PROCEDURE NEW(name : STRING, score : INTEGER)',
+    );
+  });
+
+  it('preserves annotated parameter lists exactly', () => {
+    const result = translatePythonToPseudocode(`
+class Box:
+    def __init__(self, Width: float, Label: str) -> None:
+        self.Width = Width
+        self.Label = Label
+`);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(norm(result.code)).toContain(
+      'PUBLIC PROCEDURE NEW(Width : REAL, Label : STRING)',
+    );
+    expect(norm(result.code)).toContain('SELF.Width ← Width');
+    expect(norm(result.code)).toContain('SELF.Label ← Label');
+  });
+
+  it('round-trips class construction via Python with SELF field writes', () => {
+    const src = `
+CLASS Player
+PRIVATE Name : STRING
+PRIVATE Attempts : INTEGER
+PUBLIC PROCEDURE NEW(GivenName : STRING)
+  Name ← GivenName
+  Attempts ← 0
+ENDPROCEDURE
+ENDCLASS
+DECLARE P : Player
+P ← NEW Player("Ada")
+`;
+    const back = roundTripViaPython(src);
+    expect(back).toContain('CLASS Player');
+    expect(back).toContain('SELF.Name ← GivenName');
+    expect(back).toContain('SELF.Attempts ← 0');
+    expect(back).toContain('NEW Player("Ada")');
+    expect(back).not.toMatch(/(^|\n)\s+Name ← GivenName\s*(\n|$)/);
   });
 });

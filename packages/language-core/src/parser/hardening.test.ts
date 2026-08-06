@@ -82,11 +82,29 @@ describe('lexer hardening', () => {
     expect(result.diagnostics.some((d) => d.code === 'E_INT_RANGE')).toBe(true);
   });
 
-  it('lexes leading-dot reals', () => {
-    const ast = parseOk('X ← .5');
-    expect((ast.body[0] as AssignmentStatement).value).toMatchObject({
+  it('lexes leading-dot reals with a Cambridge warning', () => {
+    const result = parse('X ← .5');
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.some((d) => d.code === 'W_REAL_LITERAL')).toBe(true);
+    expect((result.ast.body[0] as AssignmentStatement).value).toMatchObject({
       kind: 'RealLiteral',
       value: 0.5,
+    });
+  });
+
+  it('rejects leading-dot reals in strictCambridge mode', () => {
+    const result = parse('X ← .5', { strictCambridge: true });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'E_REAL_LITERAL')).toBe(true);
+  });
+
+  it('lexes trailing-dot reals with a Cambridge warning', () => {
+    const result = parse('X ← 5.');
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.some((d) => d.code === 'W_REAL_LITERAL')).toBe(true);
+    expect((result.ast.body[0] as AssignmentStatement).value).toMatchObject({
+      kind: 'RealLiteral',
+      value: 5.0,
     });
   });
 });
