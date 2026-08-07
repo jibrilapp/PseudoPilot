@@ -1,0 +1,7 @@
+def _pp_show(v): return v.name if hasattr(v, "name") and type(v).__module__ == "enum" else ("NIL" if v is None else v)
+
+def _pp_define(_type, *values): return set(values)
+
+Digits = set  # TYPE Digits = SET OF INTEGER (int)
+Lucky = _pp_define("Digits", 3, 7, 9)
+print(_pp_show(Lucky))

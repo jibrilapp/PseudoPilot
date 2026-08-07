@@ -30,7 +30,7 @@ function largeProgram(n: number): string {
 
 describe('compiler-service package', () => {
   it('exports a version', () => {
-    expect(PACKAGE_VERSION).toBe('0.1.0');
+    expect(PACKAGE_VERSION).toBe('1.0.0-beta.0');
   });
 
   it('hashes sources stably', () => {

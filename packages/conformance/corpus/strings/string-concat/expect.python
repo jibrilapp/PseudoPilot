@@ -1,0 +1,4 @@
+S: str
+S = "Hello" + " " + "World"
+print(S)
+print(len(S))

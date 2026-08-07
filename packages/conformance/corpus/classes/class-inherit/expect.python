@@ -1,0 +1,12 @@
+class Pet:
+    def __init__(self, GivenName: str) -> None:
+        self.Name = GivenName
+    def GetName(self) -> str:
+        return self.Name
+class Cat(Pet):
+    def __init__(self, GivenName: str, GivenBreed: str) -> None:
+        super().__init__(GivenName)
+        self.Breed = GivenBreed
+MyCat: Cat | None = None
+MyCat = Cat("Kitty", "Shorthaired")
+print(MyCat.GetName())

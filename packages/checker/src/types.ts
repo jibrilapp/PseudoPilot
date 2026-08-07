@@ -157,12 +157,25 @@ export type SymbolInfo = {
 /** Soft cap so live IDE translate cannot flood the UI / memory with diag objects. */
 export const DEFAULT_MAX_CHECKER_DIAGNOSTICS = 256;
 
+/**
+ * Max nested compound statements (IF/WHILE/REPEAT/FOR/CASE) during check.
+ * Aligns with parser {@link DEFAULT_MAX_BLOCK_NESTING} to avoid stack overflows.
+ */
+export const DEFAULT_MAX_STATEMENT_NESTING = 512;
+
+export const C_NESTING_TOO_DEEP = 'C_NESTING_TOO_DEEP' as const;
+
 export type CheckOptions = {
   /**
    * Stop emitting further diagnostics after this many (still finishes the walk).
    * Default: {@link DEFAULT_MAX_CHECKER_DIAGNOSTICS}.
    */
   readonly maxDiagnostics?: number;
+  /**
+   * Max nested compound-statement depth.
+   * Default: {@link DEFAULT_MAX_STATEMENT_NESTING}.
+   */
+  readonly maxStatementNesting?: number;
 };
 
 export type CheckResult = {

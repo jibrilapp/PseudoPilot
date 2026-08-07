@@ -1,0 +1,13 @@
+{
+  "title": "Paper 2–style array total and average",
+  "tags": [
+    "past-paper",
+    "array"
+  ],
+  "expectOutput": [
+    "220",
+    "55.0"
+  ],
+  "reverse": "check",
+  "notes": "Original equivalent for array aggregation tasks."
+}

@@ -1,0 +1,6 @@
+DECLARE N : INTEGER
+N ← 1
+REPEAT
+    OUTPUT N
+    N ← N + 1
+UNTIL N > 3

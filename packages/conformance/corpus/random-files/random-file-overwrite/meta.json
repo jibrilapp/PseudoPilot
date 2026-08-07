@@ -1,0 +1,11 @@
+{
+  "title": "Random file overwrite same SEEK slot",
+  "tags": [
+    "file",
+    "random"
+  ],
+  "expectOutput": [
+    "99"
+  ],
+  "reverse": "check"
+}

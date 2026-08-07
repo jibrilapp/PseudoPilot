@@ -1,0 +1,4 @@
+DECLARE A, B : INTEGER
+A ← 1
+B ← 2
+OUTPUT A, B, A + B

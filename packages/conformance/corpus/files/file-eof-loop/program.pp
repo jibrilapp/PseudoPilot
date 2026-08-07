@@ -1,0 +1,11 @@
+DECLARE Line : STRING
+OPENFILE "t.txt" FOR WRITE
+WRITEFILE "t.txt", "a"
+WRITEFILE "t.txt", "b"
+CLOSEFILE "t.txt"
+OPENFILE "t.txt" FOR READ
+WHILE NOT EOF("t.txt")
+  READFILE "t.txt", Line
+  OUTPUT Line
+ENDWHILE
+CLOSEFILE "t.txt"

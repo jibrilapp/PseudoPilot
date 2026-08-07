@@ -14,7 +14,7 @@ import {
   IDE_DOCUMENT_URI,
 } from '@/lib/languageService';
 import type { RuntimeSnapshot } from '@/lib/runtime/types';
-import type { IdeDiagnostic } from '@/lib/translation/types';
+import type { IdeDiagnostic, TranslationStatus } from '@/lib/translation/types';
 import type { EditOrigin } from '@/lib/translation/bidirectionalSync';
 import { summariseAst } from './astSummary';
 import { getEditorSelection } from './selection';
@@ -22,7 +22,7 @@ import { getEditorSelection } from './selection';
 export type CollectAIContextInput = {
   readonly pseudocode: string;
   readonly python: string;
-  readonly translationStatus: 'idle' | 'ok' | 'error';
+  readonly translationStatus: TranslationStatus;
   readonly translationErrorSide: EditOrigin | null;
   readonly translationDiagnostics: readonly IdeDiagnostic[];
   readonly runtime: RuntimeSnapshot;
@@ -112,7 +112,11 @@ export function collectAIContext(input: CollectAIContextInput): AIContext {
     pseudocode: input.pseudocode,
     python: input.python,
     translation: {
-      status: input.translationStatus,
+      // AI coach package status is idle|ok|error — pending is in-flight sync.
+      status:
+        input.translationStatus === 'pending'
+          ? 'idle'
+          : input.translationStatus,
       errorSide: input.translationErrorSide,
     },
     parserDiagnostics,

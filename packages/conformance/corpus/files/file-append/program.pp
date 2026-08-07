@@ -1,0 +1,13 @@
+OPENFILE "a.txt" FOR WRITE
+WRITEFILE "a.txt", "x"
+CLOSEFILE "a.txt"
+OPENFILE "a.txt" FOR APPEND
+WRITEFILE "a.txt", "y"
+CLOSEFILE "a.txt"
+DECLARE Line : STRING
+OPENFILE "a.txt" FOR READ
+READFILE "a.txt", Line
+OUTPUT Line
+READFILE "a.txt", Line
+OUTPUT Line
+CLOSEFILE "a.txt"

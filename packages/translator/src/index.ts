@@ -18,7 +18,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/translator' as const;
-export const PACKAGE_VERSION = '0.14.0' as const;
+export const PACKAGE_VERSION = '1.0.0-beta.0' as const;
 export const TRANSLATOR_SUBSET =
   'v14-assign-io-expr-control-procedure-function-declare-check-builtins-files-type-class' as const;
 

@@ -1,0 +1,11 @@
+{
+  "title": "FOR with STEP",
+  "tags": [
+    "for",
+    "step"
+  ],
+  "expectOutput": [
+    "16"
+  ],
+  "reverse": "check"
+}

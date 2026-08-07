@@ -1,0 +1,18 @@
+def _pp_eof(f):
+    pos = f.tell()
+    ch = f.read(1)
+    if ch == "":
+        return True
+    f.seek(pos)
+    return False
+
+Line: str
+_f_t_txt = open("t.txt", "w")
+_f_t_txt.write(str("a") + "\n")
+_f_t_txt.write(str("b") + "\n")
+_f_t_txt.close()
+_f_t_txt = open("t.txt", "r")
+while not _pp_eof(_f_t_txt):
+    Line = _f_t_txt.readline().rstrip("\n")
+    print(Line)
+_f_t_txt.close()

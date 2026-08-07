@@ -1,0 +1,11 @@
+{
+  "title": "Pointer address-of and dereference mutation",
+  "tags": [
+    "type",
+    "pointer"
+  ],
+  "expectOutput": [
+    "15"
+  ],
+  "reverse": "check"
+}

@@ -5,8 +5,9 @@ import { CORPUS } from './corpus/index.js';
 import { checkOk } from './helpers.js';
 
 describe('conformance / semantic checker', () => {
-  it('accepts every corpus program', () => {
+  it('accepts every clean corpus program', () => {
     for (const entry of CORPUS) {
+      if (entry.expectClean === false) continue;
       checkOk(entry.source);
     }
   });

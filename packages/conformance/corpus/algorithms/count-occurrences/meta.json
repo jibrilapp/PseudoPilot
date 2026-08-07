@@ -1,0 +1,11 @@
+{
+  "title": "Count occurrences of a value",
+  "tags": [
+    "algorithm",
+    "array"
+  ],
+  "expectOutput": [
+    "3"
+  ],
+  "reverse": "check"
+}

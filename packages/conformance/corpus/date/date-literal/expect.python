@@ -1,0 +1,7 @@
+from datetime import date
+
+D: date  # DATE
+D = date(2024, 8, 15)
+print(D.day)
+print(D.month)
+print(D.year)

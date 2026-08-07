@@ -1,0 +1,17 @@
+{
+  "title": "Paper 2 insert ASC / CHR / IS_NUM",
+  "tags": [
+    "builtin",
+    "insert",
+    "regression"
+  ],
+  "expectOutput": [
+    "65",
+    "B",
+    "TRUE",
+    "FALSE"
+  ],
+  "reverse": "skip",
+  "reverseSkipReason": "Reverse translation does not preserve runtime output (best-effort reverse).",
+  "notes": "Exam-insert helpers treated as Core in PseudoPilot."
+}

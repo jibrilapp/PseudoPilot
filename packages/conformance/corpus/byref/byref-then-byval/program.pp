@@ -1,0 +1,7 @@
+PROCEDURE AddInto(BYREF Total : INTEGER, BYVAL Delta : INTEGER)
+  Total ← Total + Delta
+ENDPROCEDURE
+DECLARE S : INTEGER
+S ← 10
+CALL AddInto(S, 5)
+OUTPUT S

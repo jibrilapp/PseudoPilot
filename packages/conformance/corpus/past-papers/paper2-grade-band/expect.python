@@ -1,0 +1,14 @@
+Mark: int
+Grade: str  # CHAR
+Mark = 67
+if Mark >= 80:
+    Grade = 'A'
+else:
+    if Mark >= 70:
+        Grade = 'B'
+    else:
+        if Mark >= 60:
+            Grade = 'C'
+        else:
+            Grade = 'U'
+print(Grade)

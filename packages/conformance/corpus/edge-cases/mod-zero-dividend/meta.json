@@ -1,0 +1,13 @@
+{
+  "title": "MOD and DIV with zero dividend",
+  "tags": [
+    "expr",
+    "divmod",
+    "edge"
+  ],
+  "expectOutput": [
+    "0",
+    "0"
+  ],
+  "reverse": "check"
+}

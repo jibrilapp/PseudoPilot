@@ -1,0 +1,6 @@
+def Inc(N: int):
+    N = N + 1
+A: int
+A = 5
+Inc(A)
+print(A)

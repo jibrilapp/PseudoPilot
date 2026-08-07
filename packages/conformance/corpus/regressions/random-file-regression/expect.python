@@ -1,0 +1,35 @@
+from dataclasses import dataclass
+
+import copy
+
+_pp_random_files = dict()
+def _pp_random_open(path):
+    if path not in _pp_random_files:
+        _pp_random_files[path] = [dict(), 0]
+    return _pp_random_files[path]
+
+def _pp_random_seek(f, n):
+    f[1] = n
+
+def _pp_random_get(f):
+    return copy.deepcopy(f[0][f[1]])
+
+def _pp_random_put(f, rec):
+    f[0][f[1]] = copy.deepcopy(rec)
+
+def _pp_random_close(f):
+    pass
+
+@dataclass
+class Rec:
+    N: int = 0
+W: Rec = Rec()
+R: Rec = Rec()
+W.N = 42
+_f_Reg_Dat = _pp_random_open("Reg.Dat")
+_pp_random_seek(_f_Reg_Dat, 0)
+_pp_random_put(_f_Reg_Dat, W)
+_pp_random_seek(_f_Reg_Dat, 0)
+R = _pp_random_get(_f_Reg_Dat)
+_pp_random_close(_f_Reg_Dat)
+print(R.N)

@@ -1,0 +1,18 @@
+def _pp_cell(value): return [value]
+
+def SWAP(X: int, Y: int):  # BYREF X, Y
+    Temp: int
+    Temp = X[0]
+    X[0] = Y[0]
+    Y[0] = Temp
+A: int
+B: int
+A = 3
+B = 7
+_pp_ref_0 = _pp_cell(A)
+_pp_ref_1 = _pp_cell(B)
+SWAP(_pp_ref_0, _pp_ref_1)
+A = _pp_ref_0[0]
+B = _pp_ref_1[0]
+print(A)
+print(B)

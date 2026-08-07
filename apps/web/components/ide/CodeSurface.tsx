@@ -41,6 +41,8 @@ type CodeSurfaceProps = {
   externalMarkers?: readonly MonacoMarkerData[];
   /** Fired when the user selection changes (AI Coach grounding). */
   onSelectionChange?: (text: string) => void;
+  /** Jump to line (Problems panel / diagnostics). */
+  revealRequest?: { line: number; column?: number; nonce: number } | null;
 };
 
 /**
@@ -63,6 +65,7 @@ export function CodeSurface({
   onToggleBreakpoint,
   externalMarkers = [],
   onSelectionChange,
+  revealRequest = null,
 }: CodeSurfaceProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -195,6 +198,18 @@ export function CodeSurface({
   }, [activeLine, language]);
 
   useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !revealRequest || language !== 'pseudocode') return;
+    const col = revealRequest.column ?? 1;
+    editor.revealPositionInCenter({
+      lineNumber: revealRequest.line,
+      column: col,
+    });
+    editor.setPosition({ lineNumber: revealRequest.line, column: col });
+    editor.focus();
+  }, [revealRequest, language]);
+
+  useEffect(() => {
     return () => {
       markerDebounceRef.current.cancel();
       mouseDisposeRef.current?.dispose();
@@ -295,14 +310,22 @@ export function CodeSurface({
           lineHeight: MONACO_FONT.lineHeight,
           fontFamily: MONACO_FONT.fontFamily,
           fontLigatures: true,
-          minimap: { enabled: true },
+          minimap: {
+            enabled: true,
+            maxColumn: 100,
+            renderCharacters: false,
+            showSlider: 'mouseover',
+            scale: 1,
+            side: 'right',
+          },
           lineNumbers: 'on',
+          lineNumbersMinChars: 3,
           glyphMargin: language === 'pseudocode',
           folding: true,
           automaticLayout: true,
           scrollBeyondLastLine: false,
           wordWrap: 'on',
-          renderLineHighlight: 'line',
+          renderLineHighlight: 'all',
           matchBrackets: 'always',
           autoIndent: 'full',
           tabSize: 2,
@@ -312,14 +335,26 @@ export function CodeSurface({
           scrollbar: {
             verticalScrollbarSize: 10,
             horizontalScrollbarSize: 10,
+            verticalSliderSize: 8,
+            horizontalSliderSize: 8,
+            useShadows: false,
           },
           padding: { top: 8, bottom: 8 },
           overviewRulerBorder: false,
+          overviewRulerLanes: 2,
           fixedOverflowWidgets: true,
+          smoothScrolling: true,
+          cursorBlinking: 'smooth',
+          renderWhitespace: 'selection',
+          bracketPairColorization: { enabled: true },
           ariaLabel: ariaLabel,
         }}
         loading={
-          <div className="flex h-full items-center justify-center text-[12px] text-pp-muted">
+          <div className="flex h-full items-center justify-center gap-2 text-[12px] text-pp-muted">
+            <span
+              className="h-1.5 w-1.5 animate-pulse rounded-full bg-pp-accent/70"
+              aria-hidden
+            />
             Loading editor…
           </div>
         }

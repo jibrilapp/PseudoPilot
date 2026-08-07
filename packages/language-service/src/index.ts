@@ -7,7 +7,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/language-service' as const;
-export const PACKAGE_VERSION = '0.1.0' as const;
+export const PACKAGE_VERSION = '1.0.0-beta.0' as const;
 
 export {
   LanguageService,

@@ -1,0 +1,8 @@
+def _pp_right(s, n): return s[-n:] if n else ""
+
+print("ABCDEF"[:3])
+print(_pp_right("ABCDEF", 2))
+print("ABCDEF"[(2) - 1 : (2) - 1 + (3)])
+print("AbC".lower())
+print("AbC".upper())
+print(int(3.9))

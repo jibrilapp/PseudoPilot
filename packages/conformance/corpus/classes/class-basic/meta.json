@@ -1,0 +1,12 @@
+{
+  "title": "Basic CLASS constructor and getter",
+  "tags": [
+    "class",
+    "oop"
+  ],
+  "expectOutput": [
+    "11"
+  ],
+  "reverse": "skip",
+  "reverseSkipReason": "Reverse translation does not preserve runtime output (best-effort reverse)."
+}

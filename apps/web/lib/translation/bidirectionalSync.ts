@@ -43,10 +43,19 @@ export type BidirectionalSyncController = {
   getState(): BidirectionalSyncState;
   /** Initial forward translate of `initialPseudocode`. */
   bootstrap(): void;
+  /**
+   * Restore both buffers without translating (session autosave / load).
+   * Cancels any in-flight sync timers.
+   */
+  restoreBuffers(nextPseudocode: string, nextPython: string): void;
   /** User typed in Pseudocode → schedule forward only. */
   editPseudocode(value: string): void;
   /** User typed in Python → schedule reverse only. */
   editPython(value: string): void;
+  /** Internal/tests: force Pseudocode → Python even if buffers unchanged. */
+  forceTranslateForward(): void;
+  /** Internal/tests: force Python → Pseudocode even if buffers unchanged. */
+  forceTranslateReverse(): void;
   subscribe(listener: () => void): () => void;
   dispose(): void;
   /** Test/introspection: pending direction after last edit. */
@@ -115,6 +124,8 @@ export function createBidirectionalSync(
   function scheduleForward(source: string): void {
     cancelReverse();
     pending = 'pseudocode';
+    status = 'pending';
+    emit();
     forwardGen += 1;
     const token = forwardGen;
     if (forwardTimer != null) clearTimeoutFn(forwardTimer);
@@ -143,6 +154,8 @@ export function createBidirectionalSync(
   function scheduleReverse(source: string): void {
     cancelForward();
     pending = 'python';
+    status = 'pending';
+    emit();
     reverseGen += 1;
     const token = reverseGen;
     if (reverseTimer != null) clearTimeoutFn(reverseTimer);
@@ -176,6 +189,20 @@ export function createBidirectionalSync(
       scheduleForward(pseudocode);
     },
 
+    restoreBuffers(nextPseudocode: string, nextPython: string) {
+      cancelForward();
+      cancelReverse();
+      pending = null;
+      pseudocode = nextPseudocode;
+      python = nextPython;
+      lastGoodPseudocode = nextPseudocode;
+      lastGoodPython = nextPython;
+      diagnostics = [];
+      status = 'ok';
+      errorSide = null;
+      emit();
+    },
+
     editPseudocode(value: string) {
       // Identical buffer: ignore peer-apply echoes from Monaco executeEdits.
       // Re-scheduling forward here would be harmless, but the Python twin of
@@ -195,6 +222,14 @@ export function createBidirectionalSync(
       python = value;
       emit();
       scheduleReverse(value);
+    },
+
+    forceTranslateForward() {
+      scheduleForward(pseudocode);
+    },
+
+    forceTranslateReverse() {
+      scheduleReverse(python);
     },
 
     subscribe(listener) {

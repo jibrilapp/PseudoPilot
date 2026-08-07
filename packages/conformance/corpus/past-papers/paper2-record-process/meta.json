@@ -1,0 +1,12 @@
+{
+  "title": "Paper 2–style record processing",
+  "tags": [
+    "past-paper",
+    "record"
+  ],
+  "expectOutput": [
+    "Alex distinction"
+  ],
+  "reverse": "check",
+  "notes": "Original equivalent for TYPE + field logic typical of Paper 2."
+}

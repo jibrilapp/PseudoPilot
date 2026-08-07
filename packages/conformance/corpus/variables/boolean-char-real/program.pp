@@ -1,0 +1,9 @@
+DECLARE Flag : BOOLEAN
+DECLARE Initial : CHAR
+DECLARE Pi : REAL
+Flag ← TRUE
+Initial ← 'Z'
+Pi ← 3.5
+OUTPUT Flag
+OUTPUT Initial
+OUTPUT Pi

@@ -9,7 +9,7 @@ const URI_B = 'file:///conformance-b.pseudo';
 describe('conformance / compiler-service', () => {
   it('warm cache across corpus programs (sequential open/close)', () => {
     const c = new IncrementalCompiler();
-    for (const entry of CORPUS) {
+    for (const entry of CORPUS.filter((e) => e.expectClean !== false)) {
       c.openDocument(URI, entry.source, 1);
       expect(c.compile(URI).cacheHit).toBe(true);
       c.closeDocument(URI);
@@ -53,8 +53,8 @@ describe('conformance / compiler-service', () => {
     languageService.openDocument(URI, src, 1);
     expect(compilerService.compile(URI).cacheHit).toBe(true);
     expect(compiler.totalStats().parseRuns).toBe(1);
-    const tip = languageService.hover(URI, { line: 1, character: 9 });
-    expect(tip?.contents.toUpperCase()).toMatch(/FUNCTION|PROCEDURE|VARIABLE/);
+    const tip = languageService.hover(URI, { line: 0, character: 9 });
+    expect(tip?.contents.toUpperCase()).toMatch(/FUNCTION|PROCEDURE|VARIABLE|PARAMETER/);
   });
 
   it('CompilerService façade exposes diagnostics for bad programs', () => {

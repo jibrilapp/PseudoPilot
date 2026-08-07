@@ -10,6 +10,7 @@ import { runOk } from './helpers.js';
 describe('conformance / interpreter', () => {
   it('runs every runnable corpus entry with expected output', async () => {
     for (const entry of CORPUS) {
+      if (entry.expectClean === false) continue;
       if (entry.skipRun || !entry.expectOutput) continue;
       const result = await runOk(entry.source, entry.inputs ?? []);
       expect(result.host.outputs, entry.id).toEqual([...entry.expectOutput]);

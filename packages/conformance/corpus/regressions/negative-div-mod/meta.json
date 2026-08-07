@@ -1,0 +1,13 @@
+{
+  "title": "Negative DIV and MOD",
+  "tags": [
+    "expr",
+    "divmod",
+    "regression"
+  ],
+  "expectOutput": [
+    "-2",
+    "-1"
+  ],
+  "reverse": "check"
+}

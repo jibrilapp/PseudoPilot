@@ -1,0 +1,12 @@
+{
+  "title": "SET type with DEFINE instance",
+  "tags": [
+    "type",
+    "set",
+    "define"
+  ],
+  "expectOutput": [
+    "{3, 7, 9}"
+  ],
+  "reverse": "check"
+}

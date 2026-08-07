@@ -1,0 +1,7 @@
+DECLARE I : INTEGER
+DECLARE Sum : INTEGER
+Sum ← 0
+FOR I ← 1 TO 7 STEP 2
+    Sum ← Sum + I
+NEXT I
+OUTPUT Sum

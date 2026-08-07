@@ -1,0 +1,10 @@
+{
+  "title": "FUNCTION + RETURN",
+  "tags": [
+    "function"
+  ],
+  "expectOutput": [
+    "42"
+  ],
+  "reverse": "check"
+}

@@ -1,0 +1,11 @@
+{
+  "title": "2D ARRAY access",
+  "tags": [
+    "array",
+    "2d"
+  ],
+  "expectOutput": [
+    "4"
+  ],
+  "reverse": "check"
+}

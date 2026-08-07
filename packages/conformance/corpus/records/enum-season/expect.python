@@ -1,0 +1,16 @@
+from enum import IntEnum
+
+def _pp_show(v): return v.name if hasattr(v, "name") and type(v).__module__ == "enum" else ("NIL" if v is None else v)
+
+class Season(IntEnum):
+    Spring = 0
+    Summer = 1
+    Autumn = 2
+    Winter = 3
+Spring = Season.Spring
+Summer = Season.Summer
+Autumn = Season.Autumn
+Winter = Season.Winter
+Current: Season = Season.Spring
+Current = Autumn
+print(_pp_show(Current))

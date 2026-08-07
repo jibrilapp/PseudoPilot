@@ -1,0 +1,12 @@
+{
+  "title": "BYREF SWAP regression lock",
+  "tags": [
+    "byref",
+    "regression"
+  ],
+  "expectOutput": [
+    "2",
+    "1"
+  ],
+  "reverse": "check"
+}

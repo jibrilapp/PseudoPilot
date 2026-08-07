@@ -21,6 +21,12 @@ export type UseBidirectionalTranslationResult = {
   readonly status: TranslationStatus;
   /** Which pane's last translate attempt failed (null when ok/idle). */
   readonly errorSide: EditOrigin | null;
+  /** Restore both buffers without re-translating (autosave / session load). */
+  readonly restoreBuffers: (pseudocode: string, python: string) => void;
+  /** Internal/tests: force Pseudocode → Python. Not exposed in primary UX. */
+  readonly translateForwardNow: () => void;
+  /** Internal/tests: force Python → Pseudocode. Not exposed in primary UX. */
+  readonly translateReverseNow: () => void;
 };
 
 const IDLE: BidirectionalSyncState = {
@@ -68,7 +74,6 @@ export function usePseudocodeTranslation(
       syncRef.current = null;
     };
     // Bootstrap once per mount for the initial buffer.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const setPseudocode = useCallback((value: string) => {
@@ -79,6 +84,21 @@ export function usePseudocodeTranslation(
     syncRef.current?.editPython(value);
   }, []);
 
+  const restoreBuffers = useCallback(
+    (nextPseudocode: string, nextPython: string) => {
+      syncRef.current?.restoreBuffers(nextPseudocode, nextPython);
+    },
+    [],
+  );
+
+  const translateForwardNow = useCallback(() => {
+    syncRef.current?.forceTranslateForward();
+  }, []);
+
+  const translateReverseNow = useCallback(() => {
+    syncRef.current?.forceTranslateReverse();
+  }, []);
+
   return {
     pseudocode: state.pseudocode,
     setPseudocode,
@@ -87,5 +107,8 @@ export function usePseudocodeTranslation(
     diagnostics: state.diagnostics,
     status: state.status,
     errorSide: state.errorSide,
+    restoreBuffers,
+    translateForwardNow,
+    translateReverseNow,
   };
 }

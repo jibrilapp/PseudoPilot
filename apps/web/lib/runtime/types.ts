@@ -25,6 +25,8 @@ export type RuntimeConsoleLine = {
   readonly id: string;
   readonly kind: RuntimeConsoleKind;
   readonly text: string;
+  /** Epoch ms when the line was appended (console timestamps). */
+  readonly at?: number;
 };
 
 export type RuntimeVariableRow = {

@@ -8,19 +8,26 @@ import { normalizePseudo, translateBothWays } from './helpers.js';
 import { runOk } from './helpers.js';
 
 describe('conformance / translator', () => {
-  it('translates every corpus program to Python', () => {
+  it('translates every clean corpus program to Python', () => {
     for (const entry of CORPUS) {
+      if (entry.expectClean === false) continue;
       const r = translatePseudocodeToPython(entry.source);
       expect(r.ok, `${entry.id}: ${r.diagnostics.map((d) => d.message).join('; ')}`).toBe(
         true,
       );
       expect(r.code.length, entry.id).toBeGreaterThan(0);
+      if (entry.expectPython !== undefined) {
+        expect(r.code.replace(/\r\n/g, '\n'), entry.id).toBe(
+          entry.expectPython.replace(/\r\n/g, '\n'),
+        );
+      }
     }
   });
 
   it('round-trips Pseudo → Python → Pseudo for supported corpus', () => {
     for (const entry of CORPUS) {
-      if (entry.skipRoundTrip) continue;
+      if (entry.expectClean === false) continue;
+      if (entry.skipRoundTrip || entry.reverse === 'skip') continue;
       const { python, roundTrip } = translateBothWays(entry.source);
       expect(python.length, entry.id).toBeGreaterThan(0);
       // Soft check: round-trip still translates forward again.
@@ -64,7 +71,12 @@ describe('conformance / translator', () => {
 
   it('round-trip preserves runtime behaviour for runnable samples', async () => {
     const samples = CORPUS.filter(
-      (e) => e.expectOutput && !e.skipRun && !e.skipRoundTrip,
+      (e) =>
+        e.expectClean !== false &&
+        e.expectOutput &&
+        !e.skipRun &&
+        !e.skipRoundTrip &&
+        e.reverse !== 'skip',
     ).slice(0, 8);
     for (const entry of samples) {
       const { roundTrip } = translateBothWays(entry.source);

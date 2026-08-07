@@ -1,0 +1,6 @@
+DECLARE N : INTEGER
+N ← 3
+WHILE N > 0 DO
+    OUTPUT N
+    N ← N - 1
+ENDWHILE

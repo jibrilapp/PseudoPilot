@@ -3,16 +3,23 @@
 import type { ReactNode } from 'react';
 import { IconFiles, IconSpark, IconTerminal, IconVars, IconSplit } from './Icons';
 import { cn } from '@/lib/cn';
+import { withoutAiCoachEntry } from '@/lib/featureFlags';
 
-type MobileView = 'explorer' | 'editors' | 'console' | 'ai' | 'vars';
+type MobileView = 'explorer' | 'editors' | 'console' | 'ai' | 'vars' | 'docs';
 
-const ITEMS: { id: MobileView; label: string; icon: ReactNode }[] = [
-  { id: 'explorer', label: 'Files', icon: <IconFiles /> },
+const ALL_ITEMS: {
+  id: Exclude<MobileView, 'docs'>;
+  label: string;
+  icon: ReactNode;
+}[] = [
+  { id: 'explorer', label: 'Program', icon: <IconFiles /> },
   { id: 'editors', label: 'Code', icon: <IconSplit /> },
   { id: 'console', label: 'Console', icon: <IconTerminal /> },
   { id: 'ai', label: 'AI', icon: <IconSpark /> },
   { id: 'vars', label: 'Vars', icon: <IconVars /> },
 ];
+
+const ITEMS = withoutAiCoachEntry(ALL_ITEMS);
 
 type MobileDockProps = {
   active: MobileView;

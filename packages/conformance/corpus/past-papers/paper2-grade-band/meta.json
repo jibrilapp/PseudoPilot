@@ -1,0 +1,12 @@
+{
+  "title": "Paper 2–style grade band selection",
+  "tags": [
+    "past-paper",
+    "selection"
+  ],
+  "expectOutput": [
+    "C"
+  ],
+  "reverse": "check",
+  "notes": "Original equivalent (not a verbatim past paper). Covers nested IF grade banding common in Paper 2."
+}

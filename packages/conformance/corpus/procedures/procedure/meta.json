@@ -1,0 +1,10 @@
+{
+  "title": "PROCEDURE + CALL",
+  "tags": [
+    "procedure"
+  ],
+  "expectOutput": [
+    "hi"
+  ],
+  "reverse": "check"
+}

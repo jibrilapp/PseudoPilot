@@ -135,6 +135,48 @@ OUTPUT Fact(4)
     expect(result.diagnostics.some((d) => d.code === 'R_CANCELLED')).toBe(true);
   });
 
+  it('rapid abort-while-paused cycles remain cancellable', async () => {
+    for (let i = 0; i < 40; i += 1) {
+      const host = new MemoryHost();
+      const ac = new AbortController();
+      let release: (() => void) | null = null;
+      const runPromise = runPseudocode(
+        `
+DECLARE N : INTEGER
+FOR N ← 1 TO 20
+  OUTPUT N
+NEXT N
+`,
+        {
+          host,
+          signal: ac.signal,
+          debugger: {
+            onBeforeStatement: async () => {
+              if (!release) {
+                await new Promise<void>((r) => {
+                  release = r;
+                });
+              }
+            },
+          },
+        },
+      );
+      const t0 = Date.now();
+      while (!release && Date.now() - t0 < 2000) {
+        await new Promise((r) => setTimeout(r, 1));
+      }
+      expect(release, `pause latch @${i}`).toBeTruthy();
+      ac.abort();
+      release!();
+      const result = await runPromise;
+      expect(result.ok, `cycle ${i}`).toBe(false);
+      expect(
+        result.diagnostics.some((d) => d.code === 'R_CANCELLED'),
+        `cycle ${i}`,
+      ).toBe(true);
+    }
+  });
+
   it('exposes readable DATE values in debugger frames', async () => {
     const host = new MemoryHost();
     let sawDate = false;

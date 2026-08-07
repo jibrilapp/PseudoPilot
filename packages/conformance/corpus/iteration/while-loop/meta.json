@@ -1,0 +1,12 @@
+{
+  "title": "WHILE loop",
+  "tags": [
+    "while"
+  ],
+  "expectOutput": [
+    "3",
+    "2",
+    "1"
+  ],
+  "reverse": "check"
+}

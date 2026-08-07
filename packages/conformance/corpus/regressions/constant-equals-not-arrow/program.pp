@@ -1,0 +1,1 @@
+CONSTANT Max ← 10

@@ -1,0 +1,11 @@
+{
+  "title": "PROCEDURE with parameters",
+  "tags": [
+    "procedure",
+    "params"
+  ],
+  "expectOutput": [
+    "Hello Cambridge"
+  ],
+  "reverse": "check"
+}

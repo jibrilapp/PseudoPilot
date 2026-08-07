@@ -1,0 +1,4 @@
+DECLARE S : STRING
+S ← "Hello" & " " & "World"
+OUTPUT S
+OUTPUT LENGTH(S)

@@ -1,0 +1,12 @@
+{
+  "title": "Boolean AND / OR guards",
+  "tags": [
+    "if",
+    "boolean"
+  ],
+  "expectOutput": [
+    "pass",
+    "either"
+  ],
+  "reverse": "check"
+}

@@ -1,0 +1,6 @@
+I: int
+Total: int
+Total = 0
+for I in range(1, 4 + 1):
+    Total = Total + I
+print(Total)

@@ -45,45 +45,59 @@ export function translatePseudocodeToPython(
   const oversized = rejectIfTooLarge(source, opts.maxSourceChars);
   if (oversized) return oversized;
 
-  const parsed = parseCambridge(source, {
-    maxSourceChars: opts.maxSourceChars,
-  });
-  const diagnostics: TranslateResult['diagnostics'] = parsed.diagnostics.map(
-    (d) => ({
-      severity: d.severity,
-      message: d.message,
-      code: d.code,
-      span: d.span,
-    }),
-  );
+  try {
+    const parsed = parseCambridge(source, {
+      maxSourceChars: opts.maxSourceChars,
+    });
+    const diagnostics: TranslateResult['diagnostics'] = parsed.diagnostics.map(
+      (d) => ({
+        severity: d.severity,
+        message: d.message,
+        code: d.code,
+        span: d.span,
+      }),
+    );
 
-  if (opts.semanticCheck) {
-    const checked = checkCambridge(parsed.ast);
-    for (const d of checked.diagnostics) {
-      if (d.help !== undefined) {
-        diagnostics.push({
-          severity: d.severity,
-          message: d.message,
-          code: d.code,
-          span: d.span,
-          help: d.help,
-        });
-      } else {
-        diagnostics.push({
-          severity: d.severity,
-          message: d.message,
-          code: d.code,
-          span: d.span,
-        });
+    if (opts.semanticCheck) {
+      const checked = checkCambridge(parsed.ast);
+      for (const d of checked.diagnostics) {
+        if (d.help !== undefined) {
+          diagnostics.push({
+            severity: d.severity,
+            message: d.message,
+            code: d.code,
+            span: d.span,
+            help: d.help,
+          });
+        } else {
+          diagnostics.push({
+            severity: d.severity,
+            message: d.message,
+            code: d.code,
+            span: d.span,
+          });
+        }
       }
     }
+
+    const lowered = lowerCambridgeProgram(parsed.ast, source, opts.preserveTrivia);
+    diagnostics.push(...lowered.diagnostics);
+
+    const code = printPython(lowered.ir);
+    return finalize(code, diagnostics);
+  } catch (err) {
+    if (err instanceof RangeError) {
+      return finalize('', [
+        {
+          severity: 'error',
+          code: 'T_NESTING_TOO_DEEP',
+          message:
+            'Source nesting is too deep to translate (call stack exhausted). Simplify nested control-flow.',
+        },
+      ]);
+    }
+    throw err;
   }
-
-  const lowered = lowerCambridgeProgram(parsed.ast, source, opts.preserveTrivia);
-  diagnostics.push(...lowered.diagnostics);
-
-  const code = printPython(lowered.ir);
-  return finalize(code, diagnostics);
 }
 
 /**
@@ -99,8 +113,22 @@ export function translatePythonToPseudocode(
   const oversized = rejectIfTooLarge(source, opts.maxSourceChars);
   if (oversized) return oversized;
 
-  const { ir, diagnostics } = parsePythonToIr(source, opts.preserveTrivia);
-  const lifted = liftPythonFilePatterns(ir);
-  const code = printCambridge(lifted, opts.assignmentArrow);
-  return finalize(code, diagnostics);
+  try {
+    const { ir, diagnostics } = parsePythonToIr(source, opts.preserveTrivia);
+    const lifted = liftPythonFilePatterns(ir);
+    const code = printCambridge(lifted, opts.assignmentArrow);
+    return finalize(code, diagnostics);
+  } catch (err) {
+    if (err instanceof RangeError) {
+      return finalize('', [
+        {
+          severity: 'error',
+          code: 'T_NESTING_TOO_DEEP',
+          message:
+            'Source nesting is too deep to translate (call stack exhausted). Simplify nested control-flow.',
+        },
+      ]);
+    }
+    throw err;
+  }
 }

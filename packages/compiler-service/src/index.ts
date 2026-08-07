@@ -6,7 +6,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/compiler-service' as const;
-export const PACKAGE_VERSION = '0.1.0' as const;
+export const PACKAGE_VERSION = '1.0.0-beta.0' as const;
 
 export { hashSource } from './hash.js';
 export {

@@ -1,0 +1,11 @@
+from datetime import date
+
+D: date  # DATE
+D = date(2003, 10, 4)
+print(D.year)
+print(D.month)
+print(D.day)
+if D == date(2003, 10, 4):
+    print("date-match")
+if D < date(2003, 10, 5):
+    print("date-before")

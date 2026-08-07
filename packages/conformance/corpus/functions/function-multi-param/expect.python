@@ -1,0 +1,6 @@
+def MaxOf(A: int, B: int) -> int:
+    if A > B:
+        return A
+    else:
+        return B
+print(MaxOf(3, 9))

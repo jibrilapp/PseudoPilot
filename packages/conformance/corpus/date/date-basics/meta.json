@@ -1,0 +1,14 @@
+{
+  "title": "DATE declare, compare, builtins",
+  "tags": [
+    "date"
+  ],
+  "expectOutput": [
+    "2003",
+    "10",
+    "4",
+    "date-match",
+    "date-before"
+  ],
+  "reverse": "check"
+}

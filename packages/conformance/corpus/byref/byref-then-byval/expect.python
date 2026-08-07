@@ -1,0 +1,10 @@
+def _pp_cell(value): return [value]
+
+def AddInto(Total: int, Delta: int):  # BYREF Total
+    Total[0] = Total[0] + Delta
+S: int
+S = 10
+_pp_ref_0 = _pp_cell(S)
+AddInto(_pp_ref_0, 5)
+S = _pp_ref_0[0]
+print(S)

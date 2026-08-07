@@ -1,0 +1,18 @@
+{
+  "title": "Assign to CONSTANT is checker error",
+  "tags": [
+    "constant",
+    "checker",
+    "regression"
+  ],
+  "expectDiagnostics": [
+    {
+      "code": "C_ASSIGN_TO_CONSTANT",
+      "severity": "error"
+    }
+  ],
+  "expectClean": false,
+  "skipRun": true,
+  "reverse": "skip",
+  "reverseSkipReason": "Invalid program — assignment to CONSTANT."
+}

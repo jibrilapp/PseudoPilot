@@ -1,0 +1,11 @@
+{
+  "title": "FUNCTION returning STRING",
+  "tags": [
+    "function",
+    "string"
+  ],
+  "expectOutput": [
+    "[OK]"
+  ],
+  "reverse": "check"
+}

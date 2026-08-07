@@ -8,6 +8,7 @@ import {
   ideDiagnosticsToMarkers,
   MARKER_SEVERITY_ERROR,
 } from './mapProviders';
+import { pythonPaneSyncBadge } from '../translation/liveSyncStatus';
 
 function mockEditor(initial: string): {
   editor: ExternalApplyEditor;
@@ -126,36 +127,15 @@ describe('ideDiagnosticsToMarkers', () => {
 
 describe('DualEditor badge helpers (origin-aware messaging)', () => {
   it('documents expected badge strings for error sides', () => {
-    // Keep in sync with DualEditor.pythonBadge — regression for UX copy.
-    const cases: Array<{
-      status: 'idle' | 'ok' | 'error';
-      errorSide: 'pseudocode' | 'python' | null;
-      expected: string | undefined;
-    }> = [
-      { status: 'ok', errorSide: null, expected: 'Live' },
-      {
-        status: 'error',
-        errorSide: 'python',
-        expected: 'Showing last good Pseudocode',
-      },
-      {
-        status: 'error',
-        errorSide: 'pseudocode',
-        expected: 'Showing last good translation',
-      },
-      { status: 'idle', errorSide: null, expected: undefined },
-    ];
-    for (const c of cases) {
-      let badge: string | undefined;
-      if (c.status === 'ok') badge = 'Live';
-      else if (c.status === 'error') {
-        badge =
-          c.errorSide === 'python'
-            ? 'Showing last good Pseudocode'
-            : 'Showing last good translation';
-      }
-      expect(badge).toBe(c.expected);
-    }
+    expect(pythonPaneSyncBadge('ok', null)).toBe('Live');
+    expect(pythonPaneSyncBadge('pending', null)).toBe('Syncing…');
+    expect(pythonPaneSyncBadge('error', 'python')).toBe(
+      'Showing last good Pseudocode',
+    );
+    expect(pythonPaneSyncBadge('error', 'pseudocode')).toBe(
+      'Showing last good translation',
+    );
+    expect(pythonPaneSyncBadge('idle', null)).toBeUndefined();
   });
 });
 

@@ -20,7 +20,7 @@ Pseudocode and Python panes use Monaco (`components/ide/CodeSurface.tsx`).
 - Pseudocode: Monarch highlighting, LS providers (hover, completion, definition, rename, …), breakpoints, exec-line highlight
 - Python: **editable** first-class peer — live reverse translation into Pseudocode
 
-Details: [`docs/ide/MONACO.md`](../../docs/ide/MONACO.md).
+Details: [`docs/ide/MONACO.md`](../../docs/ide/MONACO.md) · UI chrome: [`docs/ide/UI.md`](../../docs/ide/UI.md).
 
 ## Live bidirectional translation
 
@@ -42,7 +42,14 @@ Debugger: breakpoints (glyph margin), Continue / Pause / Step Into / Over / Out,
 
 ## AI Coach
 
+> **v1.0.0-beta:** Coach UI is **disabled** (`ENABLE_AI_COACH` in
+> `lib/featureFlags.ts`). Set to `true` to restore the dockable panel.
+
 Dockable **AI** panel (`AiAssistantPanel`) talks only to `AICoachService`.
 Context is assembled from LanguageService / CompilerService / RuntimeController /
 translation buffers — see [`docs/ai/AI_COACH.md`](../../docs/ai/AI_COACH.md).
+
+## Deploy
+
+Production hosting runbook: [`docs/DEPLOY.md`](../../docs/DEPLOY.md) (Vercel + CI build gate).
 

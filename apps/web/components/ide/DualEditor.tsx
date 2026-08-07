@@ -2,11 +2,20 @@
 
 import type { EditorTab } from '@/lib/dummy';
 import type { Breakpoint } from '@/lib/debugger';
-import type { IdeDiagnostic } from '@/lib/translation/types';
+import type { IdeDiagnostic, TranslationStatus } from '@/lib/translation/types';
 import type { EditOrigin } from '@/lib/translation/bidirectionalSync';
+import { pythonPaneSyncBadge } from '@/lib/translation/liveSyncStatus';
 import { ideDiagnosticsToMarkers } from '@/lib/monaco';
 import { cn } from '@/lib/cn';
 import { CodeSurface } from './CodeSurface';
+import { RatioSplitPane } from './SplitPane';
+
+export type RevealRequest = {
+  line: number;
+  column?: number;
+  /** Bump to re-trigger reveal of the same line. */
+  nonce: number;
+};
 
 type DualEditorProps = {
   tabs: EditorTab[];
@@ -19,24 +28,18 @@ type DualEditorProps = {
   onPseudocodeSelectionChange?: (text: string) => void;
   onPythonSelectionChange?: (text: string) => void;
   stacked?: boolean;
-  translationStatus?: 'idle' | 'ok' | 'error';
+  translationStatus?: TranslationStatus;
   /** Which pane's last translate attempt failed. */
   translationErrorSide?: EditOrigin | null;
   translationDiagnostics?: readonly IdeDiagnostic[];
   activeLine?: number | null;
   breakpoints?: readonly Breakpoint[];
   onToggleBreakpoint?: (line: number) => void;
+  /** Pseudocode share of the split (0–1). */
+  editorSplit?: number;
+  onEditorSplitChange?: (ratio: number) => void;
+  revealRequest?: RevealRequest | null;
 };
-
-function pythonBadge(
-  status: 'idle' | 'ok' | 'error',
-  errorSide: EditOrigin | null | undefined,
-): string | undefined {
-  if (status === 'ok') return 'Live';
-  if (status !== 'error') return undefined;
-  if (errorSide === 'python') return 'Showing last good Pseudocode';
-  return 'Showing last good translation';
-}
 
 export function DualEditor({
   tabs,
@@ -55,15 +58,59 @@ export function DualEditor({
   activeLine = null,
   breakpoints = [],
   onToggleBreakpoint,
+  editorSplit = 0.5,
+  onEditorSplitChange,
+  revealRequest = null,
 }: DualEditorProps) {
   const pythonMarkers =
     translationStatus === 'error' && translationErrorSide === 'python'
       ? ideDiagnosticsToMarkers(translationDiagnostics)
       : [];
 
+  const pseudoEmphasis = activeFileId === 'main-pseudo';
+  const pythonEmphasis = activeFileId === 'main-py';
+
+  const syncBadge = pythonPaneSyncBadge(
+    translationStatus,
+    translationErrorSide,
+  );
+
+  const pseudoPane = (
+    <EditorColumn
+      title="Pseudocode"
+      path="Untitled.pp"
+      code={pseudocode}
+      language="pseudocode"
+      editable
+      onChange={onPseudocodeChange}
+      onSelectionChange={onPseudocodeSelectionChange}
+      emphasis={pseudoEmphasis || (!pythonEmphasis && !stacked)}
+      activeLine={activeLine}
+      breakpoints={breakpoints}
+      onToggleBreakpoint={onToggleBreakpoint}
+      revealRequest={revealRequest}
+    />
+  );
+
+  const pythonPane = (
+    <EditorColumn
+      title="Python"
+      path="Untitled.py"
+      code={python}
+      language="python"
+      editable
+      onChange={onPythonChange}
+      onSelectionChange={onPythonSelectionChange}
+      emphasis={pythonEmphasis}
+      bordered
+      badge={syncBadge}
+      externalMarkers={pythonMarkers}
+    />
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-pp-editor">
-      <div className="flex items-end overflow-x-auto border-b border-pp-line bg-pp-shell/60 px-1">
+      <div className="flex items-end overflow-x-auto border-b border-pp-line bg-pp-shell/70 px-1">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -77,38 +124,28 @@ export function DualEditor({
         ))}
       </div>
 
-      <div
-        className={cn(
-          'grid min-h-0 flex-1',
-          stacked ? 'grid-rows-2' : 'grid-rows-2 lg:grid-cols-2 lg:grid-rows-1',
+      <div className="flex min-h-0 flex-1 flex-col">
+        {onEditorSplitChange ? (
+          <RatioSplitPane
+            orientation={stacked ? 'vertical' : 'horizontal'}
+            ratio={editorSplit}
+            onRatioChange={onEditorSplitChange}
+            primary={pseudoPane}
+            secondary={pythonPane}
+            label="Resize editor split"
+            className="h-full"
+          />
+        ) : (
+          <div
+            className={cn(
+              'grid h-full min-h-0',
+              stacked ? 'grid-rows-2' : 'grid-rows-2 lg:grid-cols-2 lg:grid-rows-1',
+            )}
+          >
+            {pseudoPane}
+            {pythonPane}
+          </div>
         )}
-      >
-        <EditorColumn
-          title="Pseudocode"
-          path="src/main.pseudo"
-          code={pseudocode}
-          language="pseudocode"
-          editable
-          onChange={onPseudocodeChange}
-          onSelectionChange={onPseudocodeSelectionChange}
-          emphasis={activeFileId.includes('pseudo') || activeFileId.startsWith('ex')}
-          activeLine={activeLine}
-          breakpoints={breakpoints}
-          onToggleBreakpoint={onToggleBreakpoint}
-        />
-        <EditorColumn
-          title="Python"
-          path="src/main.py"
-          code={python}
-          language="python"
-          editable
-          onChange={onPythonChange}
-          onSelectionChange={onPythonSelectionChange}
-          emphasis={activeFileId.includes('py')}
-          bordered
-          badge={pythonBadge(translationStatus, translationErrorSide)}
-          externalMarkers={pythonMarkers}
-        />
       </div>
     </div>
   );
@@ -129,6 +166,7 @@ function EditorColumn({
   breakpoints,
   onToggleBreakpoint,
   externalMarkers,
+  revealRequest,
 }: {
   title: string;
   path: string;
@@ -144,25 +182,46 @@ function EditorColumn({
   breakpoints?: readonly Breakpoint[];
   onToggleBreakpoint?: (line: number) => void;
   externalMarkers?: ReturnType<typeof ideDiagnosticsToMarkers>;
+  revealRequest?: RevealRequest | null;
 }) {
   return (
     <section
       className={cn(
-        'flex min-h-0 flex-col transition-colors duration-200 ease-apple',
+        'flex h-full min-h-0 flex-col transition-[background-color,box-shadow] duration-200 ease-apple',
         bordered && 'border-t border-pp-line lg:border-l lg:border-t-0',
-        emphasis ? 'bg-pp-editor' : 'bg-[#fbfbfc]',
+        emphasis
+          ? 'bg-pp-editor shadow-[inset_0_0_0_1px_rgba(13,115,112,0.08)]'
+          : 'bg-[#f8f8fa]',
       )}
+      data-active-editor={emphasis || undefined}
+      aria-label={`${title} editor`}
     >
-      <div className="flex h-8 items-center justify-between gap-2 border-b border-pp-line/80 bg-pp-shell/30 px-3.5">
-        <h3 className="text-[12px] font-medium tracking-[-0.01em] text-pp-muted">{title}</h3>
+      <div
+        className={cn(
+          'flex h-8 items-center justify-between gap-2 border-b px-3.5',
+          emphasis
+            ? 'border-pp-accent/20 bg-pp-accentSoft/40'
+            : 'border-pp-line/80 bg-pp-shell/30',
+        )}
+      >
+        <h3
+          className={cn(
+            'text-[12px] font-medium tracking-[-0.01em]',
+            emphasis ? 'text-pp-ink' : 'text-pp-muted',
+          )}
+        >
+          {title}
+        </h3>
         <div className="flex min-w-0 items-center gap-2">
           {badge && (
             <span
               className={cn(
-                'truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-[-0.01em]',
+                'truncate rounded-md px-1.5 py-0.5 text-[10px] font-medium tracking-[-0.01em]',
                 badge === 'Live'
                   ? 'bg-emerald-500/10 text-emerald-700/90'
-                  : 'bg-amber-500/10 text-amber-800/90',
+                  : badge === 'Syncing…'
+                    ? 'bg-sky-500/10 text-sky-800/90'
+                    : 'bg-amber-500/10 text-amber-800/90',
               )}
             >
               {badge}
@@ -180,8 +239,11 @@ function EditorColumn({
         aria-label={title}
         activeLine={language === 'pseudocode' ? activeLine : null}
         breakpoints={language === 'pseudocode' ? breakpoints : []}
-        onToggleBreakpoint={language === 'pseudocode' ? onToggleBreakpoint : undefined}
+        onToggleBreakpoint={
+          language === 'pseudocode' ? onToggleBreakpoint : undefined
+        }
         externalMarkers={externalMarkers}
+        revealRequest={language === 'pseudocode' ? revealRequest : null}
       />
     </section>
   );

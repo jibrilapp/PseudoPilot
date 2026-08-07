@@ -1,0 +1,13 @@
+{
+  "title": "Identifier sanitizer list → list_",
+  "tags": [
+    "translator",
+    "sanitizer",
+    "regression"
+  ],
+  "expectOutput": [
+    "1"
+  ],
+  "reverse": "check",
+  "notes": "Python keyword collision: list must become list_ in expect.python."
+}

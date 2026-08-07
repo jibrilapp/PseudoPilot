@@ -1,0 +1,12 @@
+{
+  "title": "REPEAT UNTIL",
+  "tags": [
+    "repeat"
+  ],
+  "expectOutput": [
+    "1",
+    "2",
+    "3"
+  ],
+  "reverse": "check"
+}

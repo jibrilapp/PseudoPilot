@@ -1,54 +1,76 @@
 # PseudoPilot
 
-Bidirectional **Cambridge International Computer Science (9618) pseudocode ↔ Python** tooling: deterministic language core, canonical-IR translator, and a student IDE with live translation.
+**Cambridge International Computer Science (9618) pseudocode ↔ Python** student IDE and language toolchain.
 
-> **Status:** experimental **0.x** — usable for teaching/exploration of the supported subset. Not a complete Cambridge implementation, not a sandboxed runner, and not API-stable until 1.0.
+Edit Pseudocode or Python side-by-side with live bidirectional translation, run programs in a browser interpreter, step with a debugger, and browse in-app docs. (AI Coach is implemented but **disabled in the v1.0.0-beta UI** — reserved for a future update.)
+
+> **Version:** `1.0.0-beta.0` — public beta. APIs and packaging may still change before a stable `1.0.0`.
 >
-> **Affiliation:** PseudoPilot is an **unofficial** community project. It is **not** affiliated with, endorsed by, or connected to Cambridge Assessment International Education or the University of Cambridge.
+> **Affiliation:** PseudoPilot is an **educational** community project aligned to Cambridge 9618 pseudocode. It is **not** an official Cambridge International product, and it does **not** guarantee exam board endorsement. PseudoPilot is **not** affiliated with, endorsed by, or connected to Cambridge Assessment International Education or the University of Cambridge.
 
-**License:** [MIT](./LICENSE) · **Security:** [SECURITY.md](./SECURITY.md) · **Contributing:** [CONTRIBUTING.md](./CONTRIBUTING.md)
+**License:** [MIT](./LICENSE) · **Security:** [SECURITY.md](./SECURITY.md) · **Contributing:** [CONTRIBUTING.md](./CONTRIBUTING.md) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
-## What works today
+## Features
 
-| Surface | Status |
+| Feature | Description |
 | --- | --- |
-| `@pseudopilot/language-core` | Lexer + parser + AST for a large Core subset (control flow, procedures, functions, DECLARE/arrays/files parsed) |
-| `@pseudopilot/checker` | Semantic checker: scopes, symbols, types, undeclared names, call arity/types |
-| `@pseudopilot/compiler-service` | Incremental compilation: document / AST / semantic caches, invalidation, dependency graph |
-| `@pseudopilot/language-service` | IDE features (hover, definition, refs, rename, completion, signatures) — reuses compiler-service; no execute/translate |
-| `@pseudopilot/conformance` | Cross-package Cambridge Core corpus, round-trips, stress, fuzz, benchmarks |
-| `@pseudopilot/interpreter` | **AST interpreter** — async host, AbortSignal, debugger hooks, **virtual text files** |
-| `@pseudopilot/translator` | Bidirectional translation via IR (includes text file I/O mapping) |
-| `apps/web` | Student IDE: **Monaco** editor, Run / Debug / Console / Variables — interpreter in a **Web Worker**; VFS for files |
-| AI coach / remote OS sandbox | Not yet |
-
-**Interpreter supported subset:** assignment, I/O (host), expressions, CHAR, indexes, IF/WHILE/REPEAT/FOR/CASE, PROCEDURE/CALL, FUNCTION/RETURN, DECLARE, CONSTANT, arrays (bounds-checked), builtins, `&`, text file I/O (VFS), `TYPE` records, and `CLASS` OOP (single inheritance, `PUBLIC`/`PRIVATE`, `SUPER`, `NEW`).
-
-**Translator supported subset (V14):** same Core surface for translation including text file I/O, `TYPE` records, and `CLASS` → Python class (forward only — no BYREF / DATE / RANDOM files / enum-pointer-SET TYPE).
-
-Language docs: [`docs/language/`](./docs/language/) (including [`SEMANTICS.md`](./docs/language/SEMANTICS.md), [`TYPE_SYSTEM.md`](./docs/language/TYPE_SYSTEM.md), [`OBJECT_ORIENTED_PROGRAMMING.md`](./docs/language/OBJECT_ORIENTED_PROGRAMMING.md), [`INTERPRETER.md`](./docs/language/INTERPRETER.md), [`LANGUAGE_SERVICE.md`](./docs/language/LANGUAGE_SERVICE.md), [`INCREMENTAL_COMPILATION.md`](./docs/language/INCREMENTAL_COMPILATION.md)). Testing: [`docs/TESTING.md`](./docs/TESTING.md). IDE Monaco: [`docs/ide/MONACO.md`](./docs/ide/MONACO.md). IDE runtime: [`apps/web/lib/runtime/README.md`](./apps/web/lib/runtime/README.md). Execution worker: [`apps/web/lib/worker/README.md`](./apps/web/lib/worker/README.md). Debugger: [`apps/web/lib/debugger/README.md`](./apps/web/lib/debugger/README.md). Files: [`packages/interpreter/src/files/README.md`](./packages/interpreter/src/files/README.md).
+| Dual editors | Monaco Pseudocode + Python panes with live sync |
+| Run | AST interpreter in a **Web Worker** (not Python execution) |
+| Debugger | Breakpoints, continue / pause, step into / over / out, call stack, variables |
+| Language service | Hover, go-to-definition, references, rename, completion, signatures |
+| Diagnostics | Compiler (`C_*`), translation (`T_*`), and runtime (`R_*`) feedback |
+| In-app docs | Searchable corpus of language and IDE guides |
+| AI Coach | Implemented offline/rules-based coach — **UI disabled for v1.0.0-beta** (future update) |
+| Virtual files | Text (and random) file I/O via an in-tab VFS — not OS disk |
 
 ---
 
-## Quick start
+## Screenshots
+
+| Welcome | Editors | Console |
+| --- | --- | --- |
+| ![Welcome](./docs/ide/screenshots/welcome.png) | ![Editors](./docs/ide/screenshots/editors.png) | ![Console](./docs/ide/screenshots/console.png) |
+
+| Docs welcome | Docs viewer |
+| --- | --- |
+| ![Docs welcome](./docs/ide/screenshots/docs-welcome.png) | ![Docs viewer](./docs/ide/screenshots/docs-viewer.png) |
+
+More UI notes: [`docs/ide/UI.md`](./docs/ide/UI.md).
+
+---
+
+## Installation
+
+**Requirements:** Node.js **22+** and pnpm **9+** (see `.nvmrc`).
 
 ```bash
-# Node 22+ and pnpm 9+
 corepack enable && corepack prepare pnpm@9.15.0 --activate
+git clone https://github.com/jibrilapp/PseudoPilot.git   # or your fork URL
+cd pseudopilot
 pnpm install
-pnpm check
+```
 
-# Student IDE
-pnpm --filter @pseudopilot/language-core build
-pnpm --filter @pseudopilot/translator build
+No Postgres, Redis, or Docker is required to run the student IDE.
+
+---
+
+## Running locally
+
+```bash
+pnpm check   # optional: typecheck, lint, and unit tests
+
 pnpm --filter @pseudopilot/web dev
 ```
 
-Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Turbo builds workspace dependencies as needed.
 
-### Library usage
+Add `?welcome=1` to force the welcome screen.
+
+### Library usage (workspace)
+
+Packages are `private: true` for now (consume via the monorepo workspace). Public npm publish is deferred until a stable release.
 
 ```ts
 import { translatePseudocodeToPython } from '@pseudopilot/translator';
@@ -60,36 +82,44 @@ const host = new MemoryHost();
 const run = runPseudocode(`OUTPUT 1 + 1`, { host });
 ```
 
-Packages are currently `private: true` in the monorepo (consume via workspace). Public npm publish is deferred until a stable 0.x packaging pass.
+---
+
+## Supported Cambridge features
+
+PseudoPilot targets the *Cambridge International AS & A Level Computer Science 9618 — Pseudocode Guide for Teachers*.
+
+**Authoritative status:** [`docs/CONFORMANCE.md`](./docs/CONFORMANCE.md) (compatibility matrix). Language specification and implementation notes live under [`docs/language/`](./docs/language/), including:
+
+- [`SPECIFICATION.md`](./docs/language/SPECIFICATION.md)
+- [`SEMANTICS.md`](./docs/language/SEMANTICS.md)
+- [`TRANSLATION.md`](./docs/language/TRANSLATION.md)
+- [`INTERPRETER.md`](./docs/language/INTERPRETER.md)
+- [`FILE_IO.md`](./docs/language/FILE_IO.md)
+
+Do not treat marketing copy as a substitute for CONFORMANCE. Reverse translation (Python → Pseudocode) is best-effort; Run always executes the Pseudocode buffer.
 
 ---
 
-## Architecture (current)
+## Project structure
 
 ```
-apps/web  ──imports──►  @pseudopilot/translator  ──►  language-core + checker
-                │              │
-                │         canonical IR (translation only)
-                │
-                ├──imports──►  @pseudopilot/interpreter  ──►  language-core + checker
-                │                   │
-                │              RuntimeController + IdeRuntimeHost (via Web Worker)
-                │                   │
-                │              AST tree-walk (async I/O)
-                │
-                ├── Monaco Editor (CodeSurface)
-                │         │
-                └──imports──►  @pseudopilot/language-service  ──►  compiler-service
-                                    │                                  │
-                               hover / definition / refs         IncrementalCompiler
-                               (no execute, no translate)        (hash / AST / semantic caches)
-                                                                         │
-                                                                   language-core + checker
+apps/web/                 Student IDE (Next.js)
+packages/
+  language-core/          Lexer, parser, AST
+  checker/                Semantic analysis
+  compiler-service/       Incremental compilation caches
+  language-service/       IDE language features
+  interpreter/            AST interpreter + VFS
+  translator/             Bidirectional Pseudocode ↔ Python (canonical IR)
+  conformance/            Cross-package Cambridge corpus
+  ai-coach/               Offline coaching providers
+docs/                     Language, IDE, architecture, release docs
 ```
 
-**Boundary rule:** `language-core`, `checker`, `compiler-service`, `interpreter`, `translator`, and `language-service` must not import from `apps/*` or AI packages. Interpreter must **not** depend on translator. Language service must **not** depend on interpreter or translator. `compiler-service` must **not** depend on language-service (features attach via provider). React components must **not** call the interpreter directly — use `RuntimeController`.
+**Boundary rule:** language packages must not import from `apps/*`. The IDE must not call the interpreter on the UI thread — use `RuntimeController` / the Web Worker.
 
-Scale notes for a future multi-tenant product: [`docs/architecture/scalability.md`](./docs/architecture/scalability.md).
+Release packaging checklist: [`docs/RELEASE_READINESS.md`](./docs/RELEASE_READINESS.md).  
+Deploy / hosting: [`docs/DEPLOY.md`](./docs/DEPLOY.md).
 
 ---
 
@@ -102,22 +132,24 @@ Scale notes for a future multi-tenant product: [`docs/architecture/scalability.m
 | `pnpm test` | Unit tests |
 | `pnpm format` | Prettier write |
 
-CI runs `pnpm check` on every PR to `main` (see `.github/workflows/ci.yml`).
+CI runs `pnpm check` plus a production `@pseudopilot/web` build on PRs to `main` (see `.github/workflows/ci.yml`). Deploy runbook: [`docs/DEPLOY.md`](./docs/DEPLOY.md).
 
 ---
 
 ## Versioning
 
-- Root and core packages track **0.8.x** while the product remains experimental
-- Until **1.0.0**, minor versions may include breaking API changes
+- Product / workspace release line: **`1.0.0-beta.0`**
+- Until a stable **1.0.0**, treat APIs as pre-release (breaking changes may still land)
 - See [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
-## What’s next (high level)
+## Contributing
 
-1. Optional BYREF / DATE / Extended surface
-2. Security sandbox / remote execution (reuse worker message protocol)
-3. Publishable package releases with changelog automation
-4. Broader Cambridge Extended / OOP coverage
-5. Monaco editor + richer debugger (watches, conditional breakpoints)
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Prefer focused PRs, extend tests with behaviour changes, and keep Cambridge fidelity documented in `docs/language/` / `docs/CONFORMANCE.md`.
+
+---
+
+## License
+
+[MIT](./LICENSE) — Copyright (c) 2024–2026 PseudoPilot contributors.

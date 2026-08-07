@@ -1,0 +1,10 @@
+DECLARE N : INTEGER
+N ← 5
+CASE OF N
+    1 TO 3 :
+        OUTPUT "low"
+    4 TO 6 :
+        OUTPUT "mid"
+    OTHERWISE
+        OUTPUT "hi"
+ENDCASE

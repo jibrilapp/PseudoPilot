@@ -1,0 +1,5 @@
+DECLARE A, B, C : INTEGER
+A ← 10
+B ← 3
+C ← A + B * 2 - A DIV B
+OUTPUT C

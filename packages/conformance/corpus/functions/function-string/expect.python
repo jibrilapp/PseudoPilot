@@ -1,0 +1,3 @@
+def Tag(Name: str) -> str:
+    return "[" + Name + "]"
+print(Tag("OK"))

@@ -4,8 +4,9 @@ import { CORPUS } from './corpus/index.js';
 import { parseOk } from './helpers.js';
 
 describe('conformance / parser', () => {
-  it('parses every corpus program', () => {
+  it('parses every clean corpus program', () => {
     for (const entry of CORPUS) {
+      if (entry.expectClean === false) continue;
       const r = parseOk(entry.source);
       expect(r.ast.kind, entry.id).toBe('Program');
       expect(r.ast.body.length, entry.id).toBeGreaterThan(0);

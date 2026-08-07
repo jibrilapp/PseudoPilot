@@ -1,0 +1,4 @@
+Names: list[str] = ["" for _ in range((2) - (1) + 1)]  # ARRAY[1:2]
+Names[1 - 1] = "Ada"
+Names[2 - 1] = "Grace"
+print(Names[1 - 1] + " " + Names[2 - 1])

@@ -1,0 +1,30 @@
+def _pp_div(a, b): return int(a / b)
+def _pp_mod(a, b): return a - _pp_div(a, b) * b
+
+A: list[int] = [0 for _ in range((7) - (1) + 1)]  # ARRAY[1:7]
+Low: int
+High: int
+Mid: int
+Target: int
+Found: int
+A[1 - 1] = 1
+A[2 - 1] = 3
+A[3 - 1] = 5
+A[4 - 1] = 7
+A[5 - 1] = 9
+A[6 - 1] = 11
+A[7 - 1] = 13
+Target = 9
+Low = 1
+High = 7
+Found = 0
+while Low <= High and Found == 0:
+    Mid = _pp_div((Low + High), 2)
+    if A[Mid - 1] == Target:
+        Found = Mid
+    else:
+        if A[Mid - 1] < Target:
+            Low = Mid + 1
+        else:
+            High = Mid - 1
+print(Found)

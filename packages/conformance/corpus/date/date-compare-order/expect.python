@@ -1,0 +1,9 @@
+from datetime import date
+
+A: date  # DATE
+B: date  # DATE
+A = date(2020, 12, 31)
+B = date(2021, 1, 1)
+if A < B:
+    print("ordered")
+print(B.year)

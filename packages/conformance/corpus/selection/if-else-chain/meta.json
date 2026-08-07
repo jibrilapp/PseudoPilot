@@ -1,0 +1,11 @@
+{
+  "title": "IF / ELSE IF chain",
+  "tags": [
+    "if",
+    "elseif"
+  ],
+  "expectOutput": [
+    "B"
+  ],
+  "reverse": "check"
+}

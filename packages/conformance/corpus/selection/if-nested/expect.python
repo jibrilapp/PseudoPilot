@@ -1,0 +1,9 @@
+N: int
+N = 5
+if N > 0:
+    if N > 3:
+        print("big")
+    else:
+        print("small")
+else:
+    print("neg")

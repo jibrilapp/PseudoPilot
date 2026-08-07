@@ -1,0 +1,11 @@
+{
+  "title": "Find maximum in array",
+  "tags": [
+    "algorithm",
+    "array"
+  ],
+  "expectOutput": [
+    "31"
+  ],
+  "reverse": "check"
+}

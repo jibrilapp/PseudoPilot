@@ -1,0 +1,11 @@
+{
+  "title": "Empty string LENGTH",
+  "tags": [
+    "string",
+    "edge"
+  ],
+  "expectOutput": [
+    "0"
+  ],
+  "reverse": "check"
+}

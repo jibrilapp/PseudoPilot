@@ -1,0 +1,10 @@
+{
+  "title": "Text file I/O",
+  "tags": [
+    "file"
+  ],
+  "expectOutput": [
+    "line1"
+  ],
+  "reverse": "check"
+}

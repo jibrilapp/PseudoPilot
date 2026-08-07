@@ -1,0 +1,11 @@
+{
+  "title": "Nested FOR loops",
+  "tags": [
+    "for",
+    "nested"
+  ],
+  "expectOutput": [
+    "6"
+  ],
+  "reverse": "check"
+}

@@ -1,0 +1,13 @@
+{
+  "title": "Two CLASS instances are independent",
+  "tags": [
+    "class",
+    "oop"
+  ],
+  "expectOutput": [
+    "1",
+    "2"
+  ],
+  "reverse": "skip",
+  "reverseSkipReason": "Reverse translation does not preserve runtime output (best-effort reverse)."
+}

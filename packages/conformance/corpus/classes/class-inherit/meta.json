@@ -1,0 +1,13 @@
+{
+  "title": "CLASS with inheritance and method call",
+  "tags": [
+    "class",
+    "oop",
+    "inheritance"
+  ],
+  "expectOutput": [
+    "Kitty"
+  ],
+  "reverse": "skip",
+  "reverseSkipReason": "Reverse translation does not preserve runtime output (best-effort reverse)."
+}

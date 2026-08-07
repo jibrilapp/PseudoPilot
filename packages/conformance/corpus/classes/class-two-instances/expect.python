@@ -1,0 +1,11 @@
+class Box:
+    def __init__(self, V: int) -> None:
+        self.N = V
+    def Get(self) -> int:
+        return self.N
+A: Box | None = None
+B: Box | None = None
+A = Box(1)
+B = Box(2)
+print(A.Get())
+print(B.Get())

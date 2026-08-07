@@ -1,0 +1,14 @@
+{
+  "title": "NOTE: AI Coach intent routing (ai-coach package)",
+  "tags": [
+    "regression",
+    "ai-coach",
+    "note"
+  ],
+  "expectOutput": [
+    "conformance-note"
+  ],
+  "reverse": "skip",
+  "reverseSkipReason": "AI Coach routing lives in @pseudopilot/ai-coach tests; stub for suite completeness.",
+  "notes": "Cross-ref: packages/ai-coach/src/index.test.ts (intent / product_capability / general_programming). See REGRESSION_SUITE.md."
+}

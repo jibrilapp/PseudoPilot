@@ -1,0 +1,9 @@
+S: str
+Out: str
+I: int
+S = "CAMBRIDGE"
+Out = ""
+for I in range(1, len(S) + 1):
+    Out = Out + S[(I) - 1 : (I) - 1 + (1)]
+print(Out)
+print(len(Out))

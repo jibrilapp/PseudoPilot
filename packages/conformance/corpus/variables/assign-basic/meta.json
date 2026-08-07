@@ -1,0 +1,12 @@
+{
+  "title": "Assignment and OUTPUT",
+  "tags": [
+    "assign",
+    "declare",
+    "output"
+  ],
+  "expectOutput": [
+    "42"
+  ],
+  "reverse": "check"
+}

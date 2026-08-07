@@ -1,0 +1,13 @@
+{
+  "title": "Record containing another record field pattern",
+  "tags": [
+    "type",
+    "record",
+    "nested"
+  ],
+  "expectOutput": [
+    "Sam",
+    "Cambridge"
+  ],
+  "reverse": "check"
+}

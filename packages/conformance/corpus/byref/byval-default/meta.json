@@ -1,0 +1,11 @@
+{
+  "title": "Default parameter mode is BYVAL",
+  "tags": [
+    "procedure",
+    "byval"
+  ],
+  "expectOutput": [
+    "5"
+  ],
+  "reverse": "check"
+}

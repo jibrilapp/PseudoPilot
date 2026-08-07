@@ -1,0 +1,5 @@
+Age: int
+Age = -1
+while Age < 0 or Age > 120:
+    Age = int(input().strip())
+print(Age)

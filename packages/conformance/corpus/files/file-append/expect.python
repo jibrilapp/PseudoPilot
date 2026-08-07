@@ -1,0 +1,13 @@
+_f_a_txt = open("a.txt", "w")
+_f_a_txt.write(str("x") + "\n")
+_f_a_txt.close()
+_f_a_txt = open("a.txt", "a")
+_f_a_txt.write(str("y") + "\n")
+_f_a_txt.close()
+Line: str
+_f_a_txt = open("a.txt", "r")
+Line = _f_a_txt.readline().rstrip("\n")
+print(Line)
+Line = _f_a_txt.readline().rstrip("\n")
+print(Line)
+_f_a_txt.close()

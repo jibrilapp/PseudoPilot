@@ -1,0 +1,12 @@
+{
+  "title": "PROCEDURE local DECLARE does not leak",
+  "tags": [
+    "procedure",
+    "scope"
+  ],
+  "expectOutput": [
+    "99",
+    "1"
+  ],
+  "reverse": "check"
+}

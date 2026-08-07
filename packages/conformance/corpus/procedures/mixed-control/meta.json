@@ -1,0 +1,13 @@
+{
+  "title": "Mixed control + procedure",
+  "tags": [
+    "procedure",
+    "for",
+    "if"
+  ],
+  "expectOutput": [
+    "2",
+    "4"
+  ],
+  "reverse": "check"
+}

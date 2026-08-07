@@ -1,0 +1,11 @@
+{
+  "title": "ARRAY OF STRING",
+  "tags": [
+    "array",
+    "string"
+  ],
+  "expectOutput": [
+    "Ada Grace"
+  ],
+  "reverse": "check"
+}

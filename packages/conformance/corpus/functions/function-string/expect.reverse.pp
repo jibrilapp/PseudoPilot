@@ -1,0 +1,4 @@
+FUNCTION Tag(Name : STRING) RETURNS STRING
+    RETURN "[" & Name & "]"
+ENDFUNCTION
+OUTPUT Tag("OK")

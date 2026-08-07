@@ -1,0 +1,10 @@
+{
+  "title": "FUNCTION with two parameters",
+  "tags": [
+    "function"
+  ],
+  "expectOutput": [
+    "9"
+  ],
+  "reverse": "check"
+}

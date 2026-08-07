@@ -1,0 +1,30 @@
+from enum import IntEnum
+
+def _pp_cell(value): return [value]
+
+def _pp_addr(cell): return cell
+def _pp_load(cell): return cell[0]
+def _pp_store(cell, value): cell[0] = value
+def _pp_pload(ptr): return ptr[0]
+def _pp_pstore(ptr, value): ptr[0] = value
+
+def _pp_show(v): return v.name if hasattr(v, "name") and type(v).__module__ == "enum" else ("NIL" if v is None else v)
+
+def _pp_define(_type, *values): return set(values)
+
+class Colour(IntEnum):
+    Red = 0
+    Green = 1
+    Blue = 2
+Red = Colour.Red
+Green = Colour.Green
+Blue = Colour.Blue
+ColourPtr = object  # TYPE ColourPtr = ^Colour (pointer to Colour)
+Flags = set  # TYPE Flags = SET OF INTEGER (int)
+Bits = _pp_define("Flags", 1, 2)
+C: Colour = Colour.Red
+P = None  # NIL / ColourPtr
+_pp_store(C, Green)
+P = _pp_addr(C)
+print(_pp_show(_pp_pload(P)))
+print(_pp_show(Bits))

@@ -1,0 +1,39 @@
+from dataclasses import dataclass
+
+import copy
+
+_pp_random_files = dict()
+def _pp_random_open(path):
+    if path not in _pp_random_files:
+        _pp_random_files[path] = [dict(), 0]
+    return _pp_random_files[path]
+
+def _pp_random_seek(f, n):
+    f[1] = n
+
+def _pp_random_get(f):
+    return copy.deepcopy(f[0][f[1]])
+
+def _pp_random_put(f, rec):
+    f[0][f[1]] = copy.deepcopy(rec)
+
+def _pp_random_close(f):
+    pass
+
+@dataclass
+class Cell:
+    V: int = 0
+First: Cell = Cell()
+Second: Cell = Cell()
+Loaded: Cell = Cell()
+First.V = 1
+Second.V = 99
+_f_Cell_Dat = _pp_random_open("Cell.Dat")
+_pp_random_seek(_f_Cell_Dat, 0)
+_pp_random_put(_f_Cell_Dat, First)
+_pp_random_seek(_f_Cell_Dat, 0)
+_pp_random_put(_f_Cell_Dat, Second)
+_pp_random_seek(_f_Cell_Dat, 0)
+Loaded = _pp_random_get(_f_Cell_Dat)
+_pp_random_close(_f_Cell_Dat)
+print(Loaded.V)

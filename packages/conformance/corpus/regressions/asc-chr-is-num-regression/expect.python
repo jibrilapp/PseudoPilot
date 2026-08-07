@@ -1,0 +1,11 @@
+def _pp_is_num(value) -> bool:
+    import re
+    t = str(value).strip()
+    if t == "":
+        return False
+    return re.fullmatch(r"[+-]?(\d+(\.\d*)?|\.\d+)", t) is not None
+
+
+print(ord('0'))
+print(chr(65))
+print(_pp_is_num("3.14"))

@@ -14,7 +14,7 @@ export type IdeDiagnostic = {
   readonly help?: string;
 };
 
-export type TranslationStatus = 'idle' | 'ok' | 'error';
+export type TranslationStatus = 'idle' | 'pending' | 'ok' | 'error';
 
 export const TRANSLATE_DEBOUNCE_MS = 250;
 

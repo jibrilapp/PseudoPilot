@@ -1,0 +1,13 @@
+{
+  "title": "READ until EOF",
+  "tags": [
+    "file",
+    "eof"
+  ],
+  "expectOutput": [
+    "a",
+    "b"
+  ],
+  "reverse": "skip",
+  "reverseSkipReason": "Reverse translation does not preserve runtime output (best-effort reverse)."
+}

@@ -1,0 +1,38 @@
+from dataclasses import dataclass
+
+import copy
+
+_pp_random_files = dict()
+def _pp_random_open(path):
+    if path not in _pp_random_files:
+        _pp_random_files[path] = [dict(), 0]
+    return _pp_random_files[path]
+
+def _pp_random_seek(f, n):
+    f[1] = n
+
+def _pp_random_get(f):
+    return copy.deepcopy(f[0][f[1]])
+
+def _pp_random_put(f, rec):
+    f[0][f[1]] = copy.deepcopy(rec)
+
+def _pp_random_close(f):
+    pass
+
+@dataclass
+class Student:
+    LastName: str = ""
+    YearGroup: int = 0
+Pupil: Student = Student()
+Loaded: Student = Student()
+Pupil.LastName = "Johnson"
+Pupil.YearGroup = 6
+_f_StudentFile_Dat = _pp_random_open("StudentFile.Dat")
+_pp_random_seek(_f_StudentFile_Dat, 0)
+_pp_random_put(_f_StudentFile_Dat, Pupil)
+_pp_random_seek(_f_StudentFile_Dat, 0)
+Loaded = _pp_random_get(_f_StudentFile_Dat)
+_pp_random_close(_f_StudentFile_Dat)
+print(Loaded.LastName)
+print(Loaded.YearGroup)

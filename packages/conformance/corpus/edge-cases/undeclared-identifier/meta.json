@@ -1,0 +1,17 @@
+{
+  "title": "Undeclared identifier diagnostic",
+  "tags": [
+    "checker",
+    "edge"
+  ],
+  "expectDiagnostics": [
+    {
+      "code": "C_UNDECL_IDENT",
+      "severity": "error"
+    }
+  ],
+  "expectClean": false,
+  "skipRun": true,
+  "reverse": "skip",
+  "reverseSkipReason": "Invalid program — undeclared identifier."
+}

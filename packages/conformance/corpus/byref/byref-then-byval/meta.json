@@ -1,0 +1,12 @@
+{
+  "title": "BYREF then explicit BYVAL for literal argument",
+  "tags": [
+    "procedure",
+    "byref",
+    "byval"
+  ],
+  "expectOutput": [
+    "15"
+  ],
+  "reverse": "check"
+}

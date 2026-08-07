@@ -1,0 +1,19 @@
+{
+  "title": "CONSTANT must use = not ← (parse failure)",
+  "tags": [
+    "constant",
+    "parser",
+    "regression"
+  ],
+  "expectDiagnostics": [
+    {
+      "code": "E_CONSTANT_EQUALS",
+      "severity": "error"
+    }
+  ],
+  "expectClean": false,
+  "skipRun": true,
+  "reverse": "skip",
+  "reverseSkipReason": "Invalid program — CONSTANT requires =.",
+  "notes": "CONSTANT must use =; ← is a permanent parser regression (E_CONSTANT_EQUALS)."
+}

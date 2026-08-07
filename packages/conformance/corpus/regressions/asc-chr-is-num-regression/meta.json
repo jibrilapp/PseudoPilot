@@ -1,0 +1,15 @@
+{
+  "title": "ASC / CHR / IS_NUM regression lock",
+  "tags": [
+    "builtin",
+    "insert",
+    "regression"
+  ],
+  "expectOutput": [
+    "48",
+    "A",
+    "TRUE"
+  ],
+  "reverse": "skip",
+  "reverseSkipReason": "Reverse translation does not preserve runtime output (best-effort reverse)."
+}

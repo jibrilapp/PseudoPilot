@@ -1,0 +1,15 @@
+{
+  "title": "BOOLEAN, CHAR, REAL declare and assign",
+  "tags": [
+    "boolean",
+    "char",
+    "real",
+    "declare"
+  ],
+  "expectOutput": [
+    "TRUE",
+    "Z",
+    "3.5"
+  ],
+  "reverse": "check"
+}

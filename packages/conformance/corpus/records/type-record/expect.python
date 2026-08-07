@@ -1,0 +1,10 @@
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    X: int = 0
+    Y: int = 0
+P: Point = Point()
+P.X = 3
+P.Y = 4
+print(P.X + P.Y)

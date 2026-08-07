@@ -5,7 +5,9 @@ import {
   IconPanel,
   IconPause,
   IconPlay,
+  IconRestart,
   IconSidebar,
+  IconSpark,
   IconStepInto,
   IconStepOut,
   IconStepOver,
@@ -13,7 +15,13 @@ import {
   IconTerminal,
 } from './Icons';
 import type { ExecutionState } from '@/lib/runtime';
+import type { TranslationStatus } from '@/lib/translation/types';
+import {
+  liveSyncStatusDescription,
+  liveSyncStatusLabel,
+} from '@/lib/translation/liveSyncStatus';
 import { cn } from '@/lib/cn';
+import { ENABLE_AI_COACH } from '@/lib/featureFlags';
 
 type ToolbarProps = {
   sidebarOpen: boolean;
@@ -22,6 +30,8 @@ type ToolbarProps = {
   onToggleSidebar: () => void;
   onToggleRight: () => void;
   onToggleConsole: () => void;
+  onOpenCoach?: () => void;
+  translationStatus: TranslationStatus;
   executionState: ExecutionState;
   isBusy: boolean;
   canPause: boolean;
@@ -35,6 +45,7 @@ type ToolbarProps = {
   onStepInto: () => void;
   onStepOver: () => void;
   onStepOut: () => void;
+  onShowWelcome?: () => void;
 };
 
 export function Toolbar({
@@ -44,6 +55,8 @@ export function Toolbar({
   onToggleSidebar,
   onToggleRight,
   onToggleConsole,
+  onOpenCoach,
+  translationStatus,
   executionState,
   isBusy,
   canPause,
@@ -57,16 +70,23 @@ export function Toolbar({
   onStepInto,
   onStepOver,
   onStepOut,
+  onShowWelcome,
 }: ToolbarProps) {
+  const syncLabel = liveSyncStatusLabel(translationStatus);
+  const syncDescription = liveSyncStatusDescription(translationStatus);
+
   return (
-    <header className="relative z-20 flex h-11 shrink-0 items-center gap-4 border-b border-pp-line bg-pp-panel/90 px-3 backdrop-blur-xl md:px-4">
+    <header className="relative z-20 flex h-11 shrink-0 items-center gap-3 border-b border-pp-line bg-pp-panel/92 px-3 backdrop-blur-xl md:gap-4 md:px-4">
       <div className="flex min-w-0 items-center gap-2.5">
-        <span
-          aria-hidden
-          className="grid h-6 w-6 place-items-center rounded-[7px] bg-pp-accent text-[10px] font-bold tracking-tight text-white"
+        <button
+          type="button"
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-[7px] bg-pp-accent text-[10px] font-bold tracking-tight text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pp-accent/45 focus-visible:ring-offset-2"
+          title="Welcome"
+          aria-label="Show welcome screen"
+          onClick={onShowWelcome}
         >
           P
-        </span>
+        </button>
         <p className="truncate text-[14px] font-semibold tracking-[-0.02em] text-pp-ink">
           PseudoPilot
         </p>
@@ -78,7 +98,7 @@ export function Toolbar({
           className="pp-icon-btn hidden sm:inline-flex"
           data-active={sidebarOpen}
           onClick={onToggleSidebar}
-          title="Explorer"
+          title="Program workspace"
           aria-pressed={sidebarOpen}
         >
           <IconSidebar />
@@ -103,8 +123,58 @@ export function Toolbar({
         >
           <IconPanel />
         </button>
+        {ENABLE_AI_COACH && onOpenCoach ? (
+          <button
+            type="button"
+            className="pp-icon-btn hidden sm:inline-flex"
+            onClick={onOpenCoach}
+            title="AI Coach"
+            aria-label="Open AI Coach"
+            data-testid="toolbar-ai-coach"
+          >
+            <IconSpark className="h-[14px] w-[14px]" />
+          </button>
+        ) : null}
 
-        <span className="mx-1.5 hidden h-4 w-px bg-pp-lineStrong sm:block" />
+        <span className="mx-1.5 hidden h-4 w-px bg-pp-lineStrong sm:block" aria-hidden />
+
+        <span
+          className={cn(
+            'hidden max-w-[11rem] items-center gap-1.5 truncate rounded-md px-2 py-1 text-[11px] font-medium tracking-[-0.01em] md:inline-flex',
+            translationStatus === 'error'
+              ? 'bg-amber-500/10 text-amber-900/90'
+              : translationStatus === 'pending'
+                ? 'bg-sky-500/10 text-sky-900/90'
+                : 'bg-emerald-500/10 text-emerald-800/90',
+          )}
+          role="status"
+          aria-live="polite"
+          aria-label={syncDescription}
+          title={syncDescription}
+          data-testid="live-sync-status"
+          data-sync-status={translationStatus}
+        >
+          <span
+            className={cn(
+              'h-1.5 w-1.5 shrink-0 rounded-full',
+              translationStatus === 'error'
+                ? 'bg-amber-500/90'
+                : translationStatus === 'pending'
+                  ? 'bg-sky-500/90 animate-pulse'
+                  : 'bg-emerald-500/90',
+            )}
+            aria-hidden
+          />
+          <span className="truncate">
+            {translationStatus === 'idle'
+              ? '✓ Live Translation'
+              : translationStatus === 'ok'
+                ? '✓ Synced'
+                : syncLabel}
+          </span>
+        </span>
+
+        <span className="mx-1.5 hidden h-4 w-px bg-pp-lineStrong md:block" aria-hidden />
 
         <button
           type="button"
@@ -152,7 +222,7 @@ export function Toolbar({
           <IconStepOut />
         </button>
 
-        <span className="mx-1.5 hidden h-4 w-px bg-pp-lineStrong sm:block" />
+        <span className="mx-1.5 hidden h-4 w-px bg-pp-lineStrong sm:block" aria-hidden />
 
         <button
           type="button"
@@ -161,6 +231,7 @@ export function Toolbar({
           disabled={executionState === 'idle' && !isBusy}
           title="Restart"
         >
+          <IconRestart />
           Restart
         </button>
 

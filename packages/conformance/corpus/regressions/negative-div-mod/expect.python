@@ -1,0 +1,5 @@
+def _pp_div(a, b): return int(a / b)
+def _pp_mod(a, b): return a - _pp_div(a, b) * b
+
+print(_pp_div(-7, 3))
+print(_pp_mod(-7, 3))

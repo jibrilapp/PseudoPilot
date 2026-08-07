@@ -60,17 +60,34 @@ import { ExpressionParser } from './expression.js';
 type BodyContext = 'program' | 'procedure' | 'function' | 'class';
 
 /**
+ * Soft ceiling for nested IF/WHILE/REPEAT/FOR/CASE blocks.
+ * Pathological nesting beyond this used to throw RangeError (stack overflow);
+ * we fail with {@link P_NESTING_TOO_DEEP} instead.
+ */
+export const DEFAULT_MAX_BLOCK_NESTING = 512;
+
+export const P_NESTING_TOO_DEEP = 'P_NESTING_TOO_DEEP' as const;
+
+/**
  * Recursive-descent parser for program / statements.
  * Expressions are delegated to {@link ExpressionParser} (Pratt) via a shared cursor.
  */
 export class Parser {
   private readonly cursor: TokenCursor;
   private readonly diagnostics: Diagnostic[];
+  private readonly maxBlockNesting: number;
   private bodyContext: BodyContext = 'program';
+  /** Current nested block depth (IF/WHILE/REPEAT/FOR/CASE bodies). */
+  private blockNesting = 0;
 
-  constructor(tokens: Token[], diagnostics: Diagnostic[] = []) {
+  constructor(
+    tokens: Token[],
+    diagnostics: Diagnostic[] = [],
+    maxBlockNesting: number = DEFAULT_MAX_BLOCK_NESTING,
+  ) {
     this.cursor = new TokenCursor(tokens);
     this.diagnostics = diagnostics;
+    this.maxBlockNesting = Math.max(1, maxBlockNesting);
   }
 
   parseProgram(): Program {
@@ -1740,30 +1757,10 @@ export class Parser {
 
   /** Parse statements until next CASE label, OTHERWISE, or ENDCASE. */
   private parseCaseArmBody(): Statement[] {
-    const body: Statement[] = [];
-    this.skipNewlines();
-
-    while (
-      !this.cursor.isAtEnd() &&
-      !this.cursor.check(TokenKind.Otherwise) &&
-      !this.cursor.check(TokenKind.Endcase)
-    ) {
-      if (this.looksLikeCaseLabel()) break;
-
-      const before = this.cursor.index;
-      const stmt = this.parseStatement();
-      if (stmt) {
-        body.push(stmt);
-        this.expectStatementEnd();
-      } else if (this.cursor.index === before) {
-        this.cursor.advance();
-      } else {
-        this.synchronizeToNewline();
-      }
-      this.skipNewlines();
-    }
-
-    return body;
+    return this.parseBlock(() =>
+      this.cursor.check(TokenKind.Otherwise, TokenKind.Endcase) ||
+      this.looksLikeCaseLabel(),
+    );
   }
 
   /** Speculative: can we parse `<expr> [TO <expr>] :` from the current position? */
@@ -1851,24 +1848,76 @@ export class Parser {
   }
 
   private parseBlock(stop: () => boolean): Statement[] {
-    const body: Statement[] = [];
-    this.skipNewlines();
-
-    while (!this.cursor.isAtEnd() && !stop()) {
-      const before = this.cursor.index;
-      const stmt = this.parseStatement();
-      if (stmt) {
-        body.push(stmt);
-        this.expectStatementEnd();
-      } else if (this.cursor.index === before) {
+    if (this.blockNesting >= this.maxBlockNesting) {
+      pushError(
+        this.diagnostics,
+        `Statement nesting exceeds ${this.maxBlockNesting} levels.`,
+        this.cursor.peek(),
+        P_NESTING_TOO_DEEP,
+      );
+      // Skip nested open/close pairs until this block's closer (`stop`) is next.
+      let inner = 0;
+      while (!this.cursor.isAtEnd()) {
+        if (inner === 0 && stop()) break;
+        const kind = this.cursor.peek().kind;
+        if (this.opensNestedBlock(kind)) {
+          inner += 1;
+        } else if (this.closesNestedBlock(kind)) {
+          if (inner === 0) break;
+          inner -= 1;
+        }
         this.cursor.advance();
-      } else {
-        this.synchronizeToNewline();
       }
+      return [];
+    }
+
+    this.blockNesting += 1;
+    const body: Statement[] = [];
+    try {
       this.skipNewlines();
+
+      while (!this.cursor.isAtEnd() && !stop()) {
+        const before = this.cursor.index;
+        const stmt = this.parseStatement();
+        if (stmt) {
+          body.push(stmt);
+          this.expectStatementEnd();
+        } else if (this.cursor.index === before) {
+          this.cursor.advance();
+        } else {
+          this.synchronizeToNewline();
+        }
+        this.skipNewlines();
+      }
+    } finally {
+      this.blockNesting -= 1;
     }
 
     return body;
+  }
+
+  private opensNestedBlock(kind: TokenKind): boolean {
+    return (
+      kind === TokenKind.If ||
+      kind === TokenKind.While ||
+      kind === TokenKind.Repeat ||
+      kind === TokenKind.For ||
+      kind === TokenKind.Case ||
+      kind === TokenKind.Procedure ||
+      kind === TokenKind.Function
+    );
+  }
+
+  private closesNestedBlock(kind: TokenKind): boolean {
+    return (
+      kind === TokenKind.Endif ||
+      kind === TokenKind.Endwhile ||
+      kind === TokenKind.Until ||
+      kind === TokenKind.Next ||
+      kind === TokenKind.Endcase ||
+      kind === TokenKind.Endprocedure ||
+      kind === TokenKind.Endfunction
+    );
   }
 
   private checkElseOrEndif(): boolean {

@@ -1,0 +1,11 @@
+{
+  "title": "Fill 1D array and sum",
+  "tags": [
+    "array",
+    "for"
+  ],
+  "expectOutput": [
+    "30"
+  ],
+  "reverse": "check"
+}

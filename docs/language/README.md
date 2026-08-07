@@ -22,7 +22,7 @@ PseudoPilot targets the **Cambridge International AS & A Level Computer Science 
 | [LANGUAGE_SERVICE.md](./LANGUAGE_SERVICE.md) | IDE language service (hover, refs, rename, …) — no execute/translate |
 | [INCREMENTAL_COMPILATION.md](./INCREMENTAL_COMPILATION.md) | Document / AST / semantic caches + invalidation |
 
-Cross-cutting quality: [`../TESTING.md`](../TESTING.md) · corpus package `@pseudopilot/conformance`.
+Cross-cutting quality: [`../TESTING.md`](../TESTING.md) · [`../REGRESSION_SUITE.md`](../REGRESSION_SUITE.md) · corpus package `@pseudopilot/conformance`. Product ship checklist: [`../RELEASE_READINESS.md`](../RELEASE_READINESS.md).
 
 ## Status legend
 

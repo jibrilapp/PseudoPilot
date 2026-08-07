@@ -5,6 +5,7 @@ import {
   UnconfiguredAIProvider,
   buildCoachPrompt,
   buildSystemPrompt,
+  classifyCoachIntent,
   summariseContextForPrompt,
   PACKAGE_NAME,
   PACKAGE_VERSION,
@@ -61,7 +62,7 @@ function baseContext(over: Partial<AIContext> = {}): AIContext {
 describe('ai-coach package identity', () => {
   it('exports package identity', () => {
     expect(PACKAGE_NAME).toBe('@pseudopilot/ai-coach');
-    expect(PACKAGE_VERSION).toBe('0.1.0');
+    expect(PACKAGE_VERSION).toBe('1.0.0-beta.0');
   });
 });
 
@@ -70,6 +71,10 @@ describe('prompt construction', () => {
     const system = buildSystemPrompt();
     expect(system).toMatch(/Cambridge/);
     expect(system).toMatch(/never claim authority/i);
+    expect(system).toMatch(/Direct answer/i);
+    expect(system).toMatch(/patient Cambridge/i);
+    expect(system).toMatch(/product_capability/);
+    expect(system).toMatch(/Pseudocode ↔ Python only/);
 
     const { user } = buildCoachPrompt({
       question: 'Why is N undeclared?',
@@ -268,7 +273,8 @@ describe('HeuristicAIProvider', () => {
       capability: 'explain_cambridge_concept',
     });
     expect(res.message).toMatch(/ARRAY/);
-    expect(res.message).toMatch(/9618|inclusive/i);
+    expect(res.message).toMatch(/\*\*Direct answer\*\*/);
+    expect(res.message).toMatch(/```pseudocode/);
   });
 
   it('answers questions about enum, pointer, and set TYPE forms', async () => {
@@ -281,6 +287,372 @@ describe('HeuristicAIProvider', () => {
     expect(res.message).toMatch(/pointer/i);
     expect(res.message).toMatch(/SET OF/i);
     expect(res.message).toMatch(/DEFINE/i);
+    expect(res.message).toMatch(/\*\*Direct answer\*\*/);
+  });
+
+  describe('Cambridge tutor response structure', () => {
+    const placeholder =
+      /I can help with Cambridge 9618 Pseudocode using your open file|I can give a full syllabus-style explanation/;
+
+    const tutorSections = [
+      /\*\*Direct answer\*\*/,
+      /\*\*Explanation\*\*/,
+      /\*\*Example\*\*/,
+      /\*\*Common mistake\*\*/,
+    ];
+
+    const theoryPrompts: Array<{
+      question: string;
+      mustMatch: RegExp[];
+      mustNotMatch?: RegExp[];
+    }> = [
+      {
+        question: 'How do I change a variable inside a procedure?',
+        mustMatch: [/BYREF/, /BYVAL|copy/i, /Increment|N ← N \+ 1/],
+      },
+      {
+        question: 'Why use BYREF?',
+        mustMatch: [/BYREF/, /caller|alias|in-place|update/i],
+      },
+      {
+        question: 'Explain recursion.',
+        mustMatch: [/recursion/i, /base case/i, /calls itself|Factorial/i],
+      },
+      {
+        question: 'What is DIV?',
+        mustMatch: [/\bDIV\b/, /quotient|integer division/i],
+      },
+      {
+        question: 'Difference between TYPE and CLASS.',
+        mustMatch: [/\bTYPE\b/, /\bCLASS\b/, /record|object|OOP|blueprint/i],
+      },
+      {
+        question: 'When should I use a function instead of a procedure?',
+        mustMatch: [
+          /\bFUNCTION\b/,
+          /\bPROCEDURE\b/,
+          /return|RETURNS|expression/i,
+        ],
+      },
+      {
+        question: 'Why use BYREF instead of BYVAL?',
+        mustMatch: [/BYREF/, /BYVAL/, /alias|copy|caller/i],
+      },
+      {
+        question: 'What is recursion?',
+        mustMatch: [/recursion/i, /base case/i, /calls itself/i],
+      },
+      {
+        question: 'Explain DIV vs MOD.',
+        mustMatch: [/\bDIV\b/, /\bMOD\b/, /quotient|remainder/i],
+      },
+      {
+        question: 'What is the difference between TYPE and CLASS?',
+        mustMatch: [/\bTYPE\b/, /\bCLASS\b/, /record|object|OOP/i],
+      },
+      {
+        question: 'Explain binary search.',
+        mustMatch: [/binary search|sorted/i, /Low|High|Mid/i],
+      },
+      {
+        question: 'How does RAND work?',
+        mustMatch: [/\bRAND\b/, /random/i, /REAL/i],
+      },
+    ];
+
+    for (const { question, mustMatch, mustNotMatch = [] } of theoryPrompts) {
+      it(`tutors: ${question}`, async () => {
+        const res = await service.ask({
+          question,
+          context: baseContext(),
+        });
+        expect(res.ok).toBe(true);
+        expect(res.message).not.toMatch(placeholder);
+        expect(res.message).toMatch(/```pseudocode/);
+        expect(res.message.length).toBeGreaterThan(120);
+        for (const section of tutorSections) {
+          expect(res.message).toMatch(section);
+        }
+        for (const re of mustMatch) {
+          expect(res.message).toMatch(re);
+        }
+        for (const re of mustNotMatch) {
+          expect(res.message).not.toMatch(re);
+        }
+      });
+    }
+
+    it('does not let unrelated diagnostics replace a theory answer', async () => {
+      const res = await service.ask({
+        question: 'Why use BYREF instead of BYVAL?',
+        context: baseContext({
+          semanticDiagnostics: [
+            {
+              id: 'd1',
+              severity: 'error',
+              code: 'C_UNDECL_IDENT',
+              message: 'Undeclared identifier Count',
+              line: 3,
+              source: 'semantic',
+            },
+          ],
+        }),
+      });
+      expect(res.message).toMatch(/BYREF/);
+      expect(res.message).toMatch(/BYVAL/);
+      expect(res.message).not.toMatch(placeholder);
+      expect(res.message).not.toMatch(/C_UNDECL_IDENT/);
+      expect(res.message).not.toMatch(/I see \d+ diagnostic/);
+    });
+
+    it('still explains undeclared when the question is about that error', async () => {
+      const res = await service.ask({
+        question: 'Why is this variable undeclared?',
+        context: baseContext({
+          semanticDiagnostics: [
+            {
+              id: 'd1',
+              severity: 'error',
+              code: 'C_UNDECL_IDENT',
+              message: 'Undeclared identifier Count',
+              line: 3,
+              help: 'Add DECLARE Count : INTEGER',
+              source: 'semantic',
+            },
+          ],
+        }),
+      });
+      expect(res.message).toMatch(/C_UNDECL/);
+      expect(res.message).toMatch(/DECLARE/);
+    });
+
+    it('admits missing project context only for project-specific questions', async () => {
+      const res = await service.ask({
+        question: 'What is wrong with my program on line 12?',
+        context: baseContext({
+          pseudocode: '',
+          python: '',
+          symbols: [],
+          astSummary: [],
+        }),
+      });
+      expect(res.message).toMatch(/enough project context|enough context/i);
+      expect(res.message).not.toMatch(placeholder);
+    });
+  });
+
+  describe('product capability intent', () => {
+    const placeholder =
+      /I can help with Cambridge 9618 Pseudocode using your open file|I can give a full syllabus-style explanation/;
+
+    const tutorForced =
+      /\*\*Direct answer\*\*[\s\S]*\*\*Explanation\*\*[\s\S]*\*\*Example\*\*[\s\S]*\*\*Common mistake\*\*/;
+
+    const productPrompts: Array<{
+      question: string;
+      mustMatch: RegExp[];
+      mustNotMatch?: RegExp[];
+    }> = [
+      {
+        question: 'Can I translate to HTML?',
+        mustMatch: [
+          /not|no/i,
+          /HTML/i,
+          /Pseudocode\s*↔\s*Python|Pseudocode.*Python/i,
+        ],
+        mustNotMatch: [/LENGTH|MID\(|STRING routines/i],
+      },
+      {
+        question: 'Does PseudoPilot support Java?',
+        mustMatch: [/not|no/i, /Java/i, /Python|Pseudocode/i],
+      },
+      {
+        question: 'Can I export to C++?',
+        mustMatch: [/not|no/i, /C\+\+/i, /Python|Pseudocode/i],
+      },
+      {
+        question: 'Does PseudoPilot support SQL?',
+        mustMatch: [/not|no/i, /SQL/i, /Python|Pseudocode/i],
+      },
+    ];
+
+    for (const { question, mustMatch, mustNotMatch = [] } of productPrompts) {
+      it(`answers product question: ${question}`, async () => {
+        expect(classifyCoachIntent(question)).toBe('product_capability');
+        const res = await service.ask({
+          question,
+          context: baseContext(),
+        });
+        expect(res.ok).toBe(true);
+        expect(res.message).not.toMatch(placeholder);
+        expect(res.message).not.toMatch(tutorForced);
+        expect(res.message).not.toMatch(/not sure which 9618 topic/i);
+        for (const re of mustMatch) {
+          expect(res.message).toMatch(re);
+        }
+        for (const re of mustNotMatch) {
+          expect(res.message).not.toMatch(re);
+        }
+      });
+    }
+
+    it('classifies theory prompts as cambridge_theory', () => {
+      expect(classifyCoachIntent('Why use BYREF?')).toBe('cambridge_theory');
+      expect(classifyCoachIntent('Explain recursion.')).toBe(
+        'cambridge_theory',
+      );
+    });
+  });
+
+  describe('general programming answers (no shrug fallback)', () => {
+    const genericFallback =
+      /looks like a general programming question rather than Cambridge 9618 Pseudocode theory or a PseudoPilot product feature/;
+
+    const cases: Array<{
+      question: string;
+      intent: ReturnType<typeof classifyCoachIntent>;
+      mustMatch: RegExp[];
+    }> = [
+      {
+        question: 'Can I write HTML here?',
+        intent: 'product_capability',
+        mustMatch: [
+          /not|no/i,
+          /HTML/i,
+          /Pseudocode|Python/i,
+        ],
+      },
+      {
+        question: 'What is HTML?',
+        intent: 'general_programming',
+        mustMatch: [/HyperText Markup Language|HTML/i, /tag/i],
+      },
+      {
+        question: 'Can Python generate HTML?',
+        intent: 'general_programming',
+        mustMatch: [/yes/i, /Python/i, /HTML/i],
+      },
+      {
+        question: 'What is JavaScript?',
+        intent: 'general_programming',
+        mustMatch: [/JavaScript/i, /browser|Node/i],
+      },
+      {
+        question: 'What is Git?',
+        intent: 'general_programming',
+        mustMatch: [/version[- ]control|Git/i, /commit/i],
+      },
+      {
+        question: 'Can I translate to HTML?',
+        intent: 'product_capability',
+        mustMatch: [
+          /not|no/i,
+          /HTML/i,
+          /Pseudocode\s*↔\s*Python|Pseudocode.*Python/i,
+        ],
+      },
+    ];
+
+    for (const { question, intent, mustMatch } of cases) {
+      it(`answers: ${question}`, async () => {
+        expect(classifyCoachIntent(question)).toBe(intent);
+        const res = await service.ask({
+          question,
+          context: baseContext(),
+        });
+        expect(res.ok).toBe(true);
+        expect(res.message).not.toMatch(genericFallback);
+        expect(res.message.length).toBeGreaterThan(40);
+        for (const re of mustMatch) {
+          expect(res.message).toMatch(re);
+        }
+      });
+    }
+
+    it('keeps OOP / recursion-in-Python out of Cambridge tutor template', async () => {
+      expect(classifyCoachIntent('What is OOP?')).toBe('general_programming');
+      expect(classifyCoachIntent('What is recursion in Python?')).toBe(
+        'general_programming',
+      );
+      const oop = await service.ask({
+        question: 'What is OOP?',
+        context: baseContext(),
+      });
+      expect(oop.message).not.toMatch(genericFallback);
+      expect(oop.message).toMatch(/object-oriented|OOP/i);
+      expect(oop.message).not.toMatch(
+        /\*\*Direct answer\*\*[\s\S]*\*\*Example\*\*[\s\S]*```pseudocode/,
+      );
+
+      const rec = await service.ask({
+        question: 'What is recursion in Python?',
+        context: baseContext(),
+      });
+      expect(rec.message).not.toMatch(genericFallback);
+      expect(rec.message).toMatch(/recursion|factorial/i);
+      expect(rec.message).toMatch(/python/i);
+    });
+
+    const codingHowTos: Array<{
+      question: string;
+      mustMatch: RegExp[];
+    }> = [
+      {
+        question: 'How do I add 2 variables together?',
+        mustMatch: [/\+|add/i, /DECLARE|←|Total|A \+ B/i, /```/],
+      },
+      {
+        question: 'How do I multiply numbers?',
+        mustMatch: [/\*|multipl/i, /DECLARE|Product|←/i, /```/],
+      },
+      {
+        question: 'How do I concatenate strings?',
+        mustMatch: [/&|concatenat|join/i, /STRING|DECLARE/i, /```/],
+      },
+      {
+        question: 'How do I compare two values?',
+        mustMatch: [/>|compar|BOOLEAN|IF /i, /DECLARE|ENDIF/i, /```/],
+      },
+      {
+        question: 'How do I call a procedure?',
+        mustMatch: [/\bCALL\b/, /PROCEDURE/i, /```/],
+      },
+      {
+        question: 'How do I return a value from a function?',
+        mustMatch: [/\bRETURN\b/, /FUNCTION|RETURNS/i, /```/],
+      },
+      {
+        question: 'How do I create an array?',
+        mustMatch: [/ARRAY/i, /DECLARE/i, /```/],
+      },
+      {
+        question: 'How do I use a FOR loop?',
+        mustMatch: [/\bFOR\b/, /\bNEXT\b|\bTO\b/, /```/],
+      },
+    ];
+
+    for (const { question, mustMatch } of codingHowTos) {
+      it(`answers coding how-to (no shrug): ${question}`, async () => {
+        expect(classifyCoachIntent(question)).toBe('general_programming');
+        const res = await service.ask({
+          question,
+          context: baseContext(),
+        });
+        expect(res.ok).toBe(true);
+        expect(res.message).not.toMatch(genericFallback);
+        expect(res.message.length).toBeGreaterThan(60);
+        expect(res.message).toMatch(/pseudocode|DECLARE|CALL|FOR|RETURN|\+|←/i);
+        for (const re of mustMatch) {
+          expect(res.message).toMatch(re);
+        }
+      });
+    }
+
+    it('still routes BYREF how-tos to Cambridge theory', () => {
+      expect(
+        classifyCoachIntent('How do I change a variable inside a procedure?'),
+      ).toBe('cambridge_theory');
+    });
   });
 });
 

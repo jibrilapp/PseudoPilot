@@ -1,0 +1,12 @@
+{
+  "title": "Random file I/O regression lock",
+  "tags": [
+    "random",
+    "file",
+    "regression"
+  ],
+  "expectOutput": [
+    "42"
+  ],
+  "reverse": "check"
+}

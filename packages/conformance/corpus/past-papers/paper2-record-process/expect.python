@@ -1,0 +1,13 @@
+from dataclasses import dataclass
+
+@dataclass
+class Result:
+    Candidate: str = ""
+    Score: int = 0
+R: Result = Result()
+R.Candidate = "Alex"
+R.Score = 88
+if R.Score >= 80:
+    print(R.Candidate + " distinction")
+else:
+    print(R.Candidate + " pass")

@@ -1,0 +1,11 @@
+{
+  "title": "Enum Season assign and OUTPUT",
+  "tags": [
+    "type",
+    "enum"
+  ],
+  "expectOutput": [
+    "Autumn"
+  ],
+  "reverse": "check"
+}

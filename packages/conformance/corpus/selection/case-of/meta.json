@@ -1,0 +1,10 @@
+{
+  "title": "CASE OF",
+  "tags": [
+    "case"
+  ],
+  "expectOutput": [
+    "Good"
+  ],
+  "reverse": "check"
+}

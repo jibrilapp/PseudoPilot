@@ -1,0 +1,11 @@
+{
+  "title": "Explicit BYREF mutates caller",
+  "tags": [
+    "procedure",
+    "byref"
+  ],
+  "expectOutput": [
+    "6"
+  ],
+  "reverse": "check"
+}

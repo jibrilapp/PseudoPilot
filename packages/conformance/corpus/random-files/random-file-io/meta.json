@@ -1,0 +1,14 @@
+{
+  "title": "Random file SEEK / GETRECORD / PUTRECORD",
+  "tags": [
+    "file",
+    "random",
+    "type",
+    "regression"
+  ],
+  "expectOutput": [
+    "Johnson",
+    "6"
+  ],
+  "reverse": "check"
+}

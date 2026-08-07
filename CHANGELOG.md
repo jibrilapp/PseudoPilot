@@ -3,51 +3,65 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-with the usual **0.x** caveat: breaking changes may land in minor bumps until 1.0.0.
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added (execution worker)
+### Changed
 
-- **Web Worker execution** (`apps/web/lib/worker`): `WorkerController`, structured protocol, `WorkerRuntimeHost`, `WorkerDebuggerBridge`
-- UI thread never calls `runPseudocode`; in-process port for Vitest
-
-### Fixed (RC audit)
-
-- Checker: isolate `openFiles` when analysing PROCEDURE/FUNCTION bodies (no false `C_FILE_*` at top level)
-- Checker: `READFILE` requires a STRING-assignable target (`C_ASSIGN_TYPE`)
-- Debugger: Step Over / Step Out still stop on enabled breakpoints
-- IDE: Restart awaits the prior interpreter; diagnostics no longer double-printed in the console
-- IDE: editable editor uses one scroll container so gutter breakpoints stay aligned
-- Translator: reverse-lift dynamic `_pp_files[path]` open/read/write/close; parse `_pp_files[p].write/close()`
+- **AI Coach UI disabled** for `v1.0.0-beta` via `ENABLE_AI_COACH = false` in
+  `apps/web/lib/featureFlags.ts` — entry points hidden; package + APIs kept.
+  Set the flag to `true` to restore the previous coach chrome.
 
 ### Added
 
-- **Cambridge text file I/O** across checker / interpreter (VirtualFileSystem) / translator (forward + reverse)
-- IDE `IdeRuntimeHost.files` in-tab VFS (never OS disk)
+- Honest **single-program workspace** chrome (`ProgramWorkspace`): Current program /
+  `Untitled.pp`, Pseudocode + Python views only, New program / Open example, and a
+  session-only persistence note — closes release readiness **P0-2** (see
+  [`docs/FILE_EXPLORER_AUDIT.md`](./docs/FILE_EXPLORER_AUDIT.md))
+- Production **CI build gate** for `@pseudopilot/web` and Vercel deploy path
+  ([`docs/DEPLOY.md`](./docs/DEPLOY.md), `vercel.json`, `.github/workflows/deploy.yml`)
+- **Autosave / restore** of the single program (Pseudocode + Python) in browser
+  `localStorage` (`pseudopilot.ide.workspace.v1`), with a dismissible “Restored
+  previous session” banner — FTUE Critical C1/C2
+- **Save / Export** in the Program workspace: Save locally, Download `.pp`,
+  Download `.py`
+- **Problems** panel and status bar include language-service / checker diagnostics
+  (`C_*` codes, severity, location, message) alongside translation + runtime —
+  FTUE Critical C3
 
-### Added (earlier)
+### Planned
 
-- **IDE debugger** (`apps/web/lib/debugger`): line breakpoints, pause/continue, step into/over/out, call stack, current-line highlight
-- Interpreter **async debugger hooks** (`onBeforeStatement` may await; exposes `depth`) — `@pseudopilot/interpreter` `0.3.0`
+- Remaining P1 usability items from the release readiness audit (Search stub, etc.)
+- Attach live Vercel production URL once project secrets / dashboard link exist
+- Re-enable AI Coach UI for a post-beta update (`ENABLE_AI_COACH`)
 
-### Fixed
+## [1.0.0-beta.0] — 2026-08-06
 
-- **IDE runtime review:** stable `useSyncExternalStore` snapshots; Stop/Restart bump session generation before abort (no stale `R_CANCELLED` / OUTPUT races); console soft-cap; INPUT cancel + restart regression tests
+Public **beta** packaging pass. Not a stable `1.0.0` claim.
 
-### Added (earlier)
+### Added
 
-- **Web IDE Run integration** (`apps/web/lib/runtime`): Run / Stop / Restart, Console INPUT/OUTPUT, Variables panel via `RuntimeController`
-- Interpreter **async RuntimeHost** + `AbortSignal` cancellation (`R_CANCELLED`)
-- `docs` / `apps/web/lib/runtime/README.md` for session lifecycle
+- In-product **Cambridge affiliation disclaimer** on Welcome and status bar
+- Root README rewritten for public users (features, install, screenshots, CONFORMANCE pointer)
+- `SECURITY.md` updated for the shipped Worker interpreter + VFS reality
+- Workspace product versions aligned to **`1.0.0-beta.0`**
 
-### Changed
+### Known limitations (beta)
 
-- `@pseudopilot/interpreter` `0.4.0` — virtual text files
-- `@pseudopilot/checker` `0.11.0` — `C_FILE_*` diagnostics
-- `@pseudopilot/translator` `0.12.0` — file IR + Python mapping
-- Architecture: IDE consumes interpreter through controller + debugger session only
+- Reverse translation (Python → Pseudocode) is best-effort
+- **AI Coach UI is disabled** for this beta (`ENABLE_AI_COACH`); implementation kept for a future update
+- Browser Worker execution has instruction / depth caps — **not** an OS security sandbox
+- Some IDE chrome stubs remain (Search, Past Paper — see release readiness P1); buffer autosave/restore and Problems=`C_*` shipped (see Unreleased)
+- Hosted production URL pending Vercel project link / secrets (pipeline configured — see [`docs/DEPLOY.md`](./docs/DEPLOY.md))
+
+### Included product surface (from prior 0.x work)
+
+- Student IDE: Monaco dual editors, live Pseudocode ↔ Python sync, Run / Debug / Console / Variables
+- Web Worker interpreter with VFS text + random file I/O
+- Language stack: language-core, checker, compiler-service, language-service, translator, conformance
+- In-app documentation corpus; offline AI Coach (package intact, **UI gated off** in beta)
+
 ## [0.10.0] — semantic checker
 
 ### Added
@@ -76,3 +90,8 @@ with the usual **0.x** caveat: breaking changes may land in minor bumps until 1.
 - IF / ELSE / ELSE IF, WHILE, REPEAT, FOR, CASE OF
 - PROCEDURE / CALL (Python `def` without return annotation)
 - Live student IDE (`apps/web`) with debounced pseudocode → Python translation
+
+[Unreleased]: https://github.com/jibrilapp/PseudoPilot/compare/v1.0.0-beta.0...HEAD
+[1.0.0-beta.0]: https://github.com/jibrilapp/PseudoPilot/releases/tag/v1.0.0-beta.0
+[0.10.0]: https://github.com/jibrilapp/PseudoPilot/compare/v0.8.0...v0.10.0
+[0.8.0]: https://github.com/jibrilapp/PseudoPilot/releases/tag/v0.8.0

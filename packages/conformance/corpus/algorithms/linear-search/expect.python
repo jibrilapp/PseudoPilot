@@ -1,0 +1,15 @@
+Data: list[int] = [0 for _ in range((5) - (1) + 1)]  # ARRAY[1:5]
+I: int
+Target: int
+Found: int
+Data[1 - 1] = 4
+Data[2 - 1] = 8
+Data[3 - 1] = 15
+Data[4 - 1] = 16
+Data[5 - 1] = 23
+Target = 16
+Found = 0
+for I in range(1, 5 + 1):
+    if Data[I - 1] == Target:
+        Found = I
+print(Found)

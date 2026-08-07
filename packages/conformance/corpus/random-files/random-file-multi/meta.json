@@ -1,0 +1,11 @@
+{
+  "title": "Random file multiple record slots",
+  "tags": [
+    "file",
+    "random"
+  ],
+  "expectOutput": [
+    "20"
+  ],
+  "reverse": "check"
+}

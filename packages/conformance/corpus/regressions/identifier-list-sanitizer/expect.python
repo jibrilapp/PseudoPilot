@@ -1,0 +1,3 @@
+list_: int
+list_ = 1
+print(list_)

@@ -1,0 +1,11 @@
+{
+  "title": "TYPE record field access",
+  "tags": [
+    "type",
+    "record"
+  ],
+  "expectOutput": [
+    "7"
+  ],
+  "reverse": "check"
+}

@@ -7,7 +7,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/interpreter' as const;
-export const PACKAGE_VERSION = '0.4.0' as const;
+export const PACKAGE_VERSION = '1.0.0-beta.0' as const;
 
 export { runPseudocode, type RunOptions, type RunResult } from './run.js';
 export {

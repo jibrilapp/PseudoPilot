@@ -1,0 +1,8 @@
+A: bool
+B: bool
+A = True
+B = False
+if A and not B:
+    print("pass")
+if A or B:
+    print("either")

@@ -1,0 +1,10 @@
+{
+  "title": "FOR loop",
+  "tags": [
+    "for"
+  ],
+  "expectOutput": [
+    "15"
+  ],
+  "reverse": "check"
+}

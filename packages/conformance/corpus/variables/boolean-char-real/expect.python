@@ -1,0 +1,9 @@
+Flag: bool
+Initial: str  # CHAR
+Pi: float
+Flag = True
+Initial = 'Z'
+Pi = 3.5
+print(Flag)
+print(Initial)
+print(Pi)

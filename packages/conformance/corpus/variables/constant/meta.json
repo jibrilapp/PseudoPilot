@@ -1,0 +1,11 @@
+{
+  "title": "CONSTANT literal",
+  "tags": [
+    "constant",
+    "declare"
+  ],
+  "expectOutput": [
+    "10"
+  ],
+  "reverse": "check"
+}

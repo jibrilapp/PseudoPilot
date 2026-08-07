@@ -1,0 +1,12 @@
+{
+  "title": "Binary search on sorted array",
+  "tags": [
+    "algorithm",
+    "search",
+    "array"
+  ],
+  "expectOutput": [
+    "5"
+  ],
+  "reverse": "check"
+}

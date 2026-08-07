@@ -1,0 +1,9 @@
+Grade: str  # CHAR
+Grade = 'B'
+match Grade:
+    case 'A':
+        print("Excellent")
+    case 'B':
+        print("Good")
+    case _:
+        print("Other")

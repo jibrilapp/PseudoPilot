@@ -1,0 +1,18 @@
+{
+  "title": "Paper 2–style input validation loop",
+  "tags": [
+    "past-paper",
+    "while",
+    "input"
+  ],
+  "inputs": [
+    "-5",
+    "200",
+    "17"
+  ],
+  "expectOutput": [
+    "17"
+  ],
+  "reverse": "check",
+  "notes": "Original equivalent covering validation REPEAT/WHILE patterns from Paper 2."
+}

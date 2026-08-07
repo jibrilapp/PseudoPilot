@@ -8,7 +8,7 @@ import {
   type CoachResponse,
 } from '@pseudopilot/ai-coach';
 import type { RuntimeSnapshot } from '@/lib/runtime/types';
-import type { IdeDiagnostic } from '@/lib/translation/types';
+import type { IdeDiagnostic, TranslationStatus } from '@/lib/translation/types';
 import type { EditOrigin } from '@/lib/translation/bidirectionalSync';
 import { collectAIContext } from './collectContext';
 
@@ -21,7 +21,7 @@ export type CoachChatMessage = {
 export type UseAICoachInput = {
   readonly pseudocode: string;
   readonly python: string;
-  readonly translationStatus: 'idle' | 'ok' | 'error';
+  readonly translationStatus: TranslationStatus;
   readonly translationErrorSide: EditOrigin | null;
   readonly translationDiagnostics: readonly IdeDiagnostic[];
   readonly runtime: RuntimeSnapshot;

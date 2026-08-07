@@ -1,0 +1,3 @@
+def Double(X: int) -> int:
+    return X * 2
+print(Double(21))

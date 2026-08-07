@@ -1,0 +1,13 @@
+{
+  "title": "DATE literal assignment",
+  "tags": [
+    "date",
+    "literal"
+  ],
+  "expectOutput": [
+    "15",
+    "8",
+    "2024"
+  ],
+  "reverse": "check"
+}

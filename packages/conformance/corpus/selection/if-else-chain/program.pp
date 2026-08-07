@@ -1,0 +1,11 @@
+DECLARE Score : INTEGER
+Score ← 72
+IF Score >= 80 THEN
+  OUTPUT "A"
+ELSE
+  IF Score >= 70 THEN
+    OUTPUT "B"
+  ELSE
+    OUTPUT "C"
+  ENDIF
+ENDIF

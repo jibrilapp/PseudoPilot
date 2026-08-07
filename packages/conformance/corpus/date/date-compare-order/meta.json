@@ -1,0 +1,11 @@
+{
+  "title": "DATE ordering across months",
+  "tags": [
+    "date"
+  ],
+  "expectOutput": [
+    "ordered",
+    "2021"
+  ],
+  "reverse": "check"
+}

@@ -1,0 +1,9 @@
+Score: int
+Score = 72
+if Score >= 80:
+    print("A")
+else:
+    if Score >= 70:
+        print("B")
+    else:
+        print("C")

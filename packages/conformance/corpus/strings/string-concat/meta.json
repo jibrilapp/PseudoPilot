@@ -1,0 +1,12 @@
+{
+  "title": "String & concat + LENGTH",
+  "tags": [
+    "string",
+    "builtin"
+  ],
+  "expectOutput": [
+    "Hello World",
+    "11"
+  ],
+  "reverse": "check"
+}

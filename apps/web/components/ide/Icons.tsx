@@ -179,3 +179,31 @@ export function IconSidebar({ className }: IconProps) {
     </svg>
   );
 }
+
+export function IconRestart({ className }: IconProps) {
+  return (
+    <svg className={cn('h-[14px] w-[14px]', className)} viewBox="0 0 24 24" aria-hidden {...base}>
+      <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" />
+      <path d="M19.5 4.5v5h-5" />
+    </svg>
+  );
+}
+
+export function IconProblems({ className }: IconProps) {
+  return (
+    <svg className={cn('h-[14px] w-[14px]', className)} viewBox="0 0 24 24" aria-hidden {...base}>
+      <path d="M12 4.75 20.25 19H3.75L12 4.75Z" />
+      <path d="M12 10v4.5M12 17.25h.01" />
+    </svg>
+  );
+}
+
+export function IconBook({ className }: IconProps) {
+  return (
+    <svg className={cn('h-[18px] w-[18px]', className)} viewBox="0 0 24 24" aria-hidden {...base}>
+      <path d="M5.5 5.25h10.25A2.25 2.25 0 0 1 18 7.5v11.25H7.75A2.25 2.25 0 0 0 5.5 21V5.25Z" />
+      <path d="M5.5 5.25A2.25 2.25 0 0 1 7.75 3h8" />
+      <path d="M9 9h6.5M9 12.5h6.5M9 16h4" />
+    </svg>
+  );
+}

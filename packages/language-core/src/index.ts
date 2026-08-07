@@ -6,12 +6,14 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/language-core' as const;
-export const PACKAGE_VERSION = '0.11.1' as const;
+export const PACKAGE_VERSION = '1.0.0-beta.0' as const;
 
 export {
   parse,
   DEFAULT_MAX_SOURCE_CHARS,
   ABSOLUTE_MAX_SOURCE_CHARS,
+  DEFAULT_MAX_BLOCK_NESTING,
+  P_NESTING_TOO_DEEP,
   type ParseResult,
   type ParseOptions,
 } from './parse.js';

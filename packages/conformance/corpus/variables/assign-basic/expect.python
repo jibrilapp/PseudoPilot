@@ -1,0 +1,3 @@
+N: int
+N = 42
+print(N)

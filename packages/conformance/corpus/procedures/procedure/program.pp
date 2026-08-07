@@ -1,0 +1,4 @@
+PROCEDURE Greet
+  OUTPUT "hi"
+ENDPROCEDURE
+CALL Greet

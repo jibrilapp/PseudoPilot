@@ -1,0 +1,13 @@
+{
+  "title": "Cambridge §8.3 BYREF SWAP",
+  "tags": [
+    "procedure",
+    "byref",
+    "regression"
+  ],
+  "expectOutput": [
+    "7",
+    "3"
+  ],
+  "reverse": "check"
+}

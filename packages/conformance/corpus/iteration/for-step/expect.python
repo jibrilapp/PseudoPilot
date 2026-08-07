@@ -1,0 +1,6 @@
+I: int
+Sum: int
+Sum = 0
+for I in range(1, 7 + 1, 2):
+    Sum = Sum + I
+print(Sum)

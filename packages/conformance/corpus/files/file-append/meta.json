@@ -1,0 +1,12 @@
+{
+  "title": "APPEND mode",
+  "tags": [
+    "file",
+    "append"
+  ],
+  "expectOutput": [
+    "x",
+    "y"
+  ],
+  "reverse": "check"
+}

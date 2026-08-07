@@ -10,6 +10,10 @@ const nextConfig = {
     '@pseudopilot/checker',
     '@pseudopilot/language-core',
   ],
+  // Include repo docs/ so /api/docs-asset can serve screenshots on Vercel.
+  outputFileTracingIncludes: {
+    '/api/docs-asset': ['../../docs/**/*'],
+  },
 };
 
 export default nextConfig;

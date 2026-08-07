@@ -45,6 +45,7 @@ describe('createBidirectionalSync', () => {
       debounceMs: () => 50,
     });
     sync.bootstrap();
+    expect(sync.getState().status).toBe('pending');
     vi.advanceTimersByTime(50);
     expect(forward).toHaveBeenCalledTimes(1);
     expect(sync.getState().python).toBe('# from OUTPUT 1');
@@ -86,6 +87,33 @@ describe('createBidirectionalSync', () => {
     vi.advanceTimersByTime(50);
     expect(reverse).not.toHaveBeenCalled();
     expect(sync.getState().python).toBe('print(1)');
+  });
+
+  it('restoreBuffers sets both sides without translating', () => {
+    const forward = vi.fn(() => ok('print(1)'));
+    const reverse = vi.fn(() => ok('OUTPUT 1'));
+    const sync = createBidirectionalSync({
+      initialPseudocode: 'OUTPUT 1',
+      translateForward: forward,
+      translateReverse: reverse,
+      debounceMs: () => 50,
+    });
+    sync.bootstrap();
+    vi.advanceTimersByTime(50);
+    forward.mockClear();
+    reverse.mockClear();
+
+    sync.restoreBuffers('OUTPUT 99', 'print(99)');
+    expect(sync.getState()).toMatchObject({
+      pseudocode: 'OUTPUT 99',
+      python: 'print(99)',
+      status: 'ok',
+      diagnostics: [],
+      errorSide: null,
+    });
+    vi.advanceTimersByTime(50);
+    expect(forward).not.toHaveBeenCalled();
+    expect(reverse).not.toHaveBeenCalled();
   });
 
   it('prevents infinite loops on rapid alternating edits', () => {
@@ -155,6 +183,30 @@ describe('createBidirectionalSync', () => {
     expect(sync.getState().python).toBe('print(OUTPUT 1)');
     expect(sync.getState().pseudocode).toBe('@@@');
     expect(sync.getState().errorSide).toBe('pseudocode');
+  });
+
+  it('re-edits after failure schedule another translate (no manual force)', () => {
+    let allow = false;
+    const sync = createBidirectionalSync({
+      initialPseudocode: 'OUTPUT 1',
+      translateForward: (s) =>
+        allow || !s.includes('@@@') ? ok(`print(${s.trim()})`) : fail('bad'),
+      translateReverse: () => ok('OUTPUT 1'),
+      debounceMs: () => 10,
+    });
+    sync.bootstrap();
+    vi.advanceTimersByTime(10);
+
+    sync.editPseudocode('@@@');
+    vi.advanceTimersByTime(10);
+    expect(sync.getState().status).toBe('error');
+
+    allow = true;
+    sync.editPseudocode('OUTPUT 2');
+    expect(sync.getState().status).toBe('pending');
+    vi.advanceTimersByTime(10);
+    expect(sync.getState().status).toBe('ok');
+    expect(sync.getState().python).toBe('print(OUTPUT 2)');
   });
 
   it('stale forward result is dropped after reverse edit', () => {

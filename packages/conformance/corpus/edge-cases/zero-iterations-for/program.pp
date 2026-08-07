@@ -1,0 +1,6 @@
+DECLARE I, C : INTEGER
+C ← 0
+FOR I ← 5 TO 1
+  C ← C + 1
+NEXT I
+OUTPUT C

@@ -1,0 +1,7 @@
+A: int
+B: int
+C: int
+A = 1
+B = 2
+C = 3
+print(A + B + C)

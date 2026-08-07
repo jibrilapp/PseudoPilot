@@ -1,0 +1,6 @@
+DECLARE Age : INTEGER
+Age ← -1
+WHILE Age < 0 OR Age > 120 DO
+    INPUT Age
+ENDWHILE
+OUTPUT Age

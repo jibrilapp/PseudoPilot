@@ -435,7 +435,10 @@ export class RuntimeController {
   }
 
   private pushConsole(kind: RuntimeConsoleLine['kind'], text: string): void {
-    const next = [...this.consoleLines, { id: nextLineId(), kind, text }];
+    const next = [
+      ...this.consoleLines,
+      { id: nextLineId(), kind, text, at: Date.now() },
+    ];
     this.consoleLines =
       next.length > MAX_CONSOLE_LINES
         ? next.slice(next.length - MAX_CONSOLE_LINES)

@@ -1,0 +1,14 @@
+{
+  "title": "BYREF sticky across parameter group (Guide SWAP shape)",
+  "tags": [
+    "procedure",
+    "byref",
+    "sticky"
+  ],
+  "expectOutput": [
+    "9",
+    "4"
+  ],
+  "reverse": "check",
+  "notes": "Guide sticky mode: BYREF applies to following params until next mode keyword (same shape as SWAP)."
+}

@@ -1,0 +1,8 @@
+Line: str
+_f_note_txt = open("note.txt", "w")
+_f_note_txt.write(str("line1") + "\n")
+_f_note_txt.close()
+_f_note_txt = open("note.txt", "r")
+Line = _f_note_txt.readline().rstrip("\n")
+_f_note_txt.close()
+print(Line)

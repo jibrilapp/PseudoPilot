@@ -1,0 +1,9 @@
+N: int
+N = 5
+match N:
+    case _v if 1 <= _v and _v <= 3:
+        print("low")
+    case _v if 4 <= _v and _v <= 6:
+        print("mid")
+    case _:
+        print("hi")

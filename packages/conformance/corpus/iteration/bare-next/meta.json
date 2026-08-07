@@ -1,0 +1,13 @@
+{
+  "title": "FOR loop with bare NEXT",
+  "tags": [
+    "for",
+    "bare-next",
+    "regression"
+  ],
+  "expectOutput": [
+    "10"
+  ],
+  "reverse": "check",
+  "notes": "Also mirrored under regressions/bare-next-regression."
+}

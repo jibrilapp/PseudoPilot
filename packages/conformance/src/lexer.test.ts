@@ -3,8 +3,9 @@ import { lex, TokenKind } from '@pseudopilot/language-core';
 import { CORPUS } from './corpus/index.js';
 
 describe('conformance / lexer', () => {
-  it('lexes every corpus program without throwing', () => {
+  it('lexes every clean corpus program without throwing', () => {
     for (const entry of CORPUS) {
+      if (entry.expectClean === false) continue;
       const { tokens, diagnostics } = lex(entry.source);
       expect(diagnostics.filter((d) => d.severity === 'error'), entry.id).toEqual(
         [],

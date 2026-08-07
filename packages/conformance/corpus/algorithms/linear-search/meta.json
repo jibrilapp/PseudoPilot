@@ -1,0 +1,12 @@
+{
+  "title": "Linear search in 1D array",
+  "tags": [
+    "algorithm",
+    "search",
+    "array"
+  ],
+  "expectOutput": [
+    "4"
+  ],
+  "reverse": "check"
+}

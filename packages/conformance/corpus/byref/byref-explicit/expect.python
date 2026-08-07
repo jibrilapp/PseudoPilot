@@ -1,0 +1,10 @@
+def _pp_cell(value): return [value]
+
+def Inc(N: int):  # BYREF N
+    N[0] = N[0] + 1
+A: int
+A = 5
+_pp_ref_0 = _pp_cell(A)
+Inc(_pp_ref_0)
+A = _pp_ref_0[0]
+print(A)

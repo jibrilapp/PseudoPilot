@@ -1,0 +1,11 @@
+{
+  "title": "FOR with TO less than start",
+  "tags": [
+    "for",
+    "edge"
+  ],
+  "expectOutput": [
+    "0"
+  ],
+  "reverse": "check"
+}

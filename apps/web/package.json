@@ -1,9 +1,13 @@
 {
   "name": "@pseudopilot/web",
-  "version": "0.0.0",
+  "version": "1.0.0-beta.0",
   "private": true,
-  "description": "PseudoPilot student IDE — UI shell (Milestone 2).",
+  "description": "PseudoPilot student IDE — Monaco, live sync, interpreter, debugger (1.0.0-beta).",
   "scripts": {
+    "docs:corpus": "node scripts/generate-docs-corpus.mjs",
+    "predev": "node scripts/generate-docs-corpus.mjs",
+    "prebuild": "node scripts/generate-docs-corpus.mjs",
+    "pretest": "node scripts/generate-docs-corpus.mjs",
     "dev": "next dev --port 3000 --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start --port 3000 --hostname 127.0.0.1",

@@ -1,0 +1,11 @@
+{
+  "title": "CASE OF with integer ranges",
+  "tags": [
+    "case",
+    "range"
+  ],
+  "expectOutput": [
+    "mid"
+  ],
+  "reverse": "check"
+}

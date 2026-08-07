@@ -1,0 +1,11 @@
+{
+  "title": "Recursive factorial",
+  "tags": [
+    "function",
+    "recursion"
+  ],
+  "expectOutput": [
+    "120"
+  ],
+  "reverse": "check"
+}

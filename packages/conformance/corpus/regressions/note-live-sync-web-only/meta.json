@@ -1,0 +1,14 @@
+{
+  "title": "NOTE: live sync unrelated Pseudocode mutation (apps/web)",
+  "tags": [
+    "regression",
+    "web-only",
+    "note"
+  ],
+  "expectOutput": [
+    "conformance-note"
+  ],
+  "reverse": "skip",
+  "reverseSkipReason": "Web-only regression — covered in apps/web Monaco/live-sync tests, not package corpus.",
+  "notes": "Historical bug: live sync could mutate unrelated Pseudocode. Not reproducible at @pseudopilot/conformance package level. See apps/web lib/monaco / bidirectional sync tests. Cross-ref REGRESSION_SUITE.md."
+}

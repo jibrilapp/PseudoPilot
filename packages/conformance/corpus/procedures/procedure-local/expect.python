@@ -1,0 +1,8 @@
+def Fill():
+    X: int
+    X = 99
+    print(X)
+X: int
+X = 1
+Fill()
+print(X)

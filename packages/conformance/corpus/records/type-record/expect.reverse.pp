@@ -1,0 +1,8 @@
+TYPE Point
+    DECLARE X : INTEGER
+    DECLARE Y : INTEGER
+ENDTYPE
+DECLARE P : Point
+P.X ← 3
+P.Y ← 4
+OUTPUT P.X + P.Y

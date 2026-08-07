@@ -48,7 +48,7 @@ describe('conformance / end-to-end', () => {
     expect(
       compilerService.getSymbols(uri).some((s) => s.name === 'Greet'),
     ).toBe(true);
-    const tip = languageService.hover(uri, { line: 1, character: 10 });
+    const tip = languageService.hover(uri, { line: 0, character: 10 });
     expect(tip?.contents.toUpperCase()).toContain('PROCEDURE');
     const run = await runOk(entry.source);
     expect(run.host.outputs).toEqual(['hi']);

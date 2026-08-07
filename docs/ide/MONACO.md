@@ -57,6 +57,10 @@ the user switches panes (generation tokens).
 | Forward (bad Pseudocode) | Last good Python | Console + LS markers on Pseudocode | Unchanged; LS still sees current Pseudocode |
 | Reverse (bad Python) | Last good Pseudocode | Console + Monaco markers on Python | Unchanged; breakpoints / pause state kept |
 
+There is **no** manual Translate control. The next edit in either pane
+re-schedules translation automatically (status: Translating… → Synced or
+Translation failed).
+
 ### UX preservation
 
 - Models are not recreated (`path` stable: `main.pseudo` / `main.py`)
@@ -110,6 +114,9 @@ multi-cursor, undo/redo, word wrap, auto-indent.
 
 The same LS adapter can drive a VS Code extension or LSP server without changing
 `@pseudopilot/language-service` / `compiler-service`.
+
+IDE chrome, layout persistence, welcome screen, and accessibility notes:
+[`UI.md`](./UI.md).
 
 ## Limitations
 

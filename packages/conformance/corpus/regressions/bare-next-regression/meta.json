@@ -1,0 +1,12 @@
+{
+  "title": "Bare NEXT regression lock",
+  "tags": [
+    "for",
+    "bare-next",
+    "regression"
+  ],
+  "expectOutput": [
+    "6"
+  ],
+  "reverse": "check"
+}

@@ -1,0 +1,8 @@
+DECLARE I, J, C : INTEGER
+C ← 0
+FOR I ← 1 TO 3
+  FOR J ← 1 TO 2
+    C ← C + 1
+  NEXT J
+NEXT I
+OUTPUT C

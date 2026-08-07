@@ -42,7 +42,7 @@ import type {
   PpType,
   ScalarTypeName,
 } from './types.js';
-import { DEFAULT_MAX_CHECKER_DIAGNOSTICS } from './types.js';
+import { DEFAULT_MAX_CHECKER_DIAGNOSTICS, DEFAULT_MAX_STATEMENT_NESTING, C_NESTING_TOO_DEEP } from './types.js';
 import {
   checkEofExpression,
   checkFileStatement,
@@ -66,6 +66,7 @@ const BUILTIN_SPAN = {
 type Ctx = {
   readonly diagnostics: CheckerDiagnostic[];
   readonly maxDiagnostics: number;
+  readonly maxStatementNesting: number;
   diagLimitReported: boolean;
   scope: Scope;
   /** Innermost FUNCTION return type when inside a function body. */
@@ -83,6 +84,8 @@ type Ctx = {
   readonly symbols: import('./types.js').SymbolInfo[];
   /** TYPE … ENDTYPE registry (case-folded keys). */
   readonly typeTable: Map<string, PpType>;
+  /** Current compound-statement nesting depth. */
+  statementNesting: number;
 };
 
 function diag(
@@ -175,6 +178,8 @@ export function check(
 ): CheckResult {
   const maxDiagnostics =
     options?.maxDiagnostics ?? DEFAULT_MAX_CHECKER_DIAGNOSTICS;
+  const maxStatementNesting =
+    options?.maxStatementNesting ?? DEFAULT_MAX_STATEMENT_NESTING;
   const diagnostics: CheckerDiagnostic[] = [];
   const symbols: import('./types.js').SymbolInfo[] = [];
   const global = new Scope(null, 'global');
@@ -182,6 +187,7 @@ export function check(
   const ctx: Ctx = {
     diagnostics,
     maxDiagnostics: Math.max(1, maxDiagnostics),
+    maxStatementNesting: Math.max(1, maxStatementNesting),
     diagLimitReported: false,
     scope: global,
     functionReturn: null,
@@ -190,55 +196,71 @@ export function check(
     openFiles: new Map(),
     symbols,
     typeTable,
+    statementNesting: 0,
   };
 
-  // Seed Core builtins before user routines (soft-reserved names).
-  injectBuiltins(ctx);
+  try {
+    // Seed Core builtins before user routines (soft-reserved names).
+    injectBuiltins(ctx);
 
-  const fieldSymbolSink = (symbol: import('./types.js').SymbolInfo): void => {
-    const withContainer =
-      symbol.containerName !== undefined
-        ? symbol
-        : { ...symbol, containerName: ctx.scope.name };
-    ctx.symbols.push(withContainer);
-  };
+    const fieldSymbolSink = (symbol: import('./types.js').SymbolInfo): void => {
+      const withContainer =
+        symbol.containerName !== undefined
+          ? symbol
+          : { ...symbol, containerName: ctx.scope.name };
+      ctx.symbols.push(withContainer);
+    };
 
-  // Pass 0 — TYPE … ENDTYPE (before routines so params/returns can use them).
-  registerTypeDeclarations(
-    {
-      typeTable: ctx.typeTable,
-      diag: (partial) => diag(ctx, partial),
-      defineSymbol: (symbol) => defineSymbol(ctx, symbol),
-      recordFieldSymbol: fieldSymbolSink,
-    },
-    program,
-  );
+    // Pass 0 — TYPE … ENDTYPE (before routines so params/returns can use them).
+    registerTypeDeclarations(
+      {
+        typeTable: ctx.typeTable,
+        diag: (partial) => diag(ctx, partial),
+        defineSymbol: (symbol) => defineSymbol(ctx, symbol),
+        recordFieldSymbol: fieldSymbolSink,
+      },
+      program,
+    );
 
-  // Pass 0b — CLASS … ENDCLASS (records must be registered first so class
-  // fields may reference TYPE names; CLASS/TYPE share one name table).
-  registerClassDeclarations(
-    {
-      typeTable: ctx.typeTable,
-      diag: (partial) => diag(ctx, partial),
-      defineSymbol: (symbol) => defineSymbol(ctx, symbol),
-      recordFieldSymbol: fieldSymbolSink,
-      classMethodSymbol: fieldSymbolSink,
-    },
-    program,
-  );
+    // Pass 0b — CLASS … ENDCLASS (records must be registered first so class
+    // fields may reference TYPE names; CLASS/TYPE share one name table).
+    registerClassDeclarations(
+      {
+        typeTable: ctx.typeTable,
+        diag: (partial) => diag(ctx, partial),
+        defineSymbol: (symbol) => defineSymbol(ctx, symbol),
+        recordFieldSymbol: fieldSymbolSink,
+        classMethodSymbol: fieldSymbolSink,
+      },
+      program,
+    );
 
-  // Pass 1 — routine signatures (enables CALL before definition).
-  for (const stmt of program.body) {
-    if (stmt.kind === 'ProcedureDeclaration') {
-      hoistRoutine(ctx, stmt, 'procedure');
-    } else if (stmt.kind === 'FunctionDeclaration') {
-      hoistRoutine(ctx, stmt, 'function');
+    // Pass 1 — routine signatures (enables CALL before definition).
+    for (const stmt of program.body) {
+      if (stmt.kind === 'ProcedureDeclaration') {
+        hoistRoutine(ctx, stmt, 'procedure');
+      } else if (stmt.kind === 'FunctionDeclaration') {
+        hoistRoutine(ctx, stmt, 'function');
+      }
     }
-  }
 
-  // Pass 2 — full check.
-  for (const stmt of program.body) {
-    checkStatement(ctx, stmt);
+    // Pass 2 — full check.
+    for (const stmt of program.body) {
+      checkStatement(ctx, stmt);
+    }
+  } catch (err) {
+    if (err instanceof RangeError) {
+      diagnostics.push({
+        severity: 'error',
+        code: C_NESTING_TOO_DEEP,
+        message:
+          'Program nesting is too deep to analyse (call stack exhausted). Simplify nested control-flow.',
+        span: BUILTIN_SPAN,
+        help: `Keep compound statement nesting under ${maxStatementNesting} levels.`,
+      });
+    } else {
+      throw err;
+    }
   }
 
   return {
@@ -309,6 +331,24 @@ function hoistRoutine(
         };
 
   defineSymbol(ctx, makeSymbol(stmt.name.name, kind, type, stmt.name.span));
+}
+
+function enterCompound(ctx: Ctx, span: CheckerDiagnostic['span']): boolean {
+  if (ctx.statementNesting >= ctx.maxStatementNesting) {
+    diag(ctx, {
+      code: C_NESTING_TOO_DEEP,
+      message: `Statement nesting exceeds ${ctx.maxStatementNesting} levels.`,
+      span,
+      help: 'Simplify nested IF / WHILE / REPEAT / FOR / CASE structures.',
+    });
+    return false;
+  }
+  ctx.statementNesting += 1;
+  return true;
+}
+
+function leaveCompound(ctx: Ctx): void {
+  ctx.statementNesting -= 1;
 }
 
 function checkStatement(ctx: Ctx, stmt: Statement): void {
@@ -384,81 +424,106 @@ function checkStatement(ctx: Ctx, stmt: Statement): void {
       return;
     }
     case 'IfStatement': {
-      expectBoolean(ctx, inferExpr(ctx, stmt.condition), stmt.condition.span, 'IF');
-      for (const s of stmt.consequent) checkStatement(ctx, s);
-      for (const c of stmt.elseIfClauses) {
-        expectBoolean(ctx, inferExpr(ctx, c.condition), c.condition.span, 'ELSE IF');
-        for (const s of c.consequent) checkStatement(ctx, s);
-      }
-      if (stmt.alternate) {
-        for (const s of stmt.alternate) checkStatement(ctx, s);
+      if (!enterCompound(ctx, stmt.span)) return;
+      try {
+        expectBoolean(ctx, inferExpr(ctx, stmt.condition), stmt.condition.span, 'IF');
+        for (const s of stmt.consequent) checkStatement(ctx, s);
+        for (const c of stmt.elseIfClauses) {
+          expectBoolean(ctx, inferExpr(ctx, c.condition), c.condition.span, 'ELSE IF');
+          for (const s of c.consequent) checkStatement(ctx, s);
+        }
+        if (stmt.alternate) {
+          for (const s of stmt.alternate) checkStatement(ctx, s);
+        }
+      } finally {
+        leaveCompound(ctx);
       }
       return;
     }
     case 'WhileStatement': {
-      expectBoolean(
-        ctx,
-        inferExpr(ctx, stmt.condition),
-        stmt.condition.span,
-        'WHILE',
-      );
-      for (const s of stmt.body) checkStatement(ctx, s);
+      if (!enterCompound(ctx, stmt.span)) return;
+      try {
+        expectBoolean(
+          ctx,
+          inferExpr(ctx, stmt.condition),
+          stmt.condition.span,
+          'WHILE',
+        );
+        for (const s of stmt.body) checkStatement(ctx, s);
+      } finally {
+        leaveCompound(ctx);
+      }
       return;
     }
     case 'RepeatStatement': {
-      for (const s of stmt.body) checkStatement(ctx, s);
-      expectBoolean(
-        ctx,
-        inferExpr(ctx, stmt.condition),
-        stmt.condition.span,
-        'UNTIL',
-      );
+      if (!enterCompound(ctx, stmt.span)) return;
+      try {
+        for (const s of stmt.body) checkStatement(ctx, s);
+        expectBoolean(
+          ctx,
+          inferExpr(ctx, stmt.condition),
+          stmt.condition.span,
+          'UNTIL',
+        );
+      } finally {
+        leaveCompound(ctx);
+      }
       return;
     }
     case 'ForStatement': {
-      checkFor(ctx, stmt);
+      if (!enterCompound(ctx, stmt.span)) return;
+      try {
+        checkFor(ctx, stmt);
+      } finally {
+        leaveCompound(ctx);
+      }
       return;
     }
     case 'CaseStatement': {
-      const disc = inferExpr(ctx, stmt.discriminant);
-      for (const arm of stmt.arms) {
-        if (arm.label.kind === 'Value') {
-          const lt = inferExpr(ctx, arm.label.value);
-          if (
-            disc.kind !== 'error' &&
-            lt.kind !== 'error' &&
-            !isAssignable(disc, lt, ctx.typeTable) &&
-            !isAssignable(lt, disc, ctx.typeTable)
-          ) {
-            diag(ctx, {
-              severity: 'warning',
-              code: 'C_CASE_LABEL_TYPE',
-              message: `CASE label type ${formatType(lt)} may not match discriminant ${formatType(disc)}.`,
-              span: arm.label.span,
-            });
+      if (!enterCompound(ctx, stmt.span)) return;
+      try {
+        const disc = inferExpr(ctx, stmt.discriminant);
+        for (const arm of stmt.arms) {
+          if (arm.label.kind === 'Value') {
+            const lt = inferExpr(ctx, arm.label.value);
+            if (
+              disc.kind !== 'error' &&
+              lt.kind !== 'error' &&
+              !isAssignable(disc, lt, ctx.typeTable) &&
+              !isAssignable(lt, disc, ctx.typeTable)
+            ) {
+              diag(ctx, {
+                severity: 'warning',
+                code: 'C_CASE_LABEL_TYPE',
+                message: `CASE label type ${formatType(lt)} may not match discriminant ${formatType(disc)}.`,
+                span: arm.label.span,
+              });
+            }
+          } else {
+            const low = inferExpr(ctx, arm.label.low);
+            const high = inferExpr(ctx, arm.label.high);
+            if (!isNumeric(low) && low.kind !== 'error') {
+              diag(ctx, {
+                code: 'C_CASE_RANGE_TYPE',
+                message: 'CASE range bounds should be numeric.',
+                span: arm.label.low.span,
+              });
+            }
+            if (!isNumeric(high) && high.kind !== 'error') {
+              diag(ctx, {
+                code: 'C_CASE_RANGE_TYPE',
+                message: 'CASE range bounds should be numeric.',
+                span: arm.label.high.span,
+              });
+            }
           }
-        } else {
-          const low = inferExpr(ctx, arm.label.low);
-          const high = inferExpr(ctx, arm.label.high);
-          if (!isNumeric(low) && low.kind !== 'error') {
-            diag(ctx, {
-              code: 'C_CASE_RANGE_TYPE',
-              message: 'CASE range bounds should be numeric.',
-              span: arm.label.low.span,
-            });
-          }
-          if (!isNumeric(high) && high.kind !== 'error') {
-            diag(ctx, {
-              code: 'C_CASE_RANGE_TYPE',
-              message: 'CASE range bounds should be numeric.',
-              span: arm.label.high.span,
-            });
-          }
+          for (const s of arm.body) checkStatement(ctx, s);
         }
-        for (const s of arm.body) checkStatement(ctx, s);
-      }
-      if (stmt.otherwise) {
-        for (const s of stmt.otherwise) checkStatement(ctx, s);
+        if (stmt.otherwise) {
+          for (const s of stmt.otherwise) checkStatement(ctx, s);
+        }
+      } finally {
+        leaveCompound(ctx);
       }
       return;
     }

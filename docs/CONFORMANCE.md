@@ -222,7 +222,7 @@ Related docs: [`language/README.md`](./language/README.md) · [`language/BUILTIN
 | Language service (hover, refs, rename, …) | — | ✅ | yes | LANGUAGE_SERVICE | |
 | Monaco Pseudocode + LS providers | — | ✅ | yes — `apps/web` monaco tests | ide/MONACO.md | Python pane: highlight + translate only |
 | Incremental compiler service | — | ✅ | yes | INCREMENTAL_COMPILATION | |
-| Conformance corpus / fuzz / e2e | — | ✅ | yes — `@pseudopilot/conformance` | TESTING.md | |
+| Conformance corpus / fuzz / e2e | — | ✅ | yes — `@pseudopilot/conformance` | [TESTING.md](./TESTING.md) · [REGRESSION_SUITE.md](./REGRESSION_SUITE.md) | On-disk `packages/conformance/corpus/` |
 | Cambridge → Python translation | — | 🟡 | yes — translator + corpus | TRANSLATION.md | DIV/MOD via `_pp_div`/`_pp_mod`; RIGHT via `_pp_right`; enum/pointer/set mapped; reverse still best-effort |
 | Python → Cambridge reverse | — | 🟡 | yes | TRANSLATION.md | Best on PseudoPilot-emitted shapes; `skipRoundTrip` corpus flags |
 | Bidirectional IDE sync | — | 🟡 | yes — web hooks | MONACO.md | Origin-aware debounce |

@@ -1,0 +1,13 @@
+{
+  "title": "Build string with MID and LENGTH",
+  "tags": [
+    "string",
+    "for",
+    "builtin"
+  ],
+  "expectOutput": [
+    "CAMBRIDGE",
+    "9"
+  ],
+  "reverse": "check"
+}

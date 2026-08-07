@@ -1,0 +1,3 @@
+S: str
+S = ""
+print(len(S))

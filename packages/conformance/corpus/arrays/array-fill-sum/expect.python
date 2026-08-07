@@ -1,0 +1,8 @@
+A: list[int] = [0 for _ in range((5) - (1) + 1)]  # ARRAY[1:5]
+I: int
+Sum: int
+Sum = 0
+for I in range(1, 5 + 1):
+    A[I - 1] = I * 2
+    Sum = Sum + A[I - 1]
+print(Sum)

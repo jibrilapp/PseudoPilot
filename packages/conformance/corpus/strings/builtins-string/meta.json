@@ -1,0 +1,16 @@
+{
+  "title": "Core string builtins",
+  "tags": [
+    "builtin",
+    "string"
+  ],
+  "expectOutput": [
+    "ABC",
+    "EF",
+    "BCD",
+    "abc",
+    "ABC",
+    "3"
+  ],
+  "reverse": "check"
+}

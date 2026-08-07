@@ -1,0 +1,4 @@
+Max = 10  # CONSTANT
+X: int
+X = Max
+print(X)

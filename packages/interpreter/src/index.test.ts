@@ -29,7 +29,7 @@ async function run(
 describe('interpreter package', () => {
   it('exports identity', () => {
     expect(PACKAGE_NAME).toBe('@pseudopilot/interpreter');
-    expect(PACKAGE_VERSION).toBe('0.4.0');
+    expect(PACKAGE_VERSION).toBe('1.0.0-beta.0');
   });
 
   it('implements every CORE_BUILTIN', () => {

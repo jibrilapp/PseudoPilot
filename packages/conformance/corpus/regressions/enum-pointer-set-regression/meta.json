@@ -1,0 +1,14 @@
+{
+  "title": "Enum / pointer / SET smoke regression",
+  "tags": [
+    "enum",
+    "pointer",
+    "set",
+    "regression"
+  ],
+  "expectOutput": [
+    "Green",
+    "{1, 2}"
+  ],
+  "reverse": "check"
+}

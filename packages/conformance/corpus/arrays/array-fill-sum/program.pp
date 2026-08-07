@@ -1,0 +1,8 @@
+DECLARE A : ARRAY[1:5] OF INTEGER
+DECLARE I, Sum : INTEGER
+Sum ← 0
+FOR I ← 1 TO 5
+  A[I] ← I * 2
+  Sum ← Sum + A[I]
+NEXT I
+OUTPUT Sum

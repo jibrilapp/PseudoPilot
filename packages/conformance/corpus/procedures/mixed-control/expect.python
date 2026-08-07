@@ -1,0 +1,9 @@
+def _pp_div(a, b): return int(a / b)
+def _pp_mod(a, b): return a - _pp_div(a, b) * b
+
+def Show(N: int):
+    I: int
+    for I in range(1, N + 1):
+        if _pp_mod(I, 2) == 0:
+            print(I)
+Show(4)

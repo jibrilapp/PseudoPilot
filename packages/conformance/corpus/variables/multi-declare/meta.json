@@ -1,0 +1,11 @@
+{
+  "title": "Multi-variable DECLARE same type",
+  "tags": [
+    "declare",
+    "assign"
+  ],
+  "expectOutput": [
+    "6"
+  ],
+  "reverse": "check"
+}

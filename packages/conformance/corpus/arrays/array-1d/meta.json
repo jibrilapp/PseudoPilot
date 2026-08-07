@@ -1,0 +1,10 @@
+{
+  "title": "1D ARRAY",
+  "tags": [
+    "array"
+  ],
+  "expectOutput": [
+    "30"
+  ],
+  "reverse": "check"
+}

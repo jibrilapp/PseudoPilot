@@ -4,7 +4,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/ai-coach' as const;
-export const PACKAGE_VERSION = '0.1.0' as const;
+export const PACKAGE_VERSION = '1.0.0-beta.0' as const;
 
 export type {
   AIAstNodeSummary,
@@ -36,3 +36,22 @@ export type { AICoachServiceOptions } from './service.js';
 
 export { HeuristicAIProvider } from './providers/heuristic.js';
 export { UnconfiguredAIProvider } from './providers/unconfigured.js';
+
+export { formatTutorResponse } from './tutorFormat.js';
+export type { TutorCard } from './tutorFormat.js';
+export { matchConcept, formatConceptAnswer } from './concepts.js';
+export { classifyCoachIntent } from './intent.js';
+export type { CoachIntent } from './intent.js';
+export {
+  answerProductCapability,
+  PRODUCT_FACTS,
+} from './productCapabilities.js';
+export type { ProductCapabilityAnswer } from './productCapabilities.js';
+export {
+  answerGeneralProgramming,
+  isUnintelligibleQuestion,
+  looksLikeCodingHowTo,
+  looksLikeGeneralProgrammingTopic,
+} from './generalProgramming.js';
+export type { GeneralProgrammingAnswer } from './generalProgramming.js';
+export { GENERIC_FALLBACK_PHRASE } from './providers/heuristic.js';

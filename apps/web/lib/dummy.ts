@@ -1,11 +1,3 @@
-export type FileNode = {
-  id: string;
-  name: string;
-  type: 'file' | 'folder';
-  language?: 'pseudocode' | 'python' | 'markdown';
-  children?: FileNode[];
-};
-
 export type EditorTab = {
   id: string;
   name: string;
@@ -32,41 +24,19 @@ export type ConsoleLine = {
   text: string;
 };
 
-export const DUMMY_FILES: FileNode[] = [
-  {
-    id: 'src',
-    name: 'src',
-    type: 'folder',
-    children: [
-      { id: 'main-pseudo', name: 'main.pseudo', type: 'file', language: 'pseudocode' },
-      { id: 'main-py', name: 'main.py', type: 'file', language: 'python' },
-      { id: 'helpers-pseudo', name: 'helpers.pseudo', type: 'file', language: 'pseudocode' },
-    ],
-  },
-  {
-    id: 'exercises',
-    name: 'exercises',
-    type: 'folder',
-    children: [
-      { id: 'ex01', name: '01-loops.pseudo', type: 'file', language: 'pseudocode' },
-      { id: 'ex02', name: '02-arrays.pseudo', type: 'file', language: 'pseudocode' },
-    ],
-  },
-  { id: 'readme', name: 'README.md', type: 'file', language: 'markdown' },
-];
-
+/** Editor tabs map 1:1 to the dual Pseudocode / Python panes (single program). */
 export const DUMMY_TABS: EditorTab[] = [
   {
     id: 'main-pseudo',
-    name: 'main.pseudo',
+    name: 'Untitled.pp',
     language: 'pseudocode',
-    path: 'src/main.pseudo',
+    path: 'Untitled.pp',
   },
   {
     id: 'main-py',
-    name: 'main.py',
+    name: 'Untitled.py',
     language: 'python',
-    path: 'src/main.py',
+    path: 'Untitled.py',
   },
 ];
 

@@ -7,7 +7,7 @@ const URI = 'file:///ls.pseudo';
 describe('conformance / language-service', () => {
   it('opens corpus programs and lists symbols', () => {
     const ls = new LanguageService();
-    for (const entry of CORPUS.slice(0, 10)) {
+    for (const entry of CORPUS.filter((e) => e.expectClean !== false).slice(0, 10)) {
       ls.openDocument(URI, entry.source, 1);
       const syms = ls.documentSymbols(URI);
       expect(syms.length, entry.id).toBeGreaterThan(0);

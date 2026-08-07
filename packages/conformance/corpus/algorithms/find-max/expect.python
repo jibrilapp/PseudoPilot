@@ -1,0 +1,13 @@
+Scores: list[int] = [0 for _ in range((5) - (1) + 1)]  # ARRAY[1:5]
+I: int
+Max: int
+Scores[1 - 1] = 12
+Scores[2 - 1] = 27
+Scores[3 - 1] = 9
+Scores[4 - 1] = 31
+Scores[5 - 1] = 18
+Max = Scores[1 - 1]
+for I in range(2, 5 + 1):
+    if Scores[I - 1] > Max:
+        Max = Scores[I - 1]
+print(Max)

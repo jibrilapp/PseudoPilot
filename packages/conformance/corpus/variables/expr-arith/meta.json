@@ -1,0 +1,12 @@
+{
+  "title": "Arithmetic expressions",
+  "tags": [
+    "expr",
+    "declare",
+    "div"
+  ],
+  "expectOutput": [
+    "13"
+  ],
+  "reverse": "check"
+}

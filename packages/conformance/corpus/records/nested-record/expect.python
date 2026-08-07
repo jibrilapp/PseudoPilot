@@ -1,0 +1,14 @@
+from dataclasses import dataclass, field
+
+@dataclass
+class Address:
+    City: str = ""
+@dataclass
+class Person:
+    Name: str = ""
+    Home: Address = field(default_factory=Address)
+P: Person = Person()
+P.Name = "Sam"
+P.Home.City = "Cambridge"
+print(P.Name)
+print(P.Home.City)

@@ -1,0 +1,10 @@
+{
+  "title": "Nested IF",
+  "tags": [
+    "if"
+  ],
+  "expectOutput": [
+    "big"
+  ],
+  "reverse": "check"
+}

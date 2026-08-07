@@ -7,10 +7,28 @@ import type {
 } from '../context.js';
 import type { AIProvider } from '../provider.js';
 import { AIProviderError } from '../provider.js';
+import { formatConceptAnswer, matchConcept } from '../concepts.js';
+import {
+  answerGeneralProgramming,
+  isUnintelligibleQuestion,
+} from '../generalProgramming.js';
+import { classifyCoachIntent } from '../intent.js';
+import { answerProductCapability } from '../productCapabilities.js';
+
+/** Canned non-answer — only for genuinely unintelligible input. */
+export const GENERIC_FALLBACK_PHRASE =
+  'looks like a general programming question rather than Cambridge 9618 Pseudocode theory or a PseudoPilot product feature';
 
 /**
  * Offline educational coach — answers from structured {@link AIContext}
  * without calling a remote LLM. Suitable for tests and keyless IDE demos.
+ *
+ * Routing: {@link classifyCoachIntent} runs first. Product capability
+ * outranks concept keyword matches so “translate to HTML” never becomes
+ * STRING / Cambridge theory.
+ *
+ * Cambridge theory answers use a fixed tutor structure via
+ * {@link formatConceptAnswer} (Direct answer → Explanation → Example → …).
  */
 export class HeuristicAIProvider implements AIProvider {
   readonly id = 'heuristic';
@@ -25,83 +43,205 @@ export class HeuristicAIProvider implements AIProvider {
     const q = question.toLowerCase();
     const capability = request.capability;
 
-    if (
-      capability === 'compare_pseudocode_python' ||
-      /\b(compare|python|translation|differ)\b/.test(q)
-    ) {
+    // --- Explicit UI capabilities (quick-action chips) ---
+    if (capability === 'compare_pseudocode_python') {
       return this.compare(ctx);
     }
-
-    if (
-      capability === 'explain_selection' ||
-      (ctx.selectedText &&
-        /\b(this|selection|selected|what does)\b/.test(q))
-    ) {
+    if (capability === 'explain_selection') {
       return this.explainSelection(ctx);
     }
-
-    if (
-      capability === 'explain_runtime_error' ||
-      /\b(runtime|crash|exception|r_)\b/.test(q) ||
-      ctx.debugger.runtimeErrors.length > 0 &&
-        /\b(error|why|fail)\b/.test(q)
-    ) {
+    if (capability === 'explain_runtime_error') {
       return this.explainRuntime(ctx);
     }
-
     if (
       capability === 'suggest_fix' ||
-      capability === 'explain_compiler_error' ||
-      /\b(undeclared|error|diagnostic|fix|c_|e_|why)\b/.test(q)
+      capability === 'explain_compiler_error'
     ) {
-      const explained = this.explainDiagnostics(ctx, q);
-      if (explained) return explained;
+      return (
+        this.explainDiagnostics(ctx, q) ??
+        this.insufficientProjectContext(
+          'There are no compiler or translation diagnostics in the current file to explain.',
+        )
+      );
     }
-
-    if (
-      capability === 'explain_algorithm' ||
-      /\b(line.?by.?line|algorithm|walk.?through|step)\b/.test(q)
-    ) {
+    if (capability === 'explain_algorithm') {
       return this.explainAlgorithm(ctx);
     }
-
     if (
       capability === 'explain_cambridge_concept' ||
-      /\b(cambridge|9618|declare|array|procedure|function|for loop|while|case|seek|getrecord|putrecord|openfile|random)\b/.test(
-        q,
-      )
+      capability === 'general_cambridge_qa'
     ) {
-      return this.explainConcept(q);
+      return this.explainConcept(q, question);
     }
 
-    // Fall through: prefer diagnostics if present, else general tip.
-    const fromDiags = this.explainDiagnostics(ctx, q);
-    if (fromDiags) return fromDiags;
+    const intent = classifyCoachIntent(question, ctx);
 
-    if (ctx.debugger.paused) {
-      return this.explainPaused(ctx);
+    switch (intent) {
+      case 'product_capability': {
+        const answer = answerProductCapability(q, question);
+        return {
+          ok: true,
+          providerId: this.id,
+          groundedLocally: true,
+          citations: answer.citations,
+          message: answer.message,
+        };
+      }
+      case 'compiler_runtime_diagnostics': {
+        if (
+          /\b(runtime|crash|exception)\b/.test(q) ||
+          (/\br_\w*\b/.test(q) && /\b(error|fail|crash)\b/.test(q)) ||
+          (ctx.debugger.runtimeErrors.length > 0 &&
+            /\b(runtime error|crash|exception|why did (it|this) (fail|crash|error))\b/.test(
+              q,
+            ))
+        ) {
+          return this.explainRuntime(ctx);
+        }
+        return (
+          this.explainDiagnostics(ctx, q) ??
+          this.insufficientProjectContext(
+            'There are no compiler or translation diagnostics in the current file to explain.',
+          )
+        );
+      }
+      case 'current_code': {
+        if (
+          ctx.debugger.paused &&
+          /\b(paused|current line|where am i|call stack|stack)\b/.test(q)
+        ) {
+          return this.explainPaused(ctx);
+        }
+        if (
+          /\b(python|pseudocode).{0,30}\b(translation|translate|pane|side)\b/.test(
+            q,
+          ) ||
+          /\b(translation|translate).{0,30}\b(python|pseudocode)\b/.test(q) ||
+          /\bcompare\b.{0,40}\b(python|pseudocode|translation|pane|side)\b/.test(
+            q,
+          ) ||
+          /\b(python|pseudocode|translation|pane).{0,40}\b(compare|differ)\b/.test(
+            q,
+          ) ||
+          (/\b(compare|differ)\b/.test(q) &&
+            /\b(python|pseudocode|translation|pane|side|editors?)\b/.test(q))
+        ) {
+          return this.compare(ctx);
+        }
+        if (
+          ctx.selectedText &&
+          /\b(this|selection|selected|what does|explain (this|it|the code))\b/.test(
+            q,
+          )
+        ) {
+          return this.explainSelection(ctx);
+        }
+        if (/\b(line.?by.?line|algorithm|walk.?through|step through)\b/.test(q)) {
+          return this.explainAlgorithm(ctx);
+        }
+        const fromDiags = this.explainDiagnosticsIfRelevant(ctx, q);
+        if (fromDiags) return fromDiags;
+        if (looksLikeProjectSpecificQuestion(q)) {
+          const diags = this.explainDiagnostics(ctx, q);
+          if (diags) return diags;
+          return this.insufficientProjectContext(
+            'I do not have enough project context to answer that precisely. Open the relevant Pseudocode, select the code in question, or ask about a Cambridge syllabus concept.',
+          );
+        }
+        if (ctx.selectedText) return this.explainSelection(ctx);
+        if (ctx.astSummary.length > 0) return this.explainAlgorithm(ctx);
+        return this.insufficientProjectContext(
+          'I do not have enough project context to answer that precisely. Open the relevant Pseudocode, select the code in question, or ask about a Cambridge syllabus concept.',
+        );
+      }
+      case 'cambridge_theory': {
+        const concept = this.explainConcept(q, question);
+        return enrichWithRelevantDiagnostics(concept, ctx, q);
+      }
+      case 'general_programming':
+      default:
+        return this.generalProgramming(q, question);
+    }
+  }
+
+  private generalProgramming(
+    questionLower: string,
+    originalQuestion: string,
+  ): CoachResponse {
+    // Classification only routes here — always attempt a real answer first.
+    const answered = answerGeneralProgramming(questionLower, originalQuestion);
+    if (answered) {
+      return {
+        ok: true,
+        providerId: this.id,
+        groundedLocally: true,
+        citations: [...answered.citations],
+        message: answered.message,
+      };
+    }
+
+    // True fallback — only when the answerer found nothing AND the input is
+    // unintelligible (gibberish / empty noise). Never stop at classification.
+    if (!isUnintelligibleQuestion(originalQuestion)) {
+      return {
+        ok: true,
+        providerId: this.id,
+        groundedLocally: true,
+        citations: [{ label: 'General CS' }],
+        message: [
+          `**Direct answer**`,
+          `I can help with “${originalQuestion.trim()}” as a general programming question.`,
+          '',
+          'Pick one concrete operation and try a tiny Cambridge Pseudocode sketch:',
+          '```pseudocode',
+          'DECLARE Value : INTEGER',
+          'Value ← 0',
+          'OUTPUT Value',
+          '```',
+          '',
+          'Ask “How do I add two variables?”, “How do I use a FOR loop?”, or a named 9618 concept for a fuller offline card.',
+        ].join('\n'),
+      };
     }
 
     return {
       ok: true,
       providerId: this.id,
       groundedLocally: true,
-      citations: [],
+      citations: [{ label: 'PseudoPilot coach' }],
       message: [
-        'I can help with Cambridge 9618 Pseudocode using your open file.',
+        `“${originalQuestion.trim()}” ${GENERIC_FALLBACK_PHRASE}.`,
         '',
-        'Try asking me to:',
-        '• explain a compiler or runtime error',
-        '• explain the selected code',
-        '• walk through the algorithm line-by-line',
-        '• compare Pseudocode with the Python translation',
-        '• clarify a syllabus concept (DECLARE, ARRAY, PROCEDURE, …)',
-        '',
-        ctx.semanticDiagnostics.length + ctx.parserDiagnostics.length > 0
-          ? `You currently have ${ctx.semanticDiagnostics.length + ctx.parserDiagnostics.length} compile diagnostic(s) — ask “why is this undeclared?” to start.`
-          : 'Your program currently has no compile diagnostics.',
+        'Ask about a syllabus concept (BYREF, recursion, DIV, TYPE vs CLASS), a product capability (translate targets, debug, offline), a general CS topic (HTML, Git, JSON, …), or select code in the editor for a grounded explanation.',
       ].join('\n'),
     };
+  }
+
+  private insufficientProjectContext(message: string): CoachResponse {
+    return {
+      ok: true,
+      providerId: this.id,
+      groundedLocally: true,
+      citations: [],
+      message,
+    };
+  }
+
+  /** Diagnostics only when the question mentions them or an identifier in them. */
+  private explainDiagnosticsIfRelevant(
+    ctx: AIContext,
+    question: string,
+  ): CoachResponse | null {
+    const all = [
+      ...ctx.parserDiagnostics,
+      ...ctx.semanticDiagnostics,
+      ...ctx.translationDiagnostics,
+    ];
+    if (all.length === 0) return null;
+    if (!/\b(error|diagnostic|undeclar|fix|why.*(fail|wrong|error|undeclar))\b/.test(question)) {
+      return null;
+    }
+    return this.explainDiagnostics(ctx, question);
   }
 
   private explainDiagnostics(
@@ -315,79 +455,75 @@ export class HeuristicAIProvider implements AIProvider {
     };
   }
 
-  private explainConcept(question: string): CoachResponse {
-    const concepts: Array<{ re: RegExp; title: string; body: string }> = [
-      {
-        re: /\basc\b|\bchr\b|\bis_num\b/,
-        title: 'ASC / CHR / IS_NUM',
-        body: 'Paper 2 exam-insert helpers: `ASC(c)` returns the ASCII code of a CHAR; `CHR(n)` returns the CHAR for code `n`; `IS_NUM(s)` is TRUE when `s` (STRING or CHAR) looks like a signed decimal number (e.g. `"-12.36"`).',
-      },
-      {
-        re: /seek|getrecord|putrecord|random file|randomfiles?/,
-        title: 'Random files (SEEK / GETRECORD / PUTRECORD)',
-        body: 'Cambridge §9.2: `OPENFILE name FOR RANDOM`, then `SEEK name, address` moves the file pointer (INTEGER record number, 0-based: records from the start of the file). `GETRECORD name, variable` reads the record at the pointer into a TYPE variable; `PUTRECORD name, expression` writes/replaces that record. Use with record `TYPE`s (including nested fields and DATE). Not for CLASS objects. Text `READFILE`/`WRITEFILE` require READ/WRITE/APPEND modes instead.',
-      },
-      {
-        re: /openfile|readfile|writefile|closefile|text file/,
-        title: 'Text files (OPENFILE / READFILE / WRITEFILE)',
-        body: 'Cambridge §9.1: `OPENFILE name FOR READ|WRITE|APPEND`, then `READFILE` / `WRITEFILE` line I/O, `CLOSEFILE`, and `EOF(name)`. WRITE truncates; APPEND extends. Random access uses FOR RANDOM + SEEK/GETRECORD/PUTRECORD (§9.2).',
-      },
-      {
-        re: /declare/,
-        title: 'DECLARE',
-        body: '`DECLARE name : TYPE` introduces a variable. Types include INTEGER, REAL, STRING, BOOLEAN, CHAR, DATE, ARRAY[l:u] OF T, and user-defined TYPEs such as records, enums, pointers (`^T`), and sets (`SET OF T`). Assignment uses ←, never =.',
-      },
-      {
-        re: /enum|pointer|\^|deref|set of|define\b|\bset\b/,
-        title: 'User-defined TYPE forms',
-        body: 'Cambridge-style user types can be records (`TYPE Name ... ENDTYPE`), enums (`TYPE Season = (Spring, Summer, Autumn, Winter)`), pointers (`TYPE NodePtr = ^Node` with dereference `Ptr^` and address-of `^Place`), and sets (`TYPE Odds = SET OF INTEGER`, then `DEFINE Evens(2, 4) : Odds`).',
-      },
-      {
-        re: /array/,
-        title: 'ARRAY',
-        body: 'Fixed-length homogeneous arrays: `DECLARE A : ARRAY[1:10] OF INTEGER`. Indices are inclusive. Cambridge indexing is typically 1-based in teaching examples.',
-      },
-      {
-        re: /procedure|function/,
-        title: 'PROCEDURE / FUNCTION',
-        body: 'PROCEDURE is a subroutine without a return value (`CALL Name(...)`). FUNCTION returns a value (`RETURNS TYPE`) and is used in expressions. Parameters default to BYVAL (Cambridge §8.3). Use BYREF on PROCEDURE parameters so assignments update the caller\'s variable (e.g. SWAP). Functions must not use BYREF.',
-      },
-      {
-        re: /for loop|for\b/,
-        title: 'FOR',
-        body: '`FOR i ← 1 TO n` … `NEXT i` counts inclusively. Optional `STEP`. The control variable should be INTEGER.',
-      },
-      {
-        re: /while|repeat/,
-        title: 'WHILE / REPEAT',
-        body: '`WHILE cond DO` … `ENDWHILE` tests before the body. `REPEAT` … `UNTIL cond` tests after (runs at least once).',
-      },
-      {
-        re: /case/,
-        title: 'CASE OF',
-        body: '`CASE OF expr` … `OTHERWISE` … `ENDCASE` selects among labels. Prefer CASE for multi-way selection instead of deep IF nesting.',
-      },
-    ];
-    for (const c of concepts) {
-      if (c.re.test(question)) {
-        return {
-          ok: true,
-          providerId: this.id,
-          groundedLocally: true,
-          citations: [{ label: `Cambridge concept: ${c.title}` }],
-          message: `**${c.title}** (9618 Pseudocode)\n\n${c.body}`,
-        };
-      }
+  private explainConcept(
+    questionLower: string,
+    originalQuestion: string,
+  ): CoachResponse {
+    const matched = matchConcept(questionLower);
+    if (matched) {
+      return {
+        ok: true,
+        providerId: this.id,
+        groundedLocally: true,
+        citations: [{ label: `Cambridge concept: ${matched.title}` }],
+        message: formatConceptAnswer(matched),
+      };
     }
     return {
       ok: true,
       providerId: this.id,
       groundedLocally: true,
       citations: [{ label: 'Cambridge 9618' }],
-      message:
-        'Cambridge 9618 Pseudocode is a teaching language with DECLARE, structured IF/CASE/loops, PROCEDURE/FUNCTION, arrays, text and random files, user-defined TYPEs (records, enums, pointers, sets), CLASS OOP, and Core/insert builtins (LENGTH, MID, INT, ASC, CHR, IS_NUM, DATE helpers, …). Ask about a specific keyword for a focused explanation.',
+      message: [
+        '**Direct answer**',
+        `I am not sure which 9618 topic you mean by “${originalQuestion.trim()}”. Ask about one concept — for example BYREF, recursion, DIV, TYPE vs CLASS, or FUNCTION vs PROCEDURE — and I will teach it step by step.`,
+        '',
+        '**Explanation**',
+        'I tutor Cambridge Pseudocode with a short direct answer, a plain explanation, a small example, and a common mistake. I only discuss compiler diagnostics when your question is about your code or an error.',
+      ].join('\n'),
     };
   }
+}
+
+function looksLikeProjectSpecificQuestion(q: string): boolean {
+  return /\b(my (code|program|variable|error|file)|this (line|variable|procedure|function|error)|why (is|does|did) (my|this)|in (my|this) (code|program)|what('s| is) wrong|wrong with my)\b/.test(
+    q,
+  );
+}
+
+function enrichWithRelevantDiagnostics(
+  response: CoachResponse,
+  ctx: AIContext,
+  question: string,
+): CoachResponse {
+  const all = [
+    ...ctx.parserDiagnostics,
+    ...ctx.semanticDiagnostics,
+    ...ctx.translationDiagnostics,
+  ];
+  if (all.length === 0) return response;
+  // Only append when the question also touches errors, or a diagnostic code appears.
+  if (
+    !/\b(error|undeclar|diagnostic|fix)\b/.test(question) &&
+    !all.some((d) => question.toUpperCase().includes(d.code.toUpperCase()))
+  ) {
+    return response;
+  }
+  const primary = all[0]!;
+  return {
+    ...response,
+    citations: [
+      ...response.citations,
+      ...all.slice(0, 3).map(cite),
+    ],
+    message: [
+      response.message,
+      '',
+      `Related diagnostic in your file: **${primary.code}** — ${primary.message}` +
+        (primary.line != null ? ` (line ${primary.line})` : '') +
+        '.',
+    ].join('\n'),
+  };
 }
 
 function cite(d: AIDiagnostic): CoachCitation {

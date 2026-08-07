@@ -1,0 +1,18 @@
+def _pp_cell(value): return [value]
+
+def AddPair(A: int, B: int):  # BYREF A, B
+    T: int
+    T = A[0]
+    A[0] = B[0]
+    B[0] = T
+X: int
+Y: int
+X = 4
+Y = 9
+_pp_ref_0 = _pp_cell(X)
+_pp_ref_1 = _pp_cell(Y)
+AddPair(_pp_ref_0, _pp_ref_1)
+X = _pp_ref_0[0]
+Y = _pp_ref_1[0]
+print(X)
+print(Y)

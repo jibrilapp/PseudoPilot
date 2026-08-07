@@ -9,7 +9,7 @@
  */
 
 export const PACKAGE_NAME = '@pseudopilot/checker' as const;
-export const PACKAGE_VERSION = '0.12.0' as const;
+export const PACKAGE_VERSION = '1.0.0-beta.0' as const;
 
 export { check } from './check.js';
 export type {
@@ -22,7 +22,11 @@ export type {
   SymbolInfo,
   SymbolKind,
 } from './types.js';
-export { DEFAULT_MAX_CHECKER_DIAGNOSTICS } from './types.js';
+export {
+  DEFAULT_MAX_CHECKER_DIAGNOSTICS,
+  DEFAULT_MAX_STATEMENT_NESTING,
+  C_NESTING_TOO_DEEP,
+} from './types.js';
 export {
   formatType,
   isAssignable,

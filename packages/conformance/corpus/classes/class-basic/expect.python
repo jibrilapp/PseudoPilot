@@ -1,0 +1,11 @@
+class Counter:
+    def __init__(self, Start: int) -> None:
+        self.Value = Start
+    def Bump(self):
+        self.Value = self.Value + 1
+    def Get(self) -> int:
+        return self.Value
+C: Counter | None = None
+C = Counter(10)
+C.Bump()
+print(C.Get())

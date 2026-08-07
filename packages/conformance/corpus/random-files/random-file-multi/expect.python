@@ -1,0 +1,39 @@
+from dataclasses import dataclass
+
+import copy
+
+_pp_random_files = dict()
+def _pp_random_open(path):
+    if path not in _pp_random_files:
+        _pp_random_files[path] = [dict(), 0]
+    return _pp_random_files[path]
+
+def _pp_random_seek(f, n):
+    f[1] = n
+
+def _pp_random_get(f):
+    return copy.deepcopy(f[0][f[1]])
+
+def _pp_random_put(f, rec):
+    f[0][f[1]] = copy.deepcopy(rec)
+
+def _pp_random_close(f):
+    pass
+
+@dataclass
+class Item:
+    Code: int = 0
+A: Item = Item()
+B: Item = Item()
+Loaded: Item = Item()
+A.Code = 10
+B.Code = 20
+_f_Items_Dat = _pp_random_open("Items.Dat")
+_pp_random_seek(_f_Items_Dat, 0)
+_pp_random_put(_f_Items_Dat, A)
+_pp_random_seek(_f_Items_Dat, 1)
+_pp_random_put(_f_Items_Dat, B)
+_pp_random_seek(_f_Items_Dat, 1)
+Loaded = _pp_random_get(_f_Items_Dat)
+_pp_random_close(_f_Items_Dat)
+print(Loaded.Code)
