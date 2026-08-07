@@ -14,7 +14,7 @@
     "lint": "node ../../node_modules/eslint/bin/eslint.js . --max-warnings=0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf .next .turbo"
+    "clean": "rm -rf .next .next-prod .turbo"
   },
   "dependencies": {
     "@monaco-editor/react": "4.7.0",
