@@ -955,7 +955,7 @@ function memberHostBeforeDot(
         s.kind === 'parameter' ||
         s.kind === 'constant'),
   );
-  let type: PpType | null = rootSym?.type ?? null;
+  const type: PpType | null = rootSym?.type ?? null;
   if (!type) return null;
 
   let current: PpType = type;

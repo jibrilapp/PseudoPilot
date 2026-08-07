@@ -1,4 +1,4 @@
-import type { CoachRequest, CoachResponse } from '../context.js';
+import type { CoachResponse } from '../context.js';
 import type { AIProvider } from '../provider.js';
 import { AIProviderError } from '../provider.js';
 
@@ -13,7 +13,7 @@ export class UnconfiguredAIProvider implements AIProvider {
     this.id = id;
   }
 
-  async complete(_request: CoachRequest): Promise<CoachResponse> {
+  async complete(): Promise<CoachResponse> {
     throw new AIProviderError(
       'NOT_CONFIGURED',
       `AI provider "${this.id}" is not configured. Use HeuristicAIProvider for offline coaching, or supply an API-backed provider.`,

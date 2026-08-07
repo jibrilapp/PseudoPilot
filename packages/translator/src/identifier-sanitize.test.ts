@@ -112,7 +112,7 @@ CALL P()
     );
     expect(result.ok).toBe(true);
     expect(result.code).toContain('list_: int');
-    expect(result.code).toMatch(/def P\(\):\n    list_: int/);
+    expect(result.code).toMatch(/def P\(\):\n {4}list_: int/);
     expect(result.code).toContain('list_ = 2');
     expect(result.code).toContain('print(list_)');
     expect(result.code).toContain('list_ = 1');

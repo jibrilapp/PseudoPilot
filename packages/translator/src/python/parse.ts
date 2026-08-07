@@ -3152,7 +3152,7 @@ function collectPlainClassNames(tokens: readonly PyToken[]): Set<string> {
     }
     // Skip IntEnum / Enum (enum TYPE) and helper _PpCell.
     if (next.lexeme === '_PpCell') continue;
-    let k = i + 2;
+    const k = i + 2;
     if (
       k < tokens.length &&
       tokens[k]!.kind === PyTokenKind.LParen &&
@@ -3675,12 +3675,6 @@ function resolveLowersForArrayExpr(
     return bounds.get(fieldKey);
   }
   return undefined;
-}
-
-function refineDeclareConstantFromTrivia(
-  statements: readonly IrStatement[],
-): IrStatement[] {
-  return statements.map((stmt) => refineOne(stmt));
 }
 
 function refineOne(stmt: IrStatement): IrStatement {

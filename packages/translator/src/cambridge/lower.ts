@@ -285,7 +285,7 @@ function buildClassRegistry(program: Program): ClassRegistry {
     }
     // Dimensions filled later when the CLASS field is registered via shapeFromTypeRef
     // in a full lower context; registry only needs element kind for copy decisions.
-    const dims = typeRef.dimensions.map((d) => ({
+    const dims = typeRef.dimensions.map(() => ({
       lower: { kind: 'IrIntegerLiteral' as const, value: 0 },
       upper: { kind: 'IrIntegerLiteral' as const, value: 0 },
     }));
