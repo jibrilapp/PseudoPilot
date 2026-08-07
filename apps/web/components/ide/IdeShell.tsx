@@ -649,9 +649,9 @@ export function IdeShell() {
   );
 
   const centerWithConsole = (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
       {restoredBanner}
-      <div className="min-h-0 flex-1 overflow-hidden">{centerEditors}</div>
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">{centerEditors}</div>
       {consoleOpen && !showDocs && (
         <>
           <div
@@ -758,9 +758,10 @@ export function IdeShell() {
         onStepOut={runtime.stepOut}
       />
 
-      <div className="relative flex min-h-0 flex-1">
+      {/* min-w-0/overflow-hidden: Monaco must not push remounted side panels off-screen. */}
+      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {!mounted ? null : isDesktop ? (
-          <div className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 w-full flex-1 overflow-hidden">
             <ActivityBar active={activity} onChange={handleActivityChange} />
 
             {sidebarOpen && !showDocs && (

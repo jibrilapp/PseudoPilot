@@ -109,7 +109,7 @@ export function DualEditor({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-pp-editor">
+    <div className="flex h-full min-h-0 min-w-0 flex-col bg-pp-editor">
       <div className="flex items-end overflow-x-auto border-b border-pp-line bg-pp-shell/70 px-1">
         {tabs.map((tab) => (
           <button

@@ -68,6 +68,43 @@ describe('ideChromeVisibility', () => {
     });
   });
 
+  it('cycles right panel close → reopen → close → reopen independently', () => {
+    let state = DEFAULT_IDE_CHROME_VISIBILITY;
+    let userCollapsed = false;
+
+    const manualToggle = () => {
+      state = toggleRight(state);
+      userCollapsed = !state.rightOpen;
+    };
+
+    manualToggle(); // close
+    expect(state.rightOpen).toBe(false);
+    expect(userCollapsed).toBe(true);
+    expect(
+      shouldAutoRevealRight({
+        showDocs: false,
+        isBusy: true,
+        paused: false,
+        variableCount: 2,
+        userCollapsed,
+      }),
+    ).toBe(false);
+
+    manualToggle(); // reopen — clears collapse lock
+    expect(state.rightOpen).toBe(true);
+    expect(userCollapsed).toBe(false);
+
+    manualToggle(); // close again
+    expect(state.rightOpen).toBe(false);
+    expect(userCollapsed).toBe(true);
+
+    manualToggle(); // reopen again
+    expect(state.rightOpen).toBe(true);
+    expect(userCollapsed).toBe(false);
+    expect(state.sidebarOpen).toBe(true);
+    expect(state.consoleOpen).toBe(true);
+  });
+
   it('does not auto-reveal right when the user collapsed it', () => {
     expect(
       shouldAutoRevealRight({
