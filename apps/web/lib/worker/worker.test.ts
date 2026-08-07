@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import {
   WorkerController,
   WorkerSessionRunner,
+  createBrowserWorkerPort,
   createInProcessWorkerPort,
   handleWorkerCommand,
   toWireBreakpoints,
@@ -168,6 +169,41 @@ CLOSEFILE "w.txt"
 });
 
 describe('WorkerController', () => {
+  it('createBrowserWorkerPort uses a classic Worker (no type:module)', () => {
+    const calls: unknown[][] = [];
+    class FakeWorker {
+      constructor(...args: unknown[]) {
+        calls.push(args);
+      }
+      addEventListener(): void {}
+      removeEventListener(): void {}
+      postMessage(): void {}
+      terminate(): void {}
+    }
+    const previous = globalThis.Worker;
+    // Vitest/Node has no real Worker; install a classic-compatible stub.
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      writable: true,
+      value: FakeWorker,
+    });
+    try {
+      const port = createBrowserWorkerPort();
+      expect(calls).toHaveLength(1);
+      // Only the script URL — options like `{ type: 'module' }` break Next/webpack
+      // classic worker chunks (importScripts) and prevent `ready` / Run.
+      expect(calls[0]).toHaveLength(1);
+      expect(calls[0]![0]).toBeInstanceOf(URL);
+      port.terminate();
+    } finally {
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        writable: true,
+        value: previous,
+      });
+    }
+  });
+
   it('queues commands until ready then runs', async () => {
     const events: WorkerEvent[] = [];
     const wc = new WorkerController({ inProcess: true });

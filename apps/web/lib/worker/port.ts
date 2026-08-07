@@ -56,6 +56,12 @@ export function createInProcessWorkerPort(): WorkerPort {
 /**
  * Browser Web Worker port. Falls back to in-process when Worker is unavailable
  * (SSR / unsupported environments).
+ *
+ * Important: do **not** pass `{ type: 'module' }`. Next.js / webpack emit
+ * classic worker chunks that use `importScripts`. Loading those as module
+ * workers fails silently (no `ready`), so Run appears to do nothing in
+ * production. Webpack's `new URL(..., import.meta.url)` worker handling
+ * expects a classic Worker.
  */
 export function createBrowserWorkerPort(): WorkerPort {
   if (typeof Worker === 'undefined') {
@@ -63,9 +69,9 @@ export function createBrowserWorkerPort(): WorkerPort {
   }
 
   try {
-    const worker = new Worker(new URL('./execution.worker.ts', import.meta.url), {
-      type: 'module',
-    });
+    const worker = new Worker(
+      new URL('./execution.worker.ts', import.meta.url),
+    );
 
     const listeners = new Set<(event: WorkerEvent) => void>();
 

@@ -39,4 +39,6 @@ without changing `@pseudopilot/interpreter` APIs — only the port implementatio
 ## Testing
 
 Vitest uses `createInProcessWorkerPort()` (same protocol, no real Worker).
-Browser builds use `execution.worker.ts` via `new Worker(new URL(...), { type: 'module' })`.
+Browser builds use `execution.worker.ts` via `new Worker(new URL(...))`
+(classic worker — Next/webpack emit `importScripts` chunks; do not pass
+`{ type: 'module' }` or production Run never receives `ready`).
