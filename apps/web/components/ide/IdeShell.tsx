@@ -11,6 +11,14 @@ import { setEditorSelection, useAICoach } from '@/lib/aiCoach';
 import { ENABLE_AI_COACH } from '@/lib/featureFlags';
 import { collectCompilerIdeDiagnostics } from '@/lib/ide/compilerDiagnostics';
 import {
+  shouldAutoRevealConsole,
+  shouldAutoRevealRight,
+  shouldAutoRevealSidebar,
+  shouldClearConsoleCollapse,
+  shouldClearRightCollapse,
+  shouldClearSidebarCollapse,
+} from '@/lib/ide/ideChromeVisibility';
+import {
   clampConsoleHeight,
   clampEditorSplit,
   clampRightWidth,
@@ -95,6 +103,34 @@ export function IdeShell() {
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** User closed a panel via toolbar; auto-reveal must not fight the toggle. */
+  const sidebarUserCollapsedRef = useRef(false);
+  const rightUserCollapsedRef = useRef(false);
+  const consoleUserCollapsedRef = useRef(false);
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarOpen((open) => {
+      const next = !open;
+      sidebarUserCollapsedRef.current = !next;
+      return next;
+    });
+  }, []);
+
+  const handleToggleRight = useCallback(() => {
+    setRightOpen((open) => {
+      const next = !open;
+      rightUserCollapsedRef.current = !next;
+      return next;
+    });
+  }, []);
+
+  const handleToggleConsole = useCallback(() => {
+    setConsoleOpen((open) => {
+      const next = !open;
+      consoleUserCollapsedRef.current = !next;
+      return next;
+    });
+  }, []);
 
   const {
     pseudocode,
@@ -191,10 +227,12 @@ export function IdeShell() {
       closeDocs();
       if (ENABLE_AI_COACH && id === 'ai') {
         setRightTab('ai');
+        rightUserCollapsedRef.current = false;
         setRightOpen(true);
         dismissWelcome();
       }
       if (id === 'debug') {
+        sidebarUserCollapsedRef.current = false;
         setSidebarOpen(true);
         dismissWelcome();
       }
@@ -308,14 +346,30 @@ export function IdeShell() {
   }, [pseudocode]);
 
   useEffect(() => {
-    if (showDocs) return;
-    if (
+    const hasProblems =
       translationDiagnostics.length > 0 ||
       compilerDiagnostics.length > 0 ||
-      runtime.consoleLines.length > 0 ||
-      runtime.diagnostics.length > 0 ||
-      runtime.awaitingInput ||
-      runtime.paused
+      runtime.diagnostics.length > 0;
+    const hasConsoleOutput = runtime.consoleLines.length > 0;
+    if (
+      shouldClearConsoleCollapse({
+        hasProblems,
+        hasConsoleOutput,
+        awaitingInput: runtime.awaitingInput,
+        paused: runtime.paused,
+      })
+    ) {
+      consoleUserCollapsedRef.current = false;
+    }
+    if (
+      shouldAutoRevealConsole({
+        showDocs,
+        hasProblems,
+        hasConsoleOutput,
+        awaitingInput: runtime.awaitingInput,
+        paused: runtime.paused,
+        userCollapsed: consoleUserCollapsedRef.current,
+      })
     ) {
       setConsoleOpen(true);
     }
@@ -330,16 +384,42 @@ export function IdeShell() {
   ]);
 
   useEffect(() => {
-    if (showDocs) return;
-    if (runtime.isBusy || runtime.variables.length > 0 || runtime.paused) {
+    if (
+      shouldClearRightCollapse({
+        isBusy: runtime.isBusy,
+        paused: runtime.paused,
+        variableCount: runtime.variables.length,
+      })
+    ) {
+      rightUserCollapsedRef.current = false;
+    }
+    if (
+      shouldAutoRevealRight({
+        showDocs,
+        isBusy: runtime.isBusy,
+        paused: runtime.paused,
+        variableCount: runtime.variables.length,
+        userCollapsed: rightUserCollapsedRef.current,
+      })
+    ) {
       setRightTab('vars');
       setRightOpen(true);
     }
   }, [showDocs, runtime.isBusy, runtime.variables.length, runtime.paused]);
 
   useEffect(() => {
+    if (shouldClearSidebarCollapse({ paused: runtime.paused })) {
+      sidebarUserCollapsedRef.current = false;
+    }
     if (runtime.paused) {
       setActivity('debug');
+    }
+    if (
+      shouldAutoRevealSidebar({
+        paused: runtime.paused,
+        userCollapsed: sidebarUserCollapsedRef.current,
+      })
+    ) {
       setSidebarOpen(true);
     }
   }, [runtime.paused]);
@@ -641,13 +721,14 @@ export function IdeShell() {
       )}
     >
       <Toolbar
-        onToggleSidebar={() => setSidebarOpen((v) => !v)}
-        onToggleRight={() => setRightOpen((v) => !v)}
-        onToggleConsole={() => setConsoleOpen((v) => !v)}
+        onToggleSidebar={handleToggleSidebar}
+        onToggleRight={handleToggleRight}
+        onToggleConsole={handleToggleConsole}
         onOpenCoach={
           ENABLE_AI_COACH
             ? () => {
                 setRightTab('ai');
+                rightUserCollapsedRef.current = false;
                 setRightOpen(true);
                 setActivity('ai');
                 dismissWelcome();
@@ -687,6 +768,7 @@ export function IdeShell() {
                 <aside
                   className="flex shrink-0 flex-col overflow-hidden border-r border-pp-line bg-pp-shell"
                   style={{ width: layout.sidebarWidth }}
+                  data-testid="ide-left-sidebar"
                 >
                   {activity === 'debug' ? (
                     debugNode
@@ -807,6 +889,7 @@ export function IdeShell() {
                 <aside
                   className="flex shrink-0 flex-col overflow-hidden border-l border-pp-line bg-pp-shell"
                   style={{ width: layout.rightWidth }}
+                  data-testid="ide-right-sidebar"
                 >
                   {ENABLE_AI_COACH ? (
                     <>

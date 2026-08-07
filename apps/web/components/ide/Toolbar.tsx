@@ -97,8 +97,10 @@ export function Toolbar({
           type="button"
           className="pp-icon-btn hidden sm:inline-flex"
           data-active={sidebarOpen}
+          data-testid="toolbar-toggle-sidebar"
           onClick={onToggleSidebar}
           title="Program workspace"
+          aria-label="Toggle program workspace"
           aria-pressed={sidebarOpen}
         >
           <IconSidebar />
@@ -107,8 +109,10 @@ export function Toolbar({
           type="button"
           className="pp-icon-btn hidden sm:inline-flex"
           data-active={consoleOpen}
+          data-testid="toolbar-toggle-console"
           onClick={onToggleConsole}
           title="Console"
+          aria-label="Toggle console"
           aria-pressed={consoleOpen}
         >
           <IconTerminal />
@@ -117,8 +121,10 @@ export function Toolbar({
           type="button"
           className="pp-icon-btn hidden sm:inline-flex"
           data-active={rightOpen}
+          data-testid="toolbar-toggle-right"
           onClick={onToggleRight}
           title="Side panel"
+          aria-label="Toggle side panel"
           aria-pressed={rightOpen}
         >
           <IconPanel />
