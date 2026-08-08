@@ -24,6 +24,7 @@
     "@pseudopilot/interpreter": "workspace:*",
     "@pseudopilot/language-service": "workspace:*",
     "@pseudopilot/translator": "workspace:*",
+    "@vercel/analytics": "^2.0.1",
     "clsx": "^2.1.1",
     "monaco-editor": "0.52.2",
     "next": "^15.1.3",
