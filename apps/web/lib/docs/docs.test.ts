@@ -26,6 +26,8 @@ describe('docs discover', () => {
     expect(tree.categories.length).toBeGreaterThan(3);
 
     const labels = tree.categories.map((c) => c.label);
+    expect(labels).toContain('Cambridge Pseudocode Syntax');
+    expect(labels).toContain('Library Routines');
     expect(labels).toContain('Language');
     expect(labels).toContain('IDE');
     expect(labels).toContain('Getting Started');
@@ -41,6 +43,10 @@ describe('docs discover', () => {
   it('derives slug, title, and headings from markdown', () => {
     expect(pathToSlug('ide/UI.md')).toBe('ide/UI');
     expect(categoryLabel('ide')).toBe('IDE');
+    expect(categoryLabel('cambridge-syntax')).toBe(
+      'Cambridge Pseudocode Syntax',
+    );
+    expect(categoryLabel('library-routines')).toBe('Library Routines');
     expect(categoryLabel(null)).toBe('Getting Started');
 
     const md = '# Hello World\n\n## Section One\n\nBody.\n';
@@ -69,6 +75,32 @@ describe('docs search', () => {
 
     const segs = highlightSegments('Monaco editor notes', 'monaco');
     expect(segs.some((s) => s.match && /monaco/i.test(s.text))).toBe(true);
+  });
+
+  it('finds Cambridge syntax and library headings (FOR, BYREF, MID, RAND)', () => {
+    const tree = buildNavTree(DOC_CORPUS);
+    expect(tree.pagesBySlug.has('cambridge-syntax/iteration')).toBe(true);
+    expect(tree.pagesBySlug.has('library-routines/guide-string')).toBe(true);
+
+    const forHits = searchDocs(tree, 'FOR');
+    expect(
+      forHits.some((h) => h.page.slug.startsWith('cambridge-syntax/')),
+    ).toBe(true);
+
+    const byrefHits = searchDocs(tree, 'BYREF');
+    expect(
+      byrefHits.some((h) => h.page.slug.includes('procedures-functions')),
+    ).toBe(true);
+
+    const midHits = searchDocs(tree, 'MID');
+    expect(midHits.some((h) => h.page.slug.includes('library-routines'))).toBe(
+      true,
+    );
+
+    const randHits = searchDocs(tree, 'RAND');
+    expect(randHits.some((h) => h.page.slug.includes('guide-numeric'))).toBe(
+      true,
+    );
   });
 });
 

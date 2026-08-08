@@ -2,6 +2,8 @@
 
 Student-facing map of PseudoPilot Cambridge 9618 support. Detailed rules live in:
 
+- [`../cambridge-syntax/README.md`](../cambridge-syntax/README.md) — Cambridge Pseudocode Syntax Reference (in-app docs)
+- [`../library-routines/README.md`](../library-routines/README.md) — Library Routines Reference (in-app docs)
 - [`SPECIFICATION.md`](./SPECIFICATION.md) — normative dialect
 - [`BUILTINS.md`](./BUILTINS.md) — builtin library audit & coverage
 - [`SEMANTICS.md`](./SEMANTICS.md) — checker rules

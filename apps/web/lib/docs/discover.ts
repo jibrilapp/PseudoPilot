@@ -7,6 +7,8 @@ import type { DocCategory, DocHeading, DocNavTree, DocPage } from './types';
 
 /** Optional friendly labels for top-level `docs/` folders. New folders fall back to title-case. */
 const CATEGORY_LABELS: Record<string, string> = {
+  'cambridge-syntax': 'Cambridge Pseudocode Syntax',
+  'library-routines': 'Library Routines',
   language: 'Language',
   ide: 'IDE',
   ai: 'AI',
@@ -22,6 +24,8 @@ const ROOT_CATEGORY_LABEL = 'Getting Started';
 /** Preferred sort order for known categories; unknown categories sort after. */
 const CATEGORY_ORDER = [
   ROOT_CATEGORY_ID,
+  'cambridge-syntax',
+  'library-routines',
   'language',
   'ide',
   'ai',

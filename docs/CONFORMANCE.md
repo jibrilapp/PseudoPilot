@@ -334,7 +334,8 @@ Gates already met: Core run-in-IDE, worker execution, debugger, language service
 | [`ide/MONACO.md`](./ide/MONACO.md) | Editor binding |
 | [`ai/AI_COACH.md`](./ai/AI_COACH.md) | Coach grounding |
 | [`language/SPEC_REVIEW.md`](./language/SPEC_REVIEW.md) | Earlier readiness review (2026-07-14) |
-| Official guide (external) | [2026 Pseudocode Guide for Teachers (PDF)](https://www.cambridgeinternational.org/Images/697401-2026-pseudocode-guide-for-teachers.pdf) |
+| Official guide (external) | [2027–2029 Pseudocode Guide for Teachers (PDF)](https://www.cambridgeinternational.org/Images/721401-2027-2029-pseudocode-guide.pdf) · [2026 edition](https://www.cambridgeinternational.org/Images/697401-2026-pseudocode-guide-for-teachers.pdf) |
+| In-app syntax / library refs | [`cambridge-syntax/`](./cambridge-syntax/README.md) · [`library-routines/`](./library-routines/README.md) |
 
 ---
 

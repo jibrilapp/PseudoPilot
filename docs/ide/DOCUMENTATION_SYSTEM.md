@@ -80,6 +80,13 @@ into a palette when one lands; `DocumentationView` already registers a subset.
 Optional category label niceties live in `discover.ts` (`CATEGORY_LABELS`); unknown
 folders title-case automatically. **Do not** hardcode individual pages.
 
+Student dialect help uses friendly labels:
+
+| Folder | Sidebar label |
+| --- | --- |
+| `docs/cambridge-syntax/` | Cambridge Pseudocode Syntax |
+| `docs/library-routines/` | Library Routines |
+
 ## Rendering
 
 `DocMarkdown` parses a docs-oriented subset without extra dependencies: headings,
