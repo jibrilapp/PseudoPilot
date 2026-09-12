@@ -25,7 +25,6 @@ import {
   collectUninferredReturnTypeErrors,
   finalizeInferredParameters,
   fStringPartsToConcat,
-  inferReturnTypeFromBody,
   literalArrayBounds,
   parseFStringContent,
   refineReverseProgram,
@@ -992,7 +991,8 @@ class PyParser {
   }
 
   /**
-   * Parse `def Name(params):` as IrProcedureDeclaration.
+   * Parse `def Name(params):` as a Python routine.
+   * Bare `def` kind (FUNCTION vs PROCEDURE) and return types are resolved in reverse refine.
    * Optional annotations: int/float/str/bool → INTEGER/REAL/STRING/BOOLEAN.
    * Missing annotations use an internal UNKNOWN placeholder until reverse refine.
    * Top-level only — nested def is rejected in parseStatement.
@@ -1064,11 +1064,8 @@ class PyParser {
     let pendingReturnTypeInference = false;
     const inferenceSpan = tokenSpan(defTok, this.previous());
     if (returnType === null && containsReturnIr(body)) {
-      returnType = inferReturnTypeFromBody(body, parameters);
-      if (returnType === null) {
-        returnType = { kind: 'IrScalarType', name: 'INTEGER' };
-        pendingReturnTypeInference = true;
-      }
+      returnType = { kind: 'IrNamedType', name: 'UNKNOWN' };
+      pendingReturnTypeInference = true;
     }
 
     const parametersWithMode = parameters.map((p) => ({

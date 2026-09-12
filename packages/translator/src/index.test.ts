@@ -3679,6 +3679,81 @@ print(f"Value: {x + 1}")
     expect(code).toContain('x + 1');
   });
 
+  it('translates bare binary_search with zero diagnostics end-to-end', async () => {
+    const source = `
+def binary_search(data_list, target):
+    low = 0
+    high = len(data_list) - 1
+
+    while low <= high:
+        mid = (low + high) // 2
+
+        if data_list[mid] == target:
+            return mid
+        elif data_list[mid] < target:
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    return -1
+
+mylist = [3,7,11,15,19,23,27,31,35]
+ans = binary_search(mylist, 23)
+print(ans)
+`;
+    const result = translatePythonToPseudocode(source);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('FUNCTION binary_search');
+    expect(result.code).toContain('data_list : ARRAY[1:9] OF INTEGER');
+    expect(result.code).toContain('target : INTEGER');
+    expect(result.code).toContain('RETURNS INTEGER');
+
+    const parsed = parse(result.code);
+    expect(parsed.ok, JSON.stringify(parsed.diagnostics)).toBe(true);
+    const checked = check(parsed.ast);
+    expect(checked.ok, JSON.stringify(checked.diagnostics)).toBe(true);
+
+    const host = new MemoryHost();
+    const run = await runPseudocode(result.code, { host, semanticCheck: false });
+    expect(run.ok, JSON.stringify(run.diagnostics)).toBe(true);
+    expect(host.outputs.join('')).toBe('5');
+  });
+
+  it('defers bare def return-type inference until after parameter refinement', () => {
+    expect(translatePythonToPseudocode('def f():\n    return 1\n').diagnostics).toEqual(
+      [],
+    );
+    expect(translatePythonToPseudocode('def f():\n    return 1\n').code).toContain(
+      'FUNCTION f() RETURNS INTEGER',
+    );
+
+    const add = translatePythonToPseudocode(`
+def f(x):
+    return x + 1
+print(f(5))
+`);
+    expect(add.diagnostics).toEqual([]);
+    expect(add.code).toContain('FUNCTION f(x : INTEGER) RETURNS INTEGER');
+
+    const proc = translatePythonToPseudocode(`
+def print_value(x):
+    print(x)
+print_value(1)
+`);
+    expect(proc.ok).toBe(true);
+    expect(proc.code).toContain('PROCEDURE print_value');
+    expect(proc.code).not.toContain('FUNCTION print_value');
+
+    const explicit = translatePythonToPseudocode(`
+def f(x: int) -> int:
+    return x + 1
+print(f(1))
+`);
+    expect(explicit.diagnostics).toEqual([]);
+    expect(explicit.code).toContain('FUNCTION f(x : INTEGER) RETURNS INTEGER');
+  });
+
   it('covers Python reverse regression matrix (A–H)', async () => {
     expect(translatePythonToPseudocode('def f(x):\n    return x\n').ok).toBe(true);
 

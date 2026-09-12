@@ -12,7 +12,7 @@ function int(n: number): IrExpression {
 }
 
 function bin(
-  operator: '+' | '-' | '*',
+  operator: '+' | '-' | '*' | '//',
   left: IrExpression,
   right: IrExpression,
 ): IrExpression {
@@ -46,6 +46,21 @@ describe('inferSimpleTypeFromExpr', () => {
 });
 
 describe('inferReturnTypeFromBody', () => {
+  it('infers INTEGER from return mid after local assignment', () => {
+    const body: IrStatement[] = [
+      {
+        kind: 'IrAssignment',
+        target: { kind: 'IrIdentifier', name: 'mid' },
+        value: bin('//', bin('+', { kind: 'IrIdentifier', name: 'low' }, { kind: 'IrIdentifier', name: 'high' }), int(2)),
+      },
+      { kind: 'IrReturnStatement', value: { kind: 'IrIdentifier', name: 'mid' } },
+    ];
+    expect(inferReturnTypeFromBody(body, [])).toEqual({
+      kind: 'IrScalarType',
+      name: 'INTEGER',
+    });
+  });
+
   it('infers INTEGER from return x + 1', () => {
     const params: IrParameter[] = [
       {

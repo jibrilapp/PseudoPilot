@@ -41,7 +41,45 @@ else:
     print("Item", search_item, "not found in the list.")
 `;
 
+const BINARY_SEARCH = `
+def binary_search(data_list, target):
+    low = 0
+    high = len(data_list) - 1
+
+    while low <= high:
+        mid = (low + high) // 2
+
+        if data_list[mid] == target:
+            return mid
+        elif data_list[mid] < target:
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    return -1
+
+mylist = [3,7,11,15,19,23,27,31,35]
+ans = binary_search(mylist, 23)
+print(ans)
+`;
+
 describe('runPythonToPseudocode (web adapter)', () => {
+  it('translates binary_search through the same path as the IDE', async () => {
+    const translated = runPythonToPseudocode(BINARY_SEARCH);
+    expect(translated.ok, translated.diagnostics.map((d) => d.message).join('; ')).toBe(
+      true,
+    );
+    expect(translated.diagnostics).toEqual([]);
+    expect(translated.code).toContain('FUNCTION binary_search');
+    expect(translated.code).toContain('data_list : ARRAY[1:9] OF INTEGER');
+    expect(translated.code).toContain('RETURNS INTEGER');
+
+    const host = new MemoryHost();
+    const run = await runPseudocode(translated.code, { host });
+    expect(run.ok, JSON.stringify(run.diagnostics)).toBe(true);
+    expect(host.outputs.join('')).toBe('5');
+  });
+
   it('translates partially annotated LinearSearch with zero diagnostics', async () => {
     const translated = runPythonToPseudocode(LINEAR_SEARCH_PARTIAL_ANNOTATIONS);
     expect(translated.ok, translated.diagnostics.map((d) => d.message).join('; ')).toBe(
