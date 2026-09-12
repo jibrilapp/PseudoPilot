@@ -48,6 +48,7 @@ export type {
   PutRecordStatement,
   CallExpression,
   IndexExpression,
+  ArrayLiteralExpression,
   EofExpression,
   MemberExpression,
   SuperExpression,

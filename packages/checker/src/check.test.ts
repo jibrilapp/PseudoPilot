@@ -180,6 +180,41 @@ Scores[TRUE] ← 1
     ).toContain('C_INDEX_TYPE');
   });
 
+  it('accepts array literal assignment with matching bounds and element type', () => {
+    const { result } = checkSource(`
+DECLARE list : ARRAY[1:6] OF INTEGER
+list ← [1,2,3,4,5,6]
+`);
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects array literal with wrong length or element type', () => {
+    expect(
+      codes(`
+DECLARE list : ARRAY[1:6] OF INTEGER
+list ← [1,2,3]
+`),
+    ).toContain('C_ASSIGN_TYPE');
+    expect(
+      codes(`
+DECLARE list : ARRAY[1:3] OF INTEGER
+list ← ["a","b","c"]
+`),
+    ).toContain('C_ASSIGN_TYPE');
+    expect(
+      codes(`
+DECLARE list : ARRAY[1:2] OF INTEGER
+list ← [1,"a"]
+`),
+    ).toContain('C_ARRAY_LITERAL_TYPE');
+    expect(
+      codes(`
+DECLARE list : ARRAY[1:2] OF INTEGER
+list ← [1,2.5]
+`),
+    ).toContain('C_ASSIGN_TYPE');
+  });
+
   it('FOR introduces INTEGER when undeclared; rejects CONSTANT loop var', () => {
     const { result } = checkSource(`
 FOR I ← 1 TO 5

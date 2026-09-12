@@ -777,6 +777,8 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return `_pp_eof(${fileRef(expr.fileName)})`;
     case 'IrGroupingExpression':
       return `(${printExpr(expr.expression, 0)})`;
+    case 'IrArrayLiteralExpression':
+      return `[${expr.elements.map((e) => printExpr(e, 0)).join(', ')}]`;
     case 'IrUnaryExpression':
       return printUnary(expr, parentPrec);
     case 'IrBinaryExpression':

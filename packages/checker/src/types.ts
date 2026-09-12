@@ -66,6 +66,12 @@ export type PpType =
       readonly bounds?: readonly ArrayBound[];
     }
   | {
+      /** 1D array literal `[e1, e2, …]` — assignable to a declared ARRAY of matching size. */
+      readonly kind: 'arrayLiteral';
+      readonly element: PpType;
+      readonly length: number;
+    }
+  | {
       readonly kind: 'record';
       /** Display name from TYPE declaration. */
       readonly name: string;

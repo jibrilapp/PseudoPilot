@@ -249,6 +249,9 @@ export class ExpressionParser {
           span: span(token.span.start, this.cursor.previous().span.end),
         });
       }
+      case TokenKind.LBracket: {
+        return this.parseArrayLiteral(token);
+      }
       default:
         pushError(this.diagnostics, 'Expected expression.', token);
         return null;
@@ -425,6 +428,53 @@ export class ExpressionParser {
       kind === TokenKind.Class ||
       kind === TokenKind.Type
     );
+  }
+
+  /** `[e1, e2, …]` array literal (opening `[` already consumed). */
+  private parseArrayLiteral(startToken: Token): Expression | null {
+    this.cursor.advance(); // [
+    const elements: Expression[] = [];
+    if (this.cursor.check(TokenKind.RBracket)) {
+      this.cursor.advance();
+      pushError(this.diagnostics, 'Array literal must contain at least one element.', startToken);
+      return {
+        kind: 'ArrayLiteralExpression',
+        elements,
+        span: span(startToken.span.start, this.cursor.previous().span.end),
+      };
+    }
+    const first = this.parseExpression();
+    if (!first) {
+      pushError(this.diagnostics, 'Expected expression in array literal.', this.cursor.peek());
+      this.cursor.match(TokenKind.RBracket);
+      return null;
+    }
+    elements.push(first);
+    while (this.cursor.match(TokenKind.Comma)) {
+      if (this.cursor.check(TokenKind.RBracket)) {
+        pushError(
+          this.diagnostics,
+          'Trailing comma in array literal.',
+          this.cursor.previous(),
+          'E_TRAILING_COMMA',
+        );
+        break;
+      }
+      const next = this.parseExpression();
+      if (!next) {
+        pushError(this.diagnostics, 'Expected expression after "," in array literal.', this.cursor.peek());
+        break;
+      }
+      elements.push(next);
+    }
+    if (!this.cursor.match(TokenKind.RBracket)) {
+      pushError(this.diagnostics, 'Expected "]" after array literal.', this.cursor.peek());
+    }
+    return {
+      kind: 'ArrayLiteralExpression',
+      elements,
+      span: span(startToken.span.start, this.cursor.previous().span.end),
+    };
   }
 
   /** Assumes opening "[" already consumed. Consumes closing "]". */

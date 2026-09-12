@@ -444,6 +444,10 @@ export class Interpreter {
         return;
       }
       case 'AssignmentStatement':
+        if (stmt.value.kind === 'ArrayLiteralExpression') {
+          await this.assignArrayLiteral(stmt.target, stmt.value, stmt.span);
+          return;
+        }
         await this.assignTarget(stmt.target, await this.evalExpr(stmt.value), stmt.span);
         return;
       case 'InputStatement':
@@ -1106,6 +1110,41 @@ export class Interpreter {
     };
   }
 
+  /** `list ← [e1, e2, …]` — fill a declared array in storage order (lower bound first). */
+  private async assignArrayLiteral(
+    target: AssignTarget,
+    literal: Extract<Expression, { kind: 'ArrayLiteralExpression' }>,
+    span: SourceSpan,
+  ): Promise<void> {
+    if (target.kind !== 'Identifier') {
+      throw runtimeFail(
+        'R_ASSIGN_TARGET',
+        'Array literal assignment requires a whole array variable.',
+        span,
+      );
+    }
+    const place = await this.resolvePlace(target, span);
+    const existing = place.get();
+    if (existing.kind !== 'ARRAY') {
+      throw runtimeFail(
+        'R_TYPE',
+        'Array literal can only be assigned to an ARRAY variable.',
+        span,
+      );
+    }
+    if (literal.elements.length !== existing.data.length) {
+      throw runtimeFail(
+        'R_ARRAY_LITERAL_LENGTH',
+        `Array literal has ${literal.elements.length} element(s) but ARRAY size is ${existing.data.length}.`,
+        span,
+      );
+    }
+    for (let i = 0; i < literal.elements.length; i++) {
+      const value = await this.evalExpr(literal.elements[i]!);
+      existing.data[i] = this.coerceForStore(existing.data[i]!, value, span);
+    }
+  }
+
   /** Coerce/validate `incoming` against whatever currently occupies a place. */
   private coerceForStore(
     existing: RuntimeValue,
@@ -1295,6 +1334,12 @@ export class Interpreter {
         throw runtimeFail(
           'R_SUPER_OUTSIDE',
           'SUPER is only valid as SUPER.<Method>(...) inside a CLASS method.',
+          expr.span,
+        );
+      case 'ArrayLiteralExpression':
+        throw runtimeFail(
+          'R_INTERNAL',
+          'Array literal must be assigned to an ARRAY variable.',
           expr.span,
         );
       default: {

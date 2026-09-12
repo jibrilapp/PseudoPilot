@@ -204,6 +204,8 @@ export function formatType(t: PpType): string {
       const stars = Array.from({ length: t.dimensions }, () => '*').join(', ');
       return `ARRAY[${stars}] OF ${formatType(t.element)}`;
     }
+    case 'arrayLiteral':
+      return `[${t.length} × ${formatType(t.element)}]`;
     case 'record':
       return t.name;
     case 'class':
@@ -307,6 +309,15 @@ export function isAssignable(
       typesEqual(to.element, from.element) &&
       arrayBoundsEqual(to.bounds, from.bounds)
     );
+  }
+  if (to.kind === 'array' && from.kind === 'arrayLiteral') {
+    if (to.dimensions !== 1) return false;
+    if (!isAssignable(to.element, from.element, typeTable)) return false;
+    if (to.bounds && to.bounds.length === 1) {
+      const { lower, upper } = to.bounds[0]!;
+      return from.length === upper - lower + 1;
+    }
+    return true;
   }
   if (to.kind === 'record' && from.kind === 'record') {
     return identKey(to.name) === identKey(from.name);

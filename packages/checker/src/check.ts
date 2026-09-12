@@ -32,6 +32,7 @@ import {
   lookupRecordField,
   resolveSimpleType,
   scalar,
+  typesEqual,
   unaryResultType,
 } from './type-system.js';
 import type {
@@ -2082,9 +2083,64 @@ function inferExpr(ctx: Ctx, expr: Expression): PpType {
         span: expr.span,
       });
       return errorType();
+    case 'ArrayLiteralExpression':
+      return inferArrayLiteralType(ctx, expr);
     default: {
       const _exhaustive: never = expr;
       return _exhaustive;
     }
   }
+}
+
+function inferArrayLiteralType(
+  ctx: Ctx,
+  expr: Extract<Expression, { kind: 'ArrayLiteralExpression' }>,
+): PpType {
+  if (expr.elements.length === 0) {
+    diag(ctx, {
+      code: 'C_ARRAY_LITERAL_EMPTY',
+      message: 'Array literal must contain at least one element.',
+      span: expr.span,
+    });
+    return errorType();
+  }
+  let element: PpType | null = null;
+  for (const el of expr.elements) {
+    const t = inferExpr(ctx, el);
+    if (t.kind === 'error') continue;
+    if (!element) {
+      element = t;
+      continue;
+    }
+    if (typesEqual(element, t)) continue;
+    if (
+      element.kind === 'scalar' &&
+      t.kind === 'scalar' &&
+      element.name === 'REAL' &&
+      t.name === 'INTEGER'
+    ) {
+      continue;
+    }
+    if (
+      element.kind === 'scalar' &&
+      t.kind === 'scalar' &&
+      element.name === 'INTEGER' &&
+      t.name === 'REAL'
+    ) {
+      element = scalar('REAL');
+      continue;
+    }
+    diag(ctx, {
+      code: 'C_ARRAY_LITERAL_TYPE',
+      message: `Array literal elements have incompatible types (${formatType(element)} and ${formatType(t)}).`,
+      span: el.span,
+    });
+    return errorType();
+  }
+  if (!element || element.kind === 'error') return errorType();
+  return {
+    kind: 'arrayLiteral',
+    element,
+    length: expr.elements.length,
+  };
 }

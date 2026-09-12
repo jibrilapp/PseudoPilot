@@ -562,6 +562,9 @@ function walkExpr(ctx: BinderCtx, expr: Expression): void {
     case 'GroupingExpression':
       walkExpr(ctx, expr.expression);
       return;
+    case 'ArrayLiteralExpression':
+      for (const el of expr.elements) walkExpr(ctx, el);
+      return;
     case 'IndexExpression':
       walkExpr(ctx, expr.array);
       for (const idx of expr.indices) walkExpr(ctx, idx);

@@ -2795,8 +2795,44 @@ class PyParser {
       this.expect(PyTokenKind.RParen);
       return { kind: 'IrGroupingExpression', expression: inner };
     }
+    if (this.match(PyTokenKind.LBracket)) {
+      return this.parseListLiteral();
+    }
     this.error('Expected expression.', this.peek());
     return null;
+  }
+
+  /** Python list literal `[e1, e2, …]` → Cambridge array literal IR. */
+  private parseListLiteral(): IrExpression | null {
+    const elements: IrExpression[] = [];
+    if (this.check(PyTokenKind.RBracket)) {
+      this.advance();
+      this.error('Array literal must contain at least one element.', this.previous());
+      return { kind: 'IrArrayLiteralExpression', elements };
+    }
+    const first = this.parseExpression();
+    if (!first) {
+      this.error('Expected expression in list literal.', this.peek());
+      this.match(PyTokenKind.RBracket);
+      return null;
+    }
+    elements.push(first);
+    while (this.match(PyTokenKind.Comma)) {
+      if (this.check(PyTokenKind.RBracket)) {
+        this.error('Trailing comma in list literal is not supported.', this.peek());
+        break;
+      }
+      const next = this.parseExpression();
+      if (!next) {
+        this.error('Expected expression after "," in list literal.', this.peek());
+        break;
+      }
+      elements.push(next);
+    }
+    if (!this.match(PyTokenKind.RBracket)) {
+      this.error("Expected ']' after list literal.", this.peek());
+    }
+    return { kind: 'IrArrayLiteralExpression', elements };
   }
 
   /**

@@ -2151,6 +2151,8 @@ function exprKey(expr: Expression): string {
       return `(${exprKey(expr.expression)})`;
     case 'IndexExpression':
       return `${exprKey(expr.array)}[${expr.indices.map(exprKey).join(', ')}]`;
+    case 'ArrayLiteralExpression':
+      return `[${expr.elements.map(exprKey).join(', ')}]`;
     case 'MemberExpression':
       return `${exprKey(expr.object)}.${expr.property.name}`;
     case 'CallExpression':

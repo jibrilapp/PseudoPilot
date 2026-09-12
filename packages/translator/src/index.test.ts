@@ -537,6 +537,17 @@ Grid[I, J] ← 1
     expect(norm(result.code)).toContain('Grid[I - 1][J - 1] = 1');
   });
 
+  it('translates array literal assignment to Python list', () => {
+    const result = translatePseudocodeToPython(`
+DECLARE list : ARRAY[1:6] OF INTEGER
+list ← [1,2,3,4,5,6]
+OUTPUT list[1]
+`);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('list_ = [1, 2, 3, 4, 5, 6]');
+    expect(norm(result.code)).toContain('print(list_[1 - 1])');
+  });
+
   it('preserves trailing line comments', () => {
     const result = translatePseudocodeToPython(`X ← 1 // keep\n`);
     expect(result.ok).toBe(true);

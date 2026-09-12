@@ -457,6 +457,7 @@ export type Expression =
   | GroupingExpression
   | CallExpression
   | IndexExpression
+  | ArrayLiteralExpression
   | MemberExpression
   | AddressOfExpression
   | DerefExpression
@@ -494,6 +495,13 @@ export type IndexExpression = {
   readonly kind: 'IndexExpression';
   readonly array: Expression;
   readonly indices: Expression[];
+  readonly span: SourceSpan;
+};
+
+/** Array literal `[e1, e2, …]` — initialises a declared array in order from lower bound. */
+export type ArrayLiteralExpression = {
+  readonly kind: 'ArrayLiteralExpression';
+  readonly elements: Expression[];
   readonly span: SourceSpan;
 };
 

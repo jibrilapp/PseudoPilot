@@ -256,6 +256,34 @@ OUTPUT A[3]
     expect(result.ok).toBe(false);
     expect(result.diagnostics[0]?.code).toBe('R_ARRAY_BOUNDS');
   });
+
+  it('initialises a declared array from an integer literal list', async () => {
+    const { host } = await run(`
+DECLARE list : ARRAY[1:6] OF INTEGER
+list ← [1,2,3,4,5,6]
+OUTPUT list[1]
+OUTPUT list[2]
+OUTPUT list[3]
+OUTPUT list[4]
+OUTPUT list[5]
+OUTPUT list[6]
+`);
+    expect(host.outputs).toEqual(['1', '2', '3', '4', '5', '6']);
+  });
+
+  it('errors when array literal length does not match declared bounds', async () => {
+    const { result } = await run(`
+DECLARE list : ARRAY[1:6] OF INTEGER
+list ← [1,2,3]
+OUTPUT list[1]
+`);
+    expect(result.ok).toBe(false);
+    expect(
+      result.diagnostics.some(
+        (d) => d.code === 'C_ASSIGN_TYPE' || d.code === 'R_ARRAY_LITERAL_LENGTH',
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('procedures and functions', () => {

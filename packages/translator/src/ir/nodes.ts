@@ -412,6 +412,12 @@ export type IrExpressionStatement = WithTrivia & {
   readonly expression: IrExpression;
 };
 
+/** Cambridge array literal `[e1, e2, …]`. */
+export type IrArrayLiteralExpression = {
+  readonly kind: 'IrArrayLiteralExpression';
+  readonly elements: IrExpression[];
+};
+
 export type IrExpression =
   | IrIntegerLiteral
   | IrRealLiteral
@@ -421,6 +427,7 @@ export type IrExpression =
   | IrDateLiteral
   | IrIdentifier
   | IrIndexExpression
+  | IrArrayLiteralExpression
   | IrMemberExpression
   | IrCallExpression
   | IrUnaryExpression

@@ -1,0 +1,5 @@
+{
+  "title": "Array literal assignment initialises declared ARRAY",
+  "tags": ["arrays", "regression"],
+  "expectOutput": ["1", "2", "3", "4", "5", "6"]
+}

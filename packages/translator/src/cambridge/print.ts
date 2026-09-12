@@ -99,6 +99,8 @@ function printExpr(expr: IrExpression, parentPrec: number): string {
       return `EOF(${printExpr(expr.fileName, 0)})`;
     case 'IrGroupingExpression':
       return `(${printExpr(expr.expression, 0)})`;
+    case 'IrArrayLiteralExpression':
+      return `[${expr.elements.map((e) => printExpr(e, 0)).join(', ')}]`;
     case 'IrUnaryExpression':
       return printUnary(expr, parentPrec);
     case 'IrBinaryExpression':

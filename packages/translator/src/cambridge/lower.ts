@@ -775,6 +775,15 @@ function lowerExpression(
       if (!pointer) return null;
       return { kind: 'IrDerefExpression', pointer };
     }
+    case 'ArrayLiteralExpression': {
+      const elements: IrExpression[] = [];
+      for (const el of expr.elements) {
+        const lowered = lowerExpression(el, ctx);
+        if (!lowered) return null;
+        elements.push(lowered);
+      }
+      return { kind: 'IrArrayLiteralExpression', elements };
+    }
     default: {
       const _exhaustive: never = expr;
       return _exhaustive;
@@ -897,7 +906,12 @@ function lowerStatement(
       if (!target || !value) return null;
       const valueShape = exprShape(ctx, stmt.value);
       // Cambridge by-value: deep-copy composite RHS on store (records/arrays).
-      if (isCompositeShape(valueShape) && value.kind !== 'IrDeepCopyExpression') {
+      // Array literals initialise in place — do not deep-copy.
+      if (
+        isCompositeShape(valueShape) &&
+        value.kind !== 'IrDeepCopyExpression' &&
+        stmt.value.kind !== 'ArrayLiteralExpression'
+      ) {
         value = { kind: 'IrDeepCopyExpression', value };
       }
       return {
