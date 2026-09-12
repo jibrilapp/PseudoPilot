@@ -53,6 +53,7 @@ import type {
 } from '../ast/nodes.js';
 import { isFileModeToken, isTypeToken, TokenKind, type Token } from '../lexer/token.js';
 import { pushError, TokenCursor } from './cursor.js';
+import { isIoKeywordUsableAsIdentifier } from './keyword-identifier.js';
 import { ExpressionParser } from './expression.js';
 
 type BodyContext = 'program' | 'procedure' | 'function' | 'class';
@@ -119,7 +120,15 @@ export class Parser {
     const token = this.cursor.peek();
 
     if (token.kind === TokenKind.Input) return this.parseInput();
-    if (token.kind === TokenKind.Output) return this.parseOutput();
+    if (token.kind === TokenKind.Output) {
+      if (
+        isIoKeywordUsableAsIdentifier(token) &&
+        this.peekAfterNewlinesIs(TokenKind.Assign)
+      ) {
+        return this.parseAssignmentOrExpressionStatement();
+      }
+      return this.parseOutput();
+    }
     if (token.kind === TokenKind.If) return this.parseIf();
     if (token.kind === TokenKind.Case) return this.parseCase();
     if (token.kind === TokenKind.While) return this.parseWhile();
@@ -2075,6 +2084,15 @@ export class Parser {
     while (this.cursor.match(TokenKind.Newline)) {
       /* skip */
     }
+  }
+
+  /** Look ahead past newlines without consuming (statement/assignment disambiguation). */
+  private peekAfterNewlinesIs(kind: TokenKind): boolean {
+    let i = this.cursor.index + 1;
+    while (i < this.cursor.tokens.length && this.cursor.tokens[i]?.kind === TokenKind.Newline) {
+      i += 1;
+    }
+    return this.cursor.tokens[i]?.kind === kind;
   }
 }
 

@@ -9,6 +9,7 @@ import type {
 } from '../ast/nodes.js';
 import { TokenKind, type Token } from '../lexer/token.js';
 import { pushError, type TokenCursor } from './cursor.js';
+import { isIoKeywordUsableAsIdentifier } from './keyword-identifier.js';
 
 /**
  * Pratt expression parser.
@@ -159,6 +160,25 @@ export class ExpressionParser {
           span: token.span,
         };
       }
+      case TokenKind.Input:
+      case TokenKind.Output: {
+        if (!isIoKeywordUsableAsIdentifier(token)) {
+          pushError(this.diagnostics, 'Expected expression.', token);
+          return null;
+        }
+        const id = this.parseIdentifier();
+        if (!id) return null;
+        if (this.cursor.match(TokenKind.LParen)) {
+          const args = this.parseArgumentList();
+          return this.parsePostfix({
+            kind: 'CallExpression',
+            callee: id,
+            args,
+            span: span(id.span.start, this.cursor.previous().span.end),
+          });
+        }
+        return this.parsePostfix(id);
+      }
       case TokenKind.Identifier: {
         const id = this.parseIdentifier();
         if (!id) return null;
@@ -300,12 +320,12 @@ export class ExpressionParser {
 
   parseIdentifier(): Identifier | null {
     const token = this.cursor.peek();
-    if (token.kind !== TokenKind.Identifier) {
-      pushError(this.diagnostics, 'Expected identifier.', token);
-      return null;
+    if (token.kind === TokenKind.Identifier || isIoKeywordUsableAsIdentifier(token)) {
+      this.cursor.advance();
+      return { kind: 'Identifier', name: token.lexeme, span: token.span };
     }
-    this.cursor.advance();
-    return { kind: 'Identifier', name: token.lexeme, span: token.span };
+    pushError(this.diagnostics, 'Expected identifier.', token);
+    return null;
   }
 
   /** Assumes opening "(" already consumed. Consumes closing ")". */

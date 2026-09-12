@@ -1,0 +1,12 @@
+{
+  "title": "middle() with output variable (keyword spelling regression)",
+  "tags": [
+    "strings",
+    "functions",
+    "regression"
+  ],
+  "expectOutput": [
+    "llo"
+  ],
+  "reverse": "check"
+}
