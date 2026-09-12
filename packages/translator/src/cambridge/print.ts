@@ -172,13 +172,13 @@ function printBlock(
 }
 
 function printParamList(
-  parameters: readonly { readonly name: string; readonly typeName: IrSimpleType; readonly mode?: 'BYVAL' | 'BYREF' }[],
+  parameters: readonly { readonly name: string; readonly typeName: IrTypeReference; readonly mode?: 'BYVAL' | 'BYREF' }[],
 ): string {
   let prevMode: 'BYVAL' | 'BYREF' | null = null;
   return parameters
     .map((param) => {
       const mode = param.mode ?? 'BYVAL';
-      const type = printSimpleType(param.typeName);
+      const type = printTypeRef(param.typeName);
       // Emit mode when it differs from the sticky previous mode (Guide §8.3).
       // Always emit BYREF on first BYREF; omit repeated BYREF; emit BYVAL only
       // when switching back from BYREF (explicit default is usually omitted).

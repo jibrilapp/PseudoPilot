@@ -30,6 +30,7 @@ type BuiltinPythonEmit =
   | { readonly kind: 'slice_mid' }
   | { readonly kind: 'method'; readonly method: 'lower' | 'upper' }
   | { readonly kind: 'int' }
+  | { readonly kind: 'num_to_str' }
   | { readonly kind: 'rand' }
   | { readonly kind: 'ord' }
   | { readonly kind: 'chr' }
@@ -48,6 +49,7 @@ const PYTHON_EMIT: Readonly<Record<string, BuiltinPythonEmit>> = {
   LCASE: { kind: 'method', method: 'lower' },
   UCASE: { kind: 'method', method: 'upper' },
   INT: { kind: 'int' },
+  NUM_TO_STR: { kind: 'num_to_str' },
   RAND: { kind: 'rand' },
   ASC: { kind: 'ord' },
   CHR: { kind: 'chr' },
@@ -104,6 +106,8 @@ function emitPython(
       return `${parenIfNeeded(args[0]!, printExpr)}.${emit.method}()`;
     case 'int':
       return `int(${printExpr(args[0]!, 0)})`;
+    case 'num_to_str':
+      return `str(${printExpr(args[0]!, 0)})`;
     case 'rand':
       // Parenthesize with `*` precedence: RAND(n+1) → random.random() * (n + 1)
       return `random.random() * ${printExpr(args[0]!, BINARY_PRECEDENCE['*'])}`;

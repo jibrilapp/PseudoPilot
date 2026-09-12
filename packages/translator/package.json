@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@pseudopilot/checker": "workspace:*",
+    "@pseudopilot/interpreter": "workspace:*",
     "@pseudopilot/language-core": "workspace:*"
   },
   "devDependencies": {

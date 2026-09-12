@@ -452,6 +452,9 @@ importers:
       '@pseudopilot/checker':
         specifier: workspace:*
         version: link:../checker
+      '@pseudopilot/interpreter':
+        specifier: workspace:*
+        version: link:../interpreter
       '@pseudopilot/language-core':
         specifier: workspace:*
         version: link:../language-core

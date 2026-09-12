@@ -1,0 +1,96 @@
+import { describe, expect, it } from 'vitest';
+import type { IrExpression } from '../ir/nodes.js';
+import {
+  inferReturnTypeFromBody,
+  inferSimpleTypeFromExpr,
+  simplifyIrExpression,
+} from './reverse-refine.js';
+import type { IrParameter, IrStatement } from '../ir/nodes.js';
+
+function int(n: number): IrExpression {
+  return { kind: 'IrIntegerLiteral', value: n };
+}
+
+function bin(
+  operator: '+' | '-' | '*',
+  left: IrExpression,
+  right: IrExpression,
+): IrExpression {
+  return { kind: 'IrBinaryExpression', operator, left, right };
+}
+
+describe('inferSimpleTypeFromExpr', () => {
+  it('infers INTEGER from binary + on INTEGER params', () => {
+    const x: IrExpression = { kind: 'IrIdentifier', name: 'x' };
+    const expr = bin('+', x, int(1));
+    const t = inferSimpleTypeFromExpr(expr, {
+      paramTypes: new Map([['x', { kind: 'IrScalarType', name: 'INTEGER' }]]),
+    });
+    expect(t).toEqual({ kind: 'IrScalarType', name: 'INTEGER' });
+  });
+
+  it('infers element type from array parameter indexing', () => {
+    const values: IrExpression = { kind: 'IrIdentifier', name: 'values' };
+    const expr: IrExpression = {
+      kind: 'IrIndexExpression',
+      array: values,
+      indices: [int(0)],
+    };
+    const t = inferSimpleTypeFromExpr(expr, {
+      paramArrayElements: new Map([
+        ['values', { kind: 'IrScalarType', name: 'INTEGER' }],
+      ]),
+    });
+    expect(t).toEqual({ kind: 'IrScalarType', name: 'INTEGER' });
+  });
+});
+
+describe('inferReturnTypeFromBody', () => {
+  it('infers INTEGER from return x + 1', () => {
+    const params: IrParameter[] = [
+      {
+        kind: 'IrParameter',
+        name: 'x',
+        typeName: { kind: 'IrScalarType', name: 'INTEGER' },
+        mode: 'BYVAL',
+      },
+    ];
+    const body: IrStatement[] = [
+      {
+        kind: 'IrReturnStatement',
+        value: bin('+', { kind: 'IrIdentifier', name: 'x' }, int(1)),
+      },
+    ];
+    expect(inferReturnTypeFromBody(body, params)).toEqual({
+      kind: 'IrScalarType',
+      name: 'INTEGER',
+    });
+  });
+});
+
+describe('simplifyIrExpression', () => {
+  it('folds literal integer arithmetic', () => {
+    expect(simplifyIrExpression(bin('-', int(5), int(1)))).toEqual(int(4));
+  });
+
+  it('cancels redundant (x + 1) - 1', () => {
+    const x: IrExpression = { kind: 'IrIdentifier', name: 'N' };
+    const expr = bin('-', bin('+', x, int(1)), int(1));
+    expect(simplifyIrExpression(expr)).toEqual(x);
+  });
+
+  it('cancels redundant (x - 1) + 1', () => {
+    const x: IrExpression = { kind: 'IrIdentifier', name: 'N' };
+    const expr = bin('+', bin('-', x, int(1)), int(1));
+    expect(simplifyIrExpression(expr)).toEqual(x);
+  });
+
+  it('folds array-length style range end expressions', () => {
+    const expr = bin(
+      '-',
+      bin('+', bin('-', int(5), int(1)), int(1)),
+      int(1),
+    );
+    expect(simplifyIrExpression(expr)).toEqual(int(4));
+  });
+});

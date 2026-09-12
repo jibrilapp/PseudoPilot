@@ -266,12 +266,22 @@ export type IrDefineStatement = WithTrivia & {
   readonly typeName: string;
 };
 
+export type IrSourceSpan = {
+  readonly start: { readonly offset: number; readonly line: number; readonly column: number };
+  readonly end: { readonly offset: number; readonly line: number; readonly column: number };
+};
+
 export type IrParameter = {
   readonly kind: 'IrParameter';
   readonly name: string;
-  readonly typeName: IrSimpleType;
+  readonly typeName: IrTypeReference;
   /** Cambridge §8.3 — default BYVAL. */
   readonly mode: 'BYVAL' | 'BYREF';
+  /** Set when Python `def` parameter had no `: type` annotation. */
+  readonly unannotated?: boolean;
+  readonly span?: IrSourceSpan;
+  /** Set when Cambridge INTEGER was applied because inference could not resolve UNKNOWN. */
+  readonly inferenceFallback?: boolean;
 };
 
 /** PROCEDURE … ENDPROCEDURE — maps to Python def (no return annotation). */
@@ -289,6 +299,9 @@ export type IrFunctionDeclaration = WithTrivia & {
   readonly parameters: IrParameter[];
   readonly returnType: IrSimpleType;
   readonly body: IrStatement[];
+  /** Set when `->` was omitted and return type awaits post-refine inference. */
+  readonly pendingReturnTypeInference?: boolean;
+  readonly inferenceSpan?: IrSourceSpan;
 };
 
 /** CALL Name[(args)] — maps to Python Name(args) statement. */

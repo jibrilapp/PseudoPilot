@@ -859,15 +859,16 @@ function lowerClassMember(
   // ClassProcedureDeclaration | ClassFunctionDeclaration
   pushScope(ctx);
   const parameters = member.parameters.map((p) => {
-    const shape = shapeFromSimpleType(p.typeName, ctx);
+    const shape = shapeFromTypeRef(p.typeName, ctx);
     const byRefCell = p.mode === 'BYREF' && shape.kind === 'scalar';
     const pname =
       bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape, byRefCell) ??
       p.name.name;
+    const typeName = lowerTypeRef(p.typeName, ctx);
     return {
       kind: 'IrParameter' as const,
       name: pname,
-      typeName: lowerSimpleType(p.typeName, ctx),
+      typeName: typeName ?? { kind: 'IrScalarType', name: 'INTEGER' },
       mode: p.mode,
     };
   });
@@ -1247,17 +1248,18 @@ function lowerStatement(
       pushScope(ctx);
       const paramSpecs: ParamSpec[] = [];
       const parameters = stmt.parameters.map((p) => {
-        const shape = shapeFromSimpleType(p.typeName, ctx);
+        const shape = shapeFromTypeRef(p.typeName, ctx);
         const mode = p.mode;
         const byRefCell = mode === 'BYREF' && shape.kind === 'scalar';
         paramSpecs.push({ shape, mode });
         const pname =
           bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape, byRefCell) ??
           p.name.name;
+        const typeName = lowerTypeRef(p.typeName, ctx);
         return {
           kind: 'IrParameter' as const,
           name: pname,
-          typeName: lowerSimpleType(p.typeName, ctx),
+          typeName: typeName ?? { kind: 'IrScalarType', name: 'INTEGER' },
           mode,
         };
       });
@@ -1281,15 +1283,16 @@ function lowerStatement(
       pushScope(ctx);
       const paramSpecs: ParamSpec[] = [];
       const parameters = stmt.parameters.map((p) => {
-        const shape = shapeFromSimpleType(p.typeName, ctx);
+        const shape = shapeFromTypeRef(p.typeName, ctx);
         paramSpecs.push({ shape, mode: p.mode });
         const pname =
           bindName(ctx, p.name.name, 'var', p.name.span, 'DECLARE', shape) ??
           p.name.name;
+        const typeName = lowerTypeRef(p.typeName, ctx);
         return {
           kind: 'IrParameter' as const,
           name: pname,
-          typeName: lowerSimpleType(p.typeName, ctx),
+          typeName: typeName ?? { kind: 'IrScalarType', name: 'INTEGER' },
           mode: p.mode,
         };
       });

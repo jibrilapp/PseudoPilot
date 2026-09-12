@@ -18,7 +18,19 @@ import {
   type IrUnaryOp,
 } from '../ir/nodes.js';
 import { attachTriviaToStatements } from '../trivia/attach.js';
-import { stripPythonIndexOffset } from './array-index.js';
+import { pythonIndexToCambridge } from './array-index.js';
+import {
+  arrayTypeFromBounds,
+  collectUninferredParameterWarnings,
+  collectUninferredReturnTypeErrors,
+  finalizeInferredParameters,
+  fStringPartsToConcat,
+  inferReturnTypeFromBody,
+  literalArrayBounds,
+  parseFStringContent,
+  refineReverseProgram,
+  simplifyExpressionsInProgram,
+} from './reverse-refine.js';
 import type { TranslateDiagnostic } from '../types.js';
 import {
   isPythonReservedIdentifier,
@@ -217,7 +229,7 @@ class PyParser {
     if (this.check(PyTokenKind.Return)) {
       if (!allowReturn) {
         this.error(
-          "'return' is only valid inside a function (def with '->' return type).",
+          "'return' is only valid inside a function body.",
           this.peek(),
         );
         return null;
@@ -982,7 +994,7 @@ class PyParser {
   /**
    * Parse `def Name(params):` as IrProcedureDeclaration.
    * Optional annotations: int/float/str/bool → INTEGER/REAL/STRING/BOOLEAN.
-   * Missing annotations default to INTEGER (with a warning).
+   * Missing annotations use an internal UNKNOWN placeholder until reverse refine.
    * Top-level only — nested def is rejected in parseStatement.
    */
   private parseDef(): ParsedStatement | null {
@@ -1029,8 +1041,7 @@ class PyParser {
       return null;
     }
 
-    // `def Foo() -> int:` → FUNCTION; bare `def Foo():` → PROCEDURE.
-    // Return type may be a builtin scalar or a user TYPE (record) name.
+    // `def Foo() -> int:` → FUNCTION; bare `def` with `return` → inferred FUNCTION.
     let returnType: IrSimpleType | null = null;
     if (this.check(PyTokenKind.Minus)) {
       this.advance();
@@ -1048,7 +1059,17 @@ class PyParser {
     this.expect(PyTokenKind.Colon);
     const byRefNames = this.readByRefNamesFromLine(this.previous().offset);
     this.skipNewlines();
-    let body = this.parseSuite(false, returnType !== null);
+    let body = this.parseSuite(false, true);
+
+    let pendingReturnTypeInference = false;
+    const inferenceSpan = tokenSpan(defTok, this.previous());
+    if (returnType === null && containsReturnIr(body)) {
+      returnType = inferReturnTypeFromBody(body, parameters);
+      if (returnType === null) {
+        returnType = { kind: 'IrScalarType', name: 'INTEGER' };
+        pendingReturnTypeInference = true;
+      }
+    }
 
     const parametersWithMode = parameters.map((p) => ({
       ...p,
@@ -1084,6 +1105,9 @@ class PyParser {
           parameters: parametersWithMode,
           returnType,
           body,
+          ...(pendingReturnTypeInference
+            ? { pendingReturnTypeInference: true as const, inferenceSpan }
+            : {}),
         }),
       };
     }
@@ -1455,6 +1479,7 @@ class PyParser {
       if (!this.check(PyTokenKind.RParen)) {
         const first = this.parseDefParameter(seen, {
           unannotatedDefault: 'UNKNOWN',
+          warnUnannotated: true,
         });
         if (!first) return null;
         parameters.push(first);
@@ -1468,6 +1493,7 @@ class PyParser {
           }
           const next = this.parseDefParameter(seen, {
             unannotatedDefault: 'UNKNOWN',
+            warnUnannotated: true,
           });
           if (!next) return null;
           parameters.push(next);
@@ -1888,8 +1914,11 @@ class PyParser {
 
   private parseDefParameter(
     seen: Set<string>,
-    opts: { readonly unannotatedDefault: 'INTEGER' | 'UNKNOWN' } = {
-      unannotatedDefault: 'INTEGER',
+    opts: {
+      readonly unannotatedDefault: 'INTEGER' | 'UNKNOWN';
+      readonly warnUnannotated?: boolean;
+    } = {
+      unannotatedDefault: 'UNKNOWN',
     },
   ): IrParameter | null {
     if (!this.check(PyTokenKind.Identifier)) {
@@ -1905,18 +1934,17 @@ class PyParser {
     }
     seen.add(name);
 
-    // Parameter type may be a builtin scalar or a user TYPE (record) name.
-    let typeName: IrSimpleType =
+    let typeName: IrTypeReference =
       opts.unannotatedDefault === 'UNKNOWN'
         ? { kind: 'IrNamedType', name: 'UNKNOWN' }
         : { kind: 'IrScalarType', name: 'INTEGER' };
+    let annotated = false;
     if (this.match(PyTokenKind.Colon)) {
-      if (!this.check(PyTokenKind.Identifier)) {
-        this.error('Expected type name after ":".', this.peek());
-        return null;
-      }
-      typeName = pythonAnnotationToSimpleType(this.advance().lexeme);
-    } else if (opts.unannotatedDefault === 'UNKNOWN') {
+      const parsed = this.parseParameterTypeAnnotation();
+      if (!parsed) return null;
+      typeName = parsed;
+      annotated = true;
+    } else if (opts.warnUnannotated && opts.unannotatedDefault === 'UNKNOWN') {
       this.diagnostics.push({
         severity: 'warning',
         code: 'T_CLASS_PARAM_UNKNOWN_TYPE',
@@ -1934,26 +1962,58 @@ class PyParser {
           },
         },
       });
-    } else {
-      this.diagnostics.push({
-        severity: 'warning',
-        code: 'T_PROC_DEFAULT_TYPE',
-        message: `Parameter '${name}' has no type annotation; defaulting to INTEGER for Cambridge PROCEDURE.`,
-        span: {
-          start: {
-            offset: nameTok.offset,
-            line: nameTok.line,
-            column: nameTok.column,
-          },
-          end: {
-            offset: nameTok.offset + nameTok.lexeme.length,
-            line: nameTok.line,
-            column: nameTok.column + Math.max(nameTok.lexeme.length, 1) - 1,
-          },
-        },
-      });
     }
-    return { kind: 'IrParameter', name, typeName, mode: 'BYVAL' };
+    const span = {
+      start: {
+        offset: nameTok.offset,
+        line: nameTok.line,
+        column: nameTok.column,
+      },
+      end: {
+        offset: nameTok.offset + nameTok.lexeme.length,
+        line: nameTok.line,
+        column: nameTok.column + Math.max(nameTok.lexeme.length, 1) - 1,
+      },
+    };
+    return {
+      kind: 'IrParameter',
+      name,
+      typeName,
+      mode: 'BYVAL',
+      ...(!annotated ? { unannotated: true as const, span } : {}),
+    };
+  }
+
+  /** Parse `int`, `list[int]`, or user TYPE name after parameter `:`. */
+  private parseParameterTypeAnnotation(): IrTypeReference | null {
+    if (!this.check(PyTokenKind.Identifier)) {
+      this.error('Expected type name after ":".', this.peek());
+      return null;
+    }
+    const typeTok = this.advance();
+    if (typeTok.lexeme === 'list' && this.match(PyTokenKind.LBracket)) {
+      if (!this.check(PyTokenKind.Identifier)) {
+        this.error('Expected element type inside list[…].', this.peek());
+        return null;
+      }
+      const elemTok = this.advance();
+      const scalarElem = pythonTypeToIr(elemTok.lexeme);
+      const elementType: IrSimpleType = scalarElem
+        ? { kind: 'IrScalarType', name: scalarElem }
+        : { kind: 'IrNamedType', name: camIdent(elemTok.lexeme) };
+      if (this.check(PyTokenKind.Pipe)) {
+        this.advance();
+        if (this.check(PyTokenKind.Identifier) && this.peek().lexeme === 'None') {
+          this.advance();
+        }
+      }
+      if (!this.match(PyTokenKind.RBracket)) {
+        this.error("Expected ']' after list element type.", this.peek());
+        return null;
+      }
+      return arrayTypeFromBounds(elementType, literalArrayBounds(1));
+    }
+    return pythonAnnotationToSimpleType(typeTok.lexeme);
   }
 
   /**
@@ -2163,6 +2223,26 @@ class PyParser {
     this.skipNewlines();
     const body = this.parseSuite(false, allowReturn);
 
+    // Python range(n) → Cambridge FOR var ← 0 TO n - 1 (preserve 0-based loop variable).
+    if (args.length === 1) {
+      return {
+        span: tokenSpan(forTok, this.previous()),
+        stmt: withEmptyTrivia({
+          kind: 'IrForStatement' as const,
+          variable,
+          start: { kind: 'IrIntegerLiteral', value: 0 },
+          end: {
+            kind: 'IrBinaryExpression',
+            operator: '-',
+            left: args[0]!,
+            right: { kind: 'IrIntegerLiteral', value: 1 },
+          },
+          step: null,
+          body,
+        }),
+      };
+    }
+
     if (args.length < 2 || args.length > 3) {
       this.error(
         'Translator expects range(start, stop) or range(start, stop, step).',
@@ -2175,12 +2255,9 @@ class PyParser {
     const rawStop = args[1]!;
     const rawStep = args.length === 3 ? args[2]! : null;
 
-    const end = this.reverseRangeAdjust(rawStop, rawStep);
+    const end = this.pythonRangeToCambridgeEnd(rawStop, rawStep);
     if (!end) {
-      this.error(
-        'Cannot reverse-translate range stop value into Cambridge inclusive bound.',
-        forTok,
-      );
+      this.error('Cannot translate range() stop value into a FOR loop bound.', forTok);
       return null;
     }
 
@@ -2198,11 +2275,10 @@ class PyParser {
   }
 
   /**
-   * Reverse the ±1 adjustment that the Python printer added.
-   * `stop` in range() is `end + 1` (ascending) or `end - 1` (descending).
-   * Returns the Cambridge inclusive `end`.
+   * Convert Python range(start, stop[, step]) exclusive stop into Cambridge inclusive end.
+   * Also accepts round-trip `stop ± 1` forms emitted by the Python printer.
    */
-  private reverseRangeAdjust(
+  private pythonRangeToCambridgeEnd(
     stop: IrExpression,
     step: IrExpression | null,
   ): IrExpression | null {
@@ -2213,18 +2289,64 @@ class PyParser {
         (step.argument.kind === 'IrIntegerLiteral' || step.argument.kind === 'IrRealLiteral')) ||
         ((step.kind === 'IrIntegerLiteral' || step.kind === 'IrRealLiteral') && step.value < 0));
 
-    const expectedOp: '+' | '-' = isDesc ? '-' : '+';
-
+    const roundTripOp: '+' | '-' = isDesc ? '-' : '+';
     if (
       stop.kind === 'IrBinaryExpression' &&
-      stop.operator === expectedOp &&
+      stop.operator === roundTripOp &&
       stop.right.kind === 'IrIntegerLiteral' &&
       stop.right.value === 1
     ) {
       return stop.left;
     }
 
-    return null;
+    const adjustOp: '+' | '-' = isDesc ? '+' : '-';
+    return {
+      kind: 'IrBinaryExpression',
+      operator: adjustOp,
+      left: stop,
+      right: { kind: 'IrIntegerLiteral', value: 1 },
+    };
+  }
+
+  /** Parse a Python expression embedded inside an f-string `{…}`. */
+  private static parseSubExpression(source: string): IrExpression | null {
+    const trimmed = source.trim();
+    if (!trimmed) return null;
+    const lexed = lexPython(trimmed);
+    const parser = new PyParser(lexed.tokens, lexed.diagnostics);
+    const expr = parser.parseExpression();
+    if (!expr) return null;
+    parser.skipNewlines();
+    if (!parser.check(PyTokenKind.Eof)) return null;
+    return expr;
+  }
+
+  private parseFStringExpression(source: string, errorTok: PyToken): IrExpression | null {
+    const expr = PyParser.parseSubExpression(source);
+    if (!expr) {
+      this.error(`Invalid f-string expression '${source.trim()}'.`, errorTok);
+      return null;
+    }
+    return expr;
+  }
+
+  private parseFStringParts(strTok: PyToken): IrExpression | null {
+    const parsed = parseFStringContent(strTok.lexeme);
+    if (!parsed) {
+      this.error('Unsupported f-string.', strTok);
+      return null;
+    }
+    const parts: Array<{ kind: 'text' | 'expr'; value: string | IrExpression }> = [];
+    for (const part of parsed.parts) {
+      if (part.kind === 'text') {
+        parts.push(part);
+        continue;
+      }
+      const expr = this.parseFStringExpression(part.value, strTok);
+      if (!expr) return null;
+      parts.push({ kind: 'expr', value: expr });
+    }
+    return fStringPartsToConcat(parts);
   }
 
   private parseIf(allowBreak = false, allowReturn = false): ParsedStatement | null {
@@ -2498,13 +2620,13 @@ class PyParser {
     this.expect(PyTokenKind.LParen);
     const values: IrExpression[] = [];
     if (!this.check(PyTokenKind.RParen)) {
-      const first = this.parseExpression();
+      const first = this.parsePrintArg();
       if (!first) return null;
-      values.push(first);
+      values.push(...first);
       while (this.match(PyTokenKind.Comma)) {
-        const next = this.parseExpression();
+        const next = this.parsePrintArg();
         if (!next) return null;
-        values.push(next);
+        values.push(...next);
       }
     }
     const rparen = this.expect(PyTokenKind.RParen);
@@ -2515,6 +2637,22 @@ class PyParser {
         values,
       }),
     };
+  }
+
+  /** Parse one `print(...)` argument; f-strings become a single string-concat expression. */
+  private parsePrintArg(): IrExpression[] | null {
+    if (
+      this.check(PyTokenKind.Identifier) &&
+      (this.peek().lexeme === 'f' || this.peek().lexeme === 'F') &&
+      this.tokens[this.i + 1]?.kind === PyTokenKind.String
+    ) {
+      this.advance(); // f
+      const strTok = this.advance();
+      const fExpr = this.parseFStringParts(strTok);
+      return fExpr ? [fExpr] : null;
+    }
+    const expr = this.parseExpression();
+    return expr ? [expr] : null;
   }
 
   private parseExpression(): IrExpression | null {
@@ -2666,6 +2804,17 @@ class PyParser {
     }
     if (this.match(PyTokenKind.False)) {
       return { kind: 'IrBooleanLiteral', value: false };
+    }
+    if (
+      this.check(PyTokenKind.Identifier) &&
+      (this.peek().lexeme === 'f' || this.peek().lexeme === 'F') &&
+      this.tokens[this.i + 1]?.kind === PyTokenKind.String
+    ) {
+      this.advance(); // f
+      const strTok = this.advance();
+      const fExpr = this.parseFStringParts(strTok);
+      if (!fExpr) return null;
+      return this.parsePostfixChain(fExpr);
     }
     if (this.match(PyTokenKind.Identifier)) {
       const pyName = this.previous().lexeme;
@@ -3210,7 +3359,7 @@ function inferClassProperties(
 
   const consider = (
     stmts: readonly IrStatement[],
-    paramTypes: ReadonlyMap<string, IrSimpleType>,
+    paramTypes: ReadonlyMap<string, IrTypeReference>,
   ): void => {
     for (const stmt of stmts) {
       if (
@@ -3265,7 +3414,7 @@ function inferClassProperties(
 
 function inferTypeRefFromValue(
   value: IrExpression,
-  paramTypes: ReadonlyMap<string, IrSimpleType>,
+  paramTypes: ReadonlyMap<string, IrTypeReference>,
 ): IrTypeReference {
   if (value.kind === 'IrIdentifier') {
     const fromParam = paramTypes.get(value.name);
@@ -3384,8 +3533,12 @@ function parseArrayBoundsComment(
 function refineProgram(statements: readonly IrStatement[]): IrStatement[] {
   const refined = statements.map((stmt) => refineOne(stmt));
   const collapsed = collapseByRefCallSites(refined);
-  const bounds = collectArrayBounds(collapsed);
-  return collapsed.map((stmt) => stripIndexOffsetsInStmt(stmt, bounds));
+  const reverseRefined = refineReverseProgram(collapsed);
+  const bounds = collectArrayBounds(reverseRefined);
+  const withIndices = reverseRefined.map((stmt) =>
+    stripIndexOffsetsInStmt(stmt, bounds),
+  );
+  return simplifyExpressionsInProgram(withIndices);
 }
 
 /**
@@ -3528,6 +3681,12 @@ function collectArrayBounds(
         stmt.kind === 'IrProcedureDeclaration' ||
         stmt.kind === 'IrFunctionDeclaration'
       ) {
+        for (const p of stmt.parameters) {
+          if (p.typeName.kind === 'IrArrayType') {
+            const lowers = p.typeName.dimensions.map((d) => d.lower);
+            map.set(p.name.toLowerCase(), lowers);
+          }
+        }
         walk(stmt.body);
       }
       if (stmt.kind === 'IrIfStatement') {
@@ -3643,7 +3802,7 @@ function stripIndexOffsetsInExpr(
       const array = stripIndexOffsetsInExpr(expr.array, bounds);
       const lowers = resolveLowersForArrayExpr(array, bounds);
       const indices = expr.indices.map((idx, i) =>
-        stripPythonIndexOffset(
+        pythonIndexToCambridge(
           stripIndexOffsetsInExpr(idx, bounds),
           lowers?.[i],
         ),
@@ -4052,5 +4211,11 @@ export function parsePythonToIr(
   const lexed = lexPython(source);
   const parser = new PyParser(lexed.tokens, lexed.diagnostics);
   const ir = parser.parseProgram(source, preserveTrivia);
-  return { ir, diagnostics: parser.diagnostics };
+  const finalizedBody = finalizeInferredParameters(ir.body);
+  const paramWarnings = collectUninferredParameterWarnings(finalizedBody);
+  const returnTypeErrors = collectUninferredReturnTypeErrors(finalizedBody);
+  return {
+    ir: { ...ir, body: finalizedBody },
+    diagnostics: [...parser.diagnostics, ...paramWarnings, ...returnTypeErrors],
+  };
 }

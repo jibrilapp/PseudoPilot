@@ -76,6 +76,11 @@ const BUILTIN_IMPL: Readonly<Record<string, BuiltinImpl>> = {
   INT(args) {
     return integerValue(Math.trunc(asNumber(args[0]!, 'INT')));
   },
+  NUM_TO_STR(args) {
+    const n = asNumber(args[0]!, 'NUM_TO_STR');
+    if (Number.isInteger(n)) return stringValue(String(n));
+    return stringValue(String(n));
+  },
   RAND(args, random, span) {
     const x = asInteger(args[0]!, 'RAND');
     if (x <= 0) {

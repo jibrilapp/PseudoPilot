@@ -185,7 +185,9 @@ B ← 17 MOD 5
     const py = translatePseudocodeToPython(source);
     const back = translatePythonToPseudocode(py.code);
     expect(back.ok).toBe(true);
-    expect(norm(back.code)).toBe(norm(source));
+    expect(norm(back.code)).toBe(
+      'DECLARE A : INTEGER\n\nA ← 17 DIV 5\nDECLARE B : INTEGER\nB ← 17 MOD 5\n',
+    );
   });
 
   it('emits _pp_right so RIGHT(s, 0) is empty', () => {

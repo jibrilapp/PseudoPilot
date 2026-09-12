@@ -69,6 +69,26 @@ export function stripPythonIndexOffset(
   return idx;
 }
 
+/**
+ * Convert a Python list index to a Cambridge ARRAY index.
+ * Round-trip indices `expr - lower` (from forward translation) collapse to
+ * `expr`; native 0-based Python indices become `expr + lower`.
+ */
+export function pythonIndexToCambridge(
+  idx: IrExpression,
+  lower: IrExpression | undefined,
+): IrExpression {
+  if (!lower) return idx;
+  const stripped = stripPythonIndexOffset(idx, lower);
+  if (stripped !== idx) return stripped;
+  return {
+    kind: 'IrBinaryExpression',
+    operator: '+',
+    left: idx,
+    right: lower,
+  };
+}
+
 function irExprEqual(a: IrExpression, b: IrExpression): boolean {
   if (a.kind !== b.kind) return false;
   switch (a.kind) {

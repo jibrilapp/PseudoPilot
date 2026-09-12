@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parse } from '@pseudopilot/language-core';
+import { check } from '@pseudopilot/checker';
+import { runPseudocode, MemoryHost } from '@pseudopilot/interpreter';
 import {
   translatePseudocodeToPython as translateCam,
   translatePythonToPseudocode,
@@ -572,13 +574,15 @@ describe('translatePythonToPseudocode (V1)', () => {
   it('translates assignment and arithmetic', () => {
     const result = translatePythonToPseudocode(`count = 2 + 3 * 4\n`);
     expect(result.ok).toBe(true);
-    expect(norm(result.code)).toBe('count ← 2 + 3 * 4\n');
+    expect(norm(result.code)).toBe('DECLARE count : INTEGER\ncount ← 2 + 3 * 4\n');
   });
 
   it('translates // and % to DIV and MOD', () => {
     const result = translatePythonToPseudocode(`q = 10 // 3\nr = 10 % 3\n`);
     expect(result.ok).toBe(true);
-    expect(norm(result.code)).toBe('q ← 10 DIV 3\nr ← 10 MOD 3\n');
+    expect(norm(result.code)).toBe(
+      'DECLARE q : INTEGER\nq ← 10 DIV 3\nDECLARE r : INTEGER\nr ← 10 MOD 3\n',
+    );
   });
 
   it('translates input and print', () => {
@@ -609,7 +613,7 @@ print("Hello", name)
       assignmentArrow: 'ascii',
     });
     expect(result.ok).toBe(true);
-    expect(norm(result.code)).toBe('x <- 1\n');
+    expect(norm(result.code)).toBe('DECLARE x : INTEGER\nx <- 1\n');
   });
 
   it('preserves # comments as // comments', () => {
@@ -835,13 +839,13 @@ while x > 0:
     expect(result.diagnostics.some((d) => d.code === 'T_PY_PARSE')).toBe(true);
   });
 
-  it('rejects single-arg range() for loops', () => {
+  it('translates single-arg range() for loops', () => {
     const result = translatePythonToPseudocode(`
 for i in range(3):
     print(i)
 `);
-    expect(result.ok).toBe(false);
-    expect(result.diagnostics.some((d) => d.code === 'T_PY_PARSE')).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('FOR i ← 0 TO 2');
   });
 
   it('translates CHAR and indexed assignment', () => {
@@ -853,7 +857,7 @@ print(scores[1], ch)
 `);
     expect(result.ok).toBe(true);
     expect(norm(result.code)).toBe(
-      `ch ← 'Z'\nscores[1] ← 10\nINPUT scores[2]\nOUTPUT scores[1], ch\n`,
+      `DECLARE ch : CHAR\n\nch ← 'Z'\nscores[1] ← 10\nINPUT scores[2]\nOUTPUT scores[1], ch\n`,
     );
   });
 
@@ -885,7 +889,9 @@ OUTPUT Total
     expect(py.ok).toBe(true);
     const back = translatePythonToPseudocode(py.code);
     expect(back.ok).toBe(true);
-    expect(norm(back.code)).toBe(norm(source));
+    expect(norm(back.code)).toBe(
+      'DECLARE Total : INTEGER\nTotal ← 1 + 2 * 3\nOUTPUT Total\n',
+    );
   });
 
   it('python → pseudocode → python preserves meaning', () => {
@@ -896,7 +902,7 @@ print(total)
     expect(ps.ok).toBe(true);
     const back = translatePseudocodeToPython(ps.code);
     expect(back.ok).toBe(true);
-    expect(norm(back.code)).toBe(norm(source));
+    expect(norm(back.code)).toBe('total: int\ntotal = 1 + 2 * 3\nprint(total)\n');
   });
 
   it('round-trips DIV/MOD', () => {
@@ -906,7 +912,9 @@ B ← 17 MOD 5
     const py = translatePseudocodeToPython(source);
     const back = translatePythonToPseudocode(py.code);
     expect(back.ok).toBe(true);
-    expect(norm(back.code)).toBe(norm(source));
+    expect(norm(back.code)).toBe(
+      'DECLARE A : INTEGER\n\nA ← 17 DIV 5\nDECLARE B : INTEGER\nB ← 17 MOD 5\n',
+    );
   });
 
   it('round-trips CHAR and array element access', () => {
@@ -918,7 +926,13 @@ OUTPUT Scores[1], Letter
     expect(py.ok).toBe(true);
     const back = translatePythonToPseudocode(py.code);
     expect(back.ok).toBe(true);
-    expect(norm(back.code)).toBe(norm(source));
+    expect(norm(back.code)).toBe(
+      norm(`DECLARE Letter : CHAR
+Letter ← 'A'
+Scores[1] ← 10
+OUTPUT Scores[1], Letter
+`),
+    );
   });
 
   it('round-trips IF ELSE', () => {
@@ -1157,12 +1171,29 @@ for I in range(1, 3 + 1):
     expect(norm(back.code)).toBe(norm(source));
   });
 
-  it('rejects range() without ±1 adjustment', () => {
+  it('translates native Python range(start, stop)', () => {
     const result = translatePythonToPseudocode(`
 for i in range(1, 10):
     print(i)
 `);
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(norm(result.code)).toContain('FOR i ← 1 TO 9');
+  });
+
+  it('translates range(start, stop, step) including descending loops', () => {
+    const asc = translatePythonToPseudocode(`
+for i in range(0, 10, 2):
+    print(i)
+`);
+    expect(asc.ok).toBe(true);
+    expect(norm(asc.code)).toContain('FOR i ← 0 TO 9');
+
+    const desc = translatePythonToPseudocode(`
+for i in range(10, 0, -1):
+    print(i)
+`);
+    expect(desc.ok).toBe(true);
+    expect(norm(desc.code)).toContain('FOR i ← 10 TO 1');
   });
 
   it('translates FOR inside IF from Python', () => {
@@ -3290,5 +3321,406 @@ P ← NEW Player("Ada")
     expect(back).toContain('SELF.Attempts ← 0');
     expect(back).toContain('NEW Player("Ada")');
     expect(back).not.toMatch(/(^|\n)\s+Name ← GivenName\s*(\n|$)/);
+  });
+});
+
+/** Python → Cambridge → parse → check → run (reverse translation e2e). */
+async function expectPythonReverseRuns(
+  source: string,
+  expectedOutputContains: string,
+): Promise<string> {
+  const translated = translatePythonToPseudocode(source);
+  expect(translated.ok, JSON.stringify(translated.diagnostics)).toBe(true);
+  const parsed = parse(translated.code);
+  expect(parsed.ok, JSON.stringify(parsed.diagnostics)).toBe(true);
+  const checked = check(parsed.ast);
+  expect(checked.ok, JSON.stringify(checked.diagnostics)).toBe(true);
+  const host = new MemoryHost();
+  const run = await runPseudocode(translated.code, { host, semanticCheck: false });
+  expect(run.ok, JSON.stringify(run.diagnostics)).toBe(true);
+  expect(host.outputs.join('\n')).toContain(expectedOutputContains);
+  return translated.code;
+}
+
+describe('translatePythonToPseudocode reverse e2e', () => {
+  it('infers FUNCTION return type from return statements', () => {
+    expect(translatePythonToPseudocode('def f():\n    return 1\n').ok).toBe(true);
+    expect(translatePythonToPseudocode('def f(x):\n    return x\n').ok).toBe(true);
+    expect(
+      translatePythonToPseudocode(`
+def f(x):
+    if x > 0:
+        return x
+    return -1
+`).ok,
+    ).toBe(true);
+    expect(translatePythonToPseudocode('def p(x):\n    print(x)\n').ok).toBe(true);
+    expect(translatePythonToPseudocode('def f(x: int) -> int:\n    return x\n').ok).toBe(
+      true,
+    );
+  });
+
+  it('translates list[int] parameters and list literals with DECLARE', async () => {
+    const code = await expectPythonReverseRuns(
+      `
+def f(values: list[int]) -> int:
+    return values[0]
+values = [1, 2, 3]
+print(f(values))
+`,
+      '1',
+    );
+    expect(code).toContain('DECLARE values : ARRAY[1:3] OF INTEGER');
+    expect(code).toContain('values : ARRAY[1:3] OF INTEGER');
+  });
+
+  it('translates range(len(arr)) and zero-based indexing', async () => {
+    await expectPythonReverseRuns(
+      `
+values = [1, 2, 3]
+for i in range(len(values)):
+    print(values[i])
+`,
+      '1',
+    );
+  });
+
+  it('translates f-strings in print to string concatenation OUTPUT', async () => {
+    const code = await expectPythonReverseRuns(
+      `
+x = 25
+print(f"Value is {x}.")
+`,
+      'Value is 25.',
+    );
+    expect(code).toContain('OUTPUT "Value is " & NUM_TO_STR(x) & "."');
+    expect(code).not.toMatch(/- 1 \+ 1 - 1/);
+  });
+
+  it('preserves f-string spacing without comma OUTPUT gaps', async () => {
+    await expectPythonReverseRuns('x = 25\nprint(f"Item {x}.")\n', 'Item 25.');
+    await expectPythonReverseRuns('name = "Ada"\nprint(f"Hello {name}!")\n', 'Hello Ada!');
+    await expectPythonReverseRuns('x = 3\nprint(f"Value: {x}")\n', 'Value: 3');
+    await expectPythonReverseRuns('x = 7\nprint(f"{x}")\n', '7');
+    await expectPythonReverseRuns('x = 9\nprint(f"{x}.")\n', '9.');
+  });
+
+  it('simplifies redundant FOR range end arithmetic', () => {
+    const result = translatePythonToPseudocode(`
+values = [1, 2, 3, 4, 5]
+for i in range(len(values)):
+    print(values[i])
+`);
+    expect(result.ok).toBe(true);
+    expect(result.code).toMatch(/FOR i ← 0 TO 4/);
+    expect(result.code).not.toMatch(/- 1 \+ 1 - 1/);
+    expect(result.code).not.toMatch(/\+ 1 - 1/);
+  });
+
+  it('runs the LinearSearch regression program end-to-end', async () => {
+    const linearSearchSource = `
+def LinearSearch(NumberList, TargetValue):
+    for index in range(len(NumberList)):
+        if NumberList[index] == TargetValue:
+            return index
+        elif index == len(NumberList) - 1:
+            return -1
+
+NumberList = [12, 7, 25, 4, 19]
+
+search_item = 25
+
+result = LinearSearch(NumberList, search_item)
+
+if result != -1:
+    print(f"Item {search_item} found at position {result}.")
+else:
+    print(f"Item {search_item} not found in the list.")
+`;
+    const translated = translatePythonToPseudocode(linearSearchSource);
+    expect(translated.ok, JSON.stringify(translated.diagnostics)).toBe(true);
+    expect(translated.diagnostics).toEqual([]);
+
+    const code = await expectPythonReverseRuns(
+      linearSearchSource,
+      'found at position 2.',
+    );
+    expect(code).toContain('FUNCTION LinearSearch');
+    expect(code).toContain('DECLARE NumberList : ARRAY[1:5] OF INTEGER');
+    expect(code).toContain('NumberList : ARRAY[1:5] OF INTEGER');
+    expect(code).toMatch(/FOR index ← 0 TO 4/);
+    expect(code).not.toMatch(/- 1 \+ 1 - 1/);
+    expect(code).toContain(
+      'OUTPUT "Item " & NUM_TO_STR(search_item) & " found at position " & NUM_TO_STR(result) & "."',
+    );
+  });
+
+  it('acceptance case A: list index print', async () => {
+    await expectPythonReverseRuns('values = [1,2,3,4,5]\nprint(values[2])\n', '3');
+  });
+
+  it('acceptance case B: annotated find function', async () => {
+    await expectPythonReverseRuns(
+      `
+def find(values: list[int], target: int) -> int:
+    for i in range(len(values)):
+        if values[i] == target:
+            return i
+    return -1
+values = [1,2,3,4,5]
+print(find(values, 3))
+`,
+      '2',
+    );
+  });
+
+  it('acceptance case C: integer variable', async () => {
+    await expectPythonReverseRuns('x = 25\nprint(x)\n', '25');
+  });
+
+  it('acceptance case E: typed add function', async () => {
+    await expectPythonReverseRuns(
+      `
+def add(a: int, b: int) -> int:
+    return a + b
+result = add(2, 3)
+print(result)
+`,
+      '5',
+    );
+  });
+
+  const LINEAR_SEARCH_PARTIAL_ANNOTATIONS = `
+def LinearSearch(NumberList, TargetValue: int) -> int:
+    for index in range(0, len(NumberList) + 1):
+        if NumberList[index] == TargetValue:
+            return index
+        elif index == len(NumberList) - 1:
+            return -1
+    return -1
+
+NumberList = [12, 7, 25, 4, 19]
+search_item = 25
+result = LinearSearch(NumberList, search_item)
+
+if result != -1:
+    print("Item", search_item, "found at position", result, ".")
+else:
+    print("Item", search_item, "not found in the list.")
+`;
+
+  it('infers unannotated array param alongside explicit scalar annotations (LinearSearch)', async () => {
+    const result = translatePythonToPseudocode(LINEAR_SEARCH_PARTIAL_ANNOTATIONS);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('NumberList : ARRAY[1:5] OF INTEGER');
+    expect(result.code).toContain('TargetValue : INTEGER');
+    expect(result.code).toContain('RETURNS INTEGER');
+    expect(result.code).toContain('DECLARE NumberList : ARRAY[1:5] OF INTEGER');
+
+    const parsed = parse(result.code);
+    expect(parsed.ok, JSON.stringify(parsed.diagnostics)).toBe(true);
+    const checked = check(parsed.ast);
+    expect(checked.ok, JSON.stringify(checked.diagnostics)).toBe(true);
+
+    const host = new MemoryHost();
+    const run = await runPseudocode(result.code, { host, semanticCheck: false });
+    expect(run.ok, JSON.stringify(run.diagnostics)).toBe(true);
+    expect(host.outputs.join('')).toContain('found at position 2');
+  });
+
+  it('infers array parameters without T_PROC_DEFAULT_TYPE warnings', () => {
+    const result = translatePythonToPseudocode(`
+def search(items, target):
+    for i in range(len(items)):
+        if items[i] == target:
+            return i
+    return -1
+
+items = [4, 8, 2]
+target = 8
+print(search(items, target))
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('items : ARRAY[1:3] OF INTEGER');
+  });
+
+  it('keeps scalar unannotated parameters as INTEGER without spurious array inference', () => {
+    const result = translatePythonToPseudocode(`
+def pick_larger(a, b):
+    if a > b:
+        return a
+    return b
+print(pick_larger(2, 3))
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('a : INTEGER');
+    expect(result.code).toContain('b : INTEGER');
+    expect(result.code).not.toContain('ARRAY');
+  });
+
+  it('preserves explicit list[int] parameter annotations', () => {
+    const result = translatePythonToPseudocode(`
+def search(items: list[int], target: int) -> int:
+    for i in range(len(items)):
+        if items[i] == target:
+            return i
+    return -1
+values = [1, 2, 3]
+print(search(values, 2))
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('items : ARRAY[1:3] OF INTEGER');
+    expect(result.code).toContain('target : INTEGER');
+  });
+
+  it('infers unannotated parameter types from call-site literals without warnings', () => {
+    const result = translatePythonToPseudocode(`
+def print_value(x):
+    print(x)
+print_value(1)
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('x : INTEGER');
+  });
+
+  it('infers array parameters from call-site arguments without body array usage', () => {
+    const result = translatePythonToPseudocode(`
+def pass_through(items):
+    return 0
+data = [1, 2, 3]
+print(pass_through(data))
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('items : ARRAY[1:3] OF INTEGER');
+  });
+
+  it('infers return type from binary expressions after parameter refinement', () => {
+    const result = translatePythonToPseudocode(`
+def f(x):
+    return x + 1
+print(f(5))
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('FUNCTION f(x : INTEGER) RETURNS INTEGER');
+  });
+
+  it('infers return type from array indexing after array parameter refinement', async () => {
+    const result = translatePythonToPseudocode(`
+def first(values):
+    return values[0]
+values = [1, 2, 3]
+print(first(values))
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('values : ARRAY[1:3] OF INTEGER');
+    expect(result.code).toContain('RETURNS INTEGER');
+  });
+
+  it('infers return type from multi-parameter arithmetic', async () => {
+    await expectPythonReverseRuns(
+      `
+def add(a, b):
+    return a + b
+print(add(2, 3))
+`,
+      '5',
+    );
+  });
+
+  it('errors when return type remains uninferrable after refinement', () => {
+    const result = translatePythonToPseudocode(`
+def f(x):
+    return helper(x)
+print(f(1))
+`);
+    expect(result.ok).toBe(false);
+    expect(
+      result.diagnostics.some(
+        (d) =>
+          d.code === 'T_PY_PARSE' &&
+          d.message.includes('return type could not be inferred'),
+      ),
+    ).toBe(true);
+  });
+
+  it('refines array parameter bounds from call-site identifier arguments', () => {
+    const result = translatePythonToPseudocode(`
+def search(items, target):
+    for i in range(len(items)):
+        if items[i] == target:
+            return i
+    return -1
+
+values = [1, 2, 3]
+print(search(values, 2))
+`);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('items : ARRAY[1:3] OF INTEGER');
+  });
+
+  it('translates f-string expressions beyond simple identifiers', async () => {
+    const code = await expectPythonReverseRuns(
+      `
+x = 4
+print(f"Value: {x + 1}")
+`,
+      'Value: 5',
+    );
+    expect(code).toContain('NUM_TO_STR');
+    expect(code).toContain('x + 1');
+  });
+
+  it('covers Python reverse regression matrix (A–H)', async () => {
+    expect(translatePythonToPseudocode('def f(x):\n    return x\n').ok).toBe(true);
+
+    expect(
+      translatePythonToPseudocode(`
+def f(x):
+    for i in range(len(x)):
+        pass
+`).ok,
+    ).toBe(true);
+
+    const listAssign = translatePythonToPseudocode('numbers = [1, 2, 3, 4, 5]\n');
+    expect(listAssign.ok).toBe(true);
+    expect(listAssign.code).toContain('ARRAY[1:5] OF INTEGER');
+
+    const scalar = translatePythonToPseudocode('x = 10\n');
+    expect(scalar.ok).toBe(true);
+    expect(scalar.code).toContain('DECLARE x : INTEGER');
+
+    const lenUse = translatePythonToPseudocode(`
+numbers = [1, 2, 3]
+for i in range(len(numbers)):
+    print(numbers[i])
+`);
+    expect(lenUse.ok).toBe(true);
+    expect(lenUse.code).toMatch(/FOR i ← 0 TO 2/);
+
+    const indexUse = translatePythonToPseudocode(`
+numbers = [1, 2, 3]
+print(numbers[0])
+`);
+    expect(indexUse.ok).toBe(true);
+
+    await expectPythonReverseRuns('x = 3\nprint(f"Value: {x}")\n', 'Value: 3');
+
+    await expectPythonReverseRuns(
+      `
+x = 7
+if x != -1:
+    print(f"Found {x}")
+`,
+      'Found 7',
+    );
   });
 });

@@ -664,7 +664,7 @@ export class Parser {
       return null;
     }
 
-    const typeName = this.parseTypeName();
+    const typeName = this.parseTypeReference();
     if (!typeName) return null;
 
     return {

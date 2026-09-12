@@ -1753,9 +1753,7 @@ export class Interpreter {
           );
         }
         const place = await this.resolvePlace(arg, span);
-        const typeName =
-          p.typeName.kind === 'NamedType' ? p.typeName.name : p.typeName.name;
-        env.defineByRef(p.name.name, typeName, place);
+        env.defineByRef(p.name.name, typeDisplayName(p.typeName), place);
         continue;
       }
       const value = await this.evalExpr(arg);
@@ -1847,11 +1845,25 @@ function bindParameterByVal(
     env.define(p.name.name, 'parameter', p.typeName.name, cloneValue(value));
     return;
   }
-  // Arrays: BYVAL deep-clones (Cambridge default).
-  if (value.kind === 'ARRAY') {
+  if (p.typeName.kind === 'ArrayType') {
+    if (value.kind !== 'ARRAY') {
+      throw runtimeFail(
+        'R_TYPE',
+        `Parameter '${p.name.name}' expects an ARRAY (got ${value.kind}).`,
+        span,
+      );
+    }
     env.define(p.name.name, 'parameter', 'ARRAY', cloneValue(value));
     return;
   }
+  if (p.typeName.kind !== 'TypeName') {
+    throw runtimeFail(
+      'R_TYPE',
+      `Unsupported parameter type for '${p.name.name}'.`,
+      span,
+    );
+  }
+  // Arrays passed where scalar expected — already ruled out above.
   env.define(
     p.name.name,
     'parameter',

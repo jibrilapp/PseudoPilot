@@ -504,6 +504,14 @@ function irSimpleTypeToPython(typeRef: IrSimpleType): string {
   return pyId(typeRef.name);
 }
 
+/** Parameter / declare annotation for scalar, named TYPE, or ARRAY. */
+function irTypeRefToPython(typeRef: IrTypeReference): string {
+  if (typeRef.kind === 'IrScalarType') return irTypeToPython(typeRef.name);
+  if (typeRef.kind === 'IrNamedType') return pyId(typeRef.name);
+  const elem = irSimpleTypeToPython(typeRef.elementType);
+  return `list[${elem}]`;
+}
+
 /** Cambridge default value for a scalar type, matching TYPE dataclass field defaults. */
 function scalarDefaultLiteral(typeName: string): string {
   switch (typeName) {
@@ -899,7 +907,7 @@ function printClassMember(member: IrClassMember, level: number): string[] {
   const params = [
     'self',
     ...member.parameters.map(
-      (param) => `${pyId(param.name)}: ${irSimpleTypeToPython(param.typeName)}`,
+      (param) => `${pyId(param.name)}: ${irTypeRefToPython(param.typeName)}`,
     ),
   ].join(', ');
 
@@ -1066,7 +1074,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
       break;
     case 'IrProcedureDeclaration': {
       const params = stmt.parameters
-        .map((param) => `${pyId(param.name)}: ${irSimpleTypeToPython(param.typeName)}`)
+        .map((param) => `${pyId(param.name)}: ${irTypeRefToPython(param.typeName)}`)
         .join(', ');
       const byRefNames = stmt.parameters
         .filter((p) => p.mode === 'BYREF')
@@ -1079,7 +1087,7 @@ function printStatement(stmt: IrStatement, level: number): string[] {
     }
     case 'IrFunctionDeclaration': {
       const params = stmt.parameters
-        .map((param) => `${pyId(param.name)}: ${irSimpleTypeToPython(param.typeName)}`)
+        .map((param) => `${pyId(param.name)}: ${irTypeRefToPython(param.typeName)}`)
         .join(', ');
       lines.push(
         `${p}def ${pyId(stmt.name)}(${params}) -> ${irSimpleTypeToPython(stmt.returnType)}:`,

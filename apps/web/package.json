@@ -5,7 +5,7 @@
   "description": "PseudoPilot student IDE — Monaco, live sync, interpreter, debugger (1.0.0-beta).",
   "scripts": {
     "docs:corpus": "node scripts/generate-docs-corpus.mjs",
-    "predev": "node scripts/generate-docs-corpus.mjs",
+    "predev": "node scripts/generate-docs-corpus.mjs && node scripts/ensure-dev-next.mjs",
     "prebuild": "node scripts/generate-docs-corpus.mjs",
     "pretest": "node scripts/generate-docs-corpus.mjs",
     "dev": "next dev --port 3000 --hostname 127.0.0.1",

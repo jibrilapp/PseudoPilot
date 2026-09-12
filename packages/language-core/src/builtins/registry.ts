@@ -94,6 +94,12 @@ export const CORE_BUILTINS: readonly BuiltinSpec[] = [
     summary: 'Truncate toward zero (integer part).',
   },
   {
+    name: 'NUM_TO_STR',
+    params: [{ name: 'x', accept: ['REAL', 'INTEGER'] }],
+    returns: 'STRING',
+    summary: 'Convert a number to STRING (Paper 2 exam insert).',
+  },
+  {
     name: 'RAND',
     params: [{ name: 'x', accept: ['INTEGER'] }],
     returns: 'REAL',

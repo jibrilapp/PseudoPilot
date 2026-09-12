@@ -121,8 +121,8 @@ export type ParameterMode = 'BYVAL' | 'BYREF';
 export type Parameter = {
   readonly kind: 'Parameter';
   readonly name: Identifier;
-  /** Builtin scalar or user record type (not ARRAY in Core params). */
-  readonly typeName: SimpleType;
+  /** Scalar, user TYPE, or ARRAY bounds (Cambridge §8.3). */
+  readonly typeName: TypeReference;
   /** Pass-by-value (default) or pass-by-reference. */
   readonly mode: ParameterMode;
   readonly span: SourceSpan;
