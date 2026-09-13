@@ -111,4 +111,20 @@ describe('runPythonToPseudocode (web adapter)', () => {
     expect(translated.code).toMatch(/FOR index ← 0 TO 4/);
     expect(translated.code).not.toMatch(/- 1 \+ 1 - 1/);
   });
+
+  it('infers STRING parameter from body assignment (myfunc/hello)', () => {
+    const source = `
+def myfunc(hello):
+    hello = "hi"
+    return hello
+`;
+    const translated = runPythonToPseudocode(source);
+    expect(translated.ok, translated.diagnostics.map((d) => d.message).join('; ')).toBe(
+      true,
+    );
+    expect(translated.diagnostics).toEqual([]);
+    expect(translated.code).toContain('myfunc(hello : STRING)');
+    expect(translated.code).toContain('RETURNS STRING');
+    expect(translated.code).not.toContain('hello : INTEGER');
+  });
 });

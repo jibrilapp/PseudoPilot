@@ -74,13 +74,42 @@ export function stripPythonIndexOffset(
  * Round-trip indices `expr - lower` (from forward translation) collapse to
  * `expr`; native 0-based Python indices become `expr + lower`.
  */
+function negativeIntegerLiteralValue(expr: IrExpression): number | null {
+  if (
+    expr.kind === 'IrUnaryExpression' &&
+    expr.operator === '-' &&
+    expr.argument.kind === 'IrIntegerLiteral'
+  ) {
+    return -expr.argument.value;
+  }
+  if (expr.kind === 'IrIntegerLiteral' && expr.value < 0) {
+    return expr.value;
+  }
+  return null;
+}
+
 export function pythonIndexToCambridge(
   idx: IrExpression,
   lower: IrExpression | undefined,
+  upper?: IrExpression,
 ): IrExpression {
   if (!lower) return idx;
   const stripped = stripPythonIndexOffset(idx, lower);
   if (stripped !== idx) return stripped;
+  const negative = negativeIntegerLiteralValue(idx);
+  if (negative !== null && upper) {
+    return {
+      kind: 'IrBinaryExpression',
+      operator: '+',
+      left: {
+        kind: 'IrBinaryExpression',
+        operator: '+',
+        left: upper,
+        right: { kind: 'IrIntegerLiteral', value: 1 },
+      },
+      right: { kind: 'IrIntegerLiteral', value: negative },
+    };
+  }
   return {
     kind: 'IrBinaryExpression',
     operator: '+',

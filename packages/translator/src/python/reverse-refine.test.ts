@@ -3,6 +3,8 @@ import type { IrExpression } from '../ir/nodes.js';
 import {
   inferReturnTypeFromBody,
   inferSimpleTypeFromExpr,
+  insertTopLevelDeclarations,
+  insertRoutineLocalDeclarations,
   simplifyIrExpression,
 } from './reverse-refine.js';
 import type { IrParameter, IrStatement } from '../ir/nodes.js';
@@ -80,6 +82,81 @@ describe('inferReturnTypeFromBody', () => {
       kind: 'IrScalarType',
       name: 'INTEGER',
     });
+  });
+});
+
+describe('insertTopLevelDeclarations', () => {
+  it('hoists DECLARE for assignments inside nested top-level blocks', () => {
+    const body: IrStatement[] = [
+      {
+        kind: 'IrWhileStatement',
+        condition: { kind: 'IrBooleanLiteral', value: true },
+        body: [
+          {
+            kind: 'IrIfStatement',
+            condition: { kind: 'IrBooleanLiteral', value: true },
+            consequent: [
+              {
+                kind: 'IrAssignment',
+                target: { kind: 'IrIdentifier', name: 'temp' },
+                value: int(1),
+              },
+            ],
+            elseIfClauses: [],
+            alternate: null,
+          },
+        ],
+      },
+    ];
+    const out = insertTopLevelDeclarations(body);
+    expect(out[0]?.kind).toBe('IrDeclareStatement');
+    if (out[0]?.kind === 'IrDeclareStatement') {
+      expect(out[0].names).toEqual(['temp']);
+      expect(out[0].typeRef).toEqual({ kind: 'IrScalarType', name: 'INTEGER' });
+    }
+    expect(out[1]?.kind).toBe('IrWhileStatement');
+  });
+});
+
+describe('insertRoutineLocalDeclarations', () => {
+  it('hoists DECLARE for assignments inside nested routine blocks', () => {
+    const body: IrStatement[] = [
+      {
+        kind: 'IrProcedureDeclaration',
+        name: 'test',
+        parameters: [],
+        body: [
+          {
+            kind: 'IrIfStatement',
+            condition: { kind: 'IrBooleanLiteral', value: true },
+            consequent: [
+              {
+                kind: 'IrAssignment',
+                target: { kind: 'IrIdentifier', name: 'temp' },
+                value: int(5),
+              },
+            ],
+            elseIfClauses: [],
+            alternate: [
+              {
+                kind: 'IrAssignment',
+                target: { kind: 'IrIdentifier', name: 'other' },
+                value: { kind: 'IrStringLiteral', value: 'hello' },
+              },
+            ],
+          },
+        ],
+        leadingTrivia: [],
+        trailingTrivia: [],
+      },
+    ];
+    const out = insertRoutineLocalDeclarations(body);
+    const proc = out[0];
+    expect(proc?.kind).toBe('IrProcedureDeclaration');
+    if (proc?.kind === 'IrProcedureDeclaration') {
+      expect(proc.body[0]?.kind).toBe('IrDeclareStatement');
+      expect(proc.body[1]?.kind).toBe('IrDeclareStatement');
+    }
   });
 });
 

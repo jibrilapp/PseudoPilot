@@ -5,10 +5,13 @@
 
 import type {
   IrAssignTarget,
+  IrBinaryOp,
   IrExpression,
   IrParameter,
+  IrScalarType,
   IrSimpleType,
   IrStatement,
+  IrTypeName,
   IrTypeReference,
 } from '../ir/nodes.js';
 import type { TranslateDiagnostic } from '../types.js';
@@ -68,6 +71,25 @@ function isPlaceholderParam(param: IrParameter): boolean {
   return param.unannotated === true && isUnknownType(param.typeName);
 }
 
+function isDefaultPlaceholderArrayType(typeRef: IrTypeReference): boolean {
+  if (typeRef.kind !== 'IrArrayType') return false;
+  const dim = typeRef.dimensions[0];
+  if (!dim) return false;
+  return (
+    dim.lower.kind === 'IrIntegerLiteral' &&
+    dim.lower.value === 1 &&
+    dim.upper.kind === 'IrIntegerLiteral' &&
+    dim.upper.value === 1
+  );
+}
+
+/** Unannotated parameters still eligible for body/call-site refinement. */
+function needsBodyParameterInference(param: IrParameter): boolean {
+  if (param.unannotated !== true) return false;
+  if (isUnknownType(param.typeName)) return true;
+  return isDefaultPlaceholderArrayType(param.typeName);
+}
+
 function isUnknownSimpleType(typeRef: IrSimpleType): boolean {
   return typeRef.kind === 'IrNamedType' && typeRef.name === 'UNKNOWN';
 }
@@ -105,13 +127,39 @@ type TypeInferContext = {
   readonly forLoopVars?: ReadonlySet<string>;
   readonly paramTypes?: ReadonlyMap<string, IrSimpleType>;
   readonly paramArrayElements?: ReadonlyMap<string, IrSimpleType>;
+  readonly localArrayElements?: ReadonlyMap<string, IrSimpleType>;
   readonly localTypes?: ReadonlyMap<string, IrSimpleType>;
 };
+
+function collectLocalArrayElementTypes(
+  body: readonly IrStatement[],
+  parameters: readonly IrParameter[],
+): Map<string, IrSimpleType> {
+  const map = new Map<string, IrSimpleType>();
+  const baseContext = (): TypeInferContext =>
+    buildTypeInferContext(parameters, body, undefined, map);
+  walkStatementTree(body, (stmt) => {
+    if (stmt.kind === 'IrDeclareStatement' && stmt.typeRef.kind === 'IrArrayType') {
+      for (const n of stmt.names) {
+        map.set(n.toLowerCase(), stmt.typeRef.elementType);
+      }
+    }
+    if (stmt.kind === 'IrAssignment' && stmt.target.kind === 'IrIdentifier') {
+      const key = stmt.target.name.toLowerCase();
+      if (stmt.value.kind === 'IrArrayLiteralExpression' && stmt.value.elements.length > 0) {
+        const elem = inferSimpleTypeFromExpr(stmt.value.elements[0]!, baseContext());
+        if (elem && !isUnknownSimpleType(elem)) map.set(key, elem);
+      }
+    }
+  });
+  return map;
+}
 
 function buildTypeInferContext(
   parameters: readonly IrParameter[],
   body: readonly IrStatement[],
   localTypes?: ReadonlyMap<string, IrSimpleType>,
+  localArrayElements?: ReadonlyMap<string, IrSimpleType>,
 ): TypeInferContext {
   const paramTypes = new Map<string, IrSimpleType>();
   const paramArrayElements = new Map<string, IrSimpleType>();
@@ -124,10 +172,13 @@ function buildTypeInferContext(
       paramArrayElements.set(p.name.toLowerCase(), p.typeName.elementType);
     }
   }
+  const arrayElems =
+    localArrayElements ?? collectLocalArrayElementTypes(body, parameters);
   return {
     forLoopVars: collectForLoopVariables(body),
     paramTypes,
     paramArrayElements,
+    localArrayElements: arrayElems,
     ...(localTypes ? { localTypes } : {}),
   };
 }
@@ -216,12 +267,29 @@ export function inferSimpleTypeFromExpr(
       if (expr.operator === '&') {
         return { kind: 'IrScalarType', name: 'STRING' };
       }
+      if (COMPARISON_OPS.has(expr.operator)) {
+        return { kind: 'IrScalarType', name: 'BOOLEAN' };
+      }
+      if (expr.operator === '+') {
+        const leftStr = isStringLikeType(left);
+        const rightStr = isStringLikeType(right);
+        if (leftStr || rightStr) {
+          const otherIsNumeric = (t: IrSimpleType | null) =>
+            t?.kind === 'IrScalarType' &&
+            (t.name === 'INTEGER' || t.name === 'REAL');
+          if ((leftStr && otherIsNumeric(right)) || (rightStr && otherIsNumeric(left))) {
+            return null;
+          }
+          return { kind: 'IrScalarType', name: 'STRING' };
+        }
+        if (!left || !right) return null;
+        return unifyReturnTypes([left, right]);
+      }
       if (expr.operator === '//' || expr.operator === '%') {
         if (left && right) return unifyReturnTypes([left, right]);
         return { kind: 'IrScalarType', name: 'INTEGER' };
       }
       if (
-        expr.operator === '+' ||
         expr.operator === '-' ||
         expr.operator === '*' ||
         expr.operator === '/'
@@ -233,7 +301,10 @@ export function inferSimpleTypeFromExpr(
     }
     case 'IrIndexExpression': {
       if (expr.array.kind === 'IrIdentifier') {
-        const elem = context?.paramArrayElements?.get(expr.array.name.toLowerCase());
+        const key = expr.array.name.toLowerCase();
+        const elem =
+          context?.paramArrayElements?.get(key) ??
+          context?.localArrayElements?.get(key);
         if (elem) return elem;
       }
       return null;
@@ -266,25 +337,51 @@ export function inferTypeRefFromExpr(expr: IrExpression): IrTypeReference | null
   return scalar;
 }
 
+function unifyScalarNames(a: IrTypeName, b: IrTypeName): IrScalarType | null {
+  if (a === b) return { kind: 'IrScalarType', name: a };
+  if (
+    (a === 'INTEGER' && b === 'REAL') ||
+    (a === 'REAL' && b === 'INTEGER')
+  ) {
+    return { kind: 'IrScalarType', name: 'REAL' };
+  }
+  if (
+    (a === 'STRING' && b === 'CHAR') ||
+    (a === 'CHAR' && b === 'STRING')
+  ) {
+    return { kind: 'IrScalarType', name: 'STRING' };
+  }
+  return null;
+}
+
 export function unifyReturnTypes(types: readonly IrSimpleType[]): IrSimpleType | null {
   if (types.length === 0) return null;
   let acc = types[0]!;
   for (let i = 1; i < types.length; i++) {
     const next = types[i]!;
     if (acc.kind === 'IrNamedType' || next.kind === 'IrNamedType') return null;
-    const a = acc.name;
-    const b = next.name;
-    if (a === b) continue;
-    if (
-      (a === 'INTEGER' && b === 'REAL') ||
-      (a === 'REAL' && b === 'INTEGER')
-    ) {
-      acc = { kind: 'IrScalarType', name: 'REAL' };
-      continue;
-    }
-    return null;
+    if (acc.kind !== 'IrScalarType' || next.kind !== 'IrScalarType') return null;
+    const merged = unifyScalarNames(acc.name, next.name);
+    if (!merged) return null;
+    acc = merged;
   }
   return acc;
+}
+
+const COMPARISON_OPS = new Set<IrBinaryOp>(['==', '!=', '<', '<=', '>', '>=']);
+
+function isStringLikeType(type: IrSimpleType | null | undefined): boolean {
+  return (
+    type?.kind === 'IrScalarType' &&
+    (type.name === 'STRING' || type.name === 'CHAR')
+  );
+}
+
+function typeFromCallSiteArgument(arg: IrExpression): IrSimpleType | null {
+  if (arg.kind === 'IrCharLiteral') {
+    return { kind: 'IrScalarType', name: 'STRING' };
+  }
+  return inferSimpleTypeFromExpr(arg);
 }
 
 function collectReturns(body: readonly IrStatement[]): IrExpression[] {
@@ -440,6 +537,127 @@ export function collectUninferredReturnTypeErrors(
     }
   };
   walk(statements);
+  return errors;
+}
+
+function localAssignmentTypeConflicts(
+  assignmentMap: ReadonlyMap<string, { name: string; values: readonly IrExpression[] }>,
+  parameters: readonly IrParameter[],
+  body: readonly IrStatement[],
+): TranslateDiagnostic[] {
+  const forLoopVars = collectForLoopVariables(body);
+  const paramNames = new Set(parameters.map((p) => p.name.toLowerCase()));
+  const localTypes = collectLocalVariableTypes(body, parameters);
+  const errors: TranslateDiagnostic[] = [];
+
+  for (const [key, { name, values }] of assignmentMap) {
+    if (forLoopVars.has(key) || paramNames.has(key)) continue;
+    const routines = new Map<string, { returnType?: IrSimpleType | null }>();
+    const refs = values
+      .map((v) =>
+        inferTypeRefForLocalAssignments([v], localTypes, parameters, body, routines),
+      )
+      .filter((t): t is IrTypeReference => t !== null);
+    if (refs.length >= 2 && unifyAssignmentTypeRefs(refs) === null) {
+      errors.push({
+        severity: 'error',
+        code: 'T_LOCAL_TYPE_CONFLICT',
+        message: `Incompatible types assigned to '${name}' in the same scope; add explicit Python type annotations.`,
+      });
+    }
+  }
+  return errors;
+}
+
+function collectParamDirectAssignmentTypeConflicts(
+  parameters: readonly IrParameter[],
+  body: readonly IrStatement[],
+): TranslateDiagnostic[] {
+  const paramNames = new Set(parameters.map((p) => p.name.toLowerCase()));
+  const valuesByParam = new Map<string, IrExpression[]>();
+
+  walkStatementTree(body, (stmt) => {
+    if (stmt.kind !== 'IrAssignment' || stmt.target.kind !== 'IrIdentifier') return;
+    const key = stmt.target.name.toLowerCase();
+    if (!paramNames.has(key)) return;
+    const list = valuesByParam.get(key) ?? [];
+    list.push(stmt.value);
+    valuesByParam.set(key, list);
+  });
+
+  const localTypes = collectLocalVariableTypes(body, parameters);
+  const routines = new Map<string, { returnType?: IrSimpleType | null }>();
+  const errors: TranslateDiagnostic[] = [];
+
+  for (const [key, values] of valuesByParam) {
+    const param = parameters.find((p) => p.name.toLowerCase() === key);
+    const displayName = param?.name ?? key;
+    const refs = values
+      .map((v) =>
+        inferTypeRefForLocalAssignments([v], localTypes, parameters, body, routines),
+      )
+      .filter((t): t is IrTypeReference => t !== null);
+    if (refs.length >= 2 && unifyAssignmentTypeRefs(refs) === null) {
+      errors.push({
+        severity: 'error',
+        code: 'T_LOCAL_TYPE_CONFLICT',
+        message: `Incompatible types assigned to parameter '${displayName}' in the same routine; add explicit Python type annotations.`,
+      });
+    }
+  }
+  return errors;
+}
+
+function collectParamAnnotationAssignmentConflicts(
+  parameters: readonly IrParameter[],
+  body: readonly IrStatement[],
+): TranslateDiagnostic[] {
+  const errors: TranslateDiagnostic[] = [];
+  for (const p of parameters) {
+    if (isPlaceholderParam(p)) continue;
+    const direct = collectParamTypesFromDirectAssignments(p.name, parameters, body);
+    if (direct.arrayTypes.length > 0 && p.typeName.kind === 'IrScalarType') {
+      errors.push({
+        severity: 'error',
+        code: 'T_LOCAL_TYPE_CONFLICT',
+        message: `Assignment to parameter '${p.name}' is incompatible with its explicit type annotation.`,
+      });
+      continue;
+    }
+    if (p.typeName.kind !== 'IrScalarType') continue;
+    for (const scalar of direct.scalars) {
+      if (scalar.kind !== 'IrScalarType') continue;
+      if (unifyReturnTypes([p.typeName, scalar]) === null) {
+        errors.push({
+          severity: 'error',
+          code: 'T_LOCAL_TYPE_CONFLICT',
+          message: `Assignment to parameter '${p.name}' is incompatible with its explicit type annotation.`,
+        });
+        break;
+      }
+    }
+  }
+  return errors;
+}
+
+/** Report locals assigned incompatible types within the same scope. */
+export function collectIncompatibleLocalAssignmentTypeErrors(
+  statements: readonly IrStatement[],
+): TranslateDiagnostic[] {
+  const moduleMap = collectModuleScopeLocalAssignments(statements);
+  const errors = localAssignmentTypeConflicts(moduleMap, [], statements);
+  for (const stmt of statements) {
+    if (stmt.kind === 'IrFunctionDeclaration' || stmt.kind === 'IrProcedureDeclaration') {
+      const routineMap = collectRoutineLocalAssignments(stmt.body);
+      errors.push(...localAssignmentTypeConflicts(routineMap, stmt.parameters, stmt.body));
+      errors.push(
+        ...collectParamDirectAssignmentTypeConflicts(stmt.parameters, stmt.body),
+      );
+      errors.push(
+        ...collectParamAnnotationAssignmentConflicts(stmt.parameters, stmt.body),
+      );
+    }
+  }
   return errors;
 }
 
@@ -658,10 +876,19 @@ export function propagateParameterBoundsFromCalls(
     for (let i = 0; i < sig.params.length && i < args.length; i++) {
       const arg = args[i]!;
       const param = sig.params[i]!;
+      const key = `${callee.toLowerCase()}:${param.name.toLowerCase()}`;
+      if (arg.kind === 'IrArrayLiteralExpression') {
+        const fromLiteral = inferTypeRefFromExpr(arg);
+        if (fromLiteral?.kind === 'IrArrayType') {
+          if (isPlaceholderParam(param) || param.typeName.kind === 'IrArrayType') {
+            paramArrayTypes.set(key, fromLiteral);
+          }
+        }
+        continue;
+      }
       if (arg.kind !== 'IrIdentifier') continue;
       const b = varBounds.get(arg.name.toLowerCase());
       if (!b) continue;
-      const key = `${callee.toLowerCase()}:${param.name.toLowerCase()}`;
       if (param.typeName.kind === 'IrArrayType') {
         paramBounds.set(key, b);
       } else if (isPlaceholderParam(param)) {
@@ -703,12 +930,127 @@ export function propagateParameterBoundsFromCalls(
   });
 }
 
-/** Insert DECLARE before first assignment of undeclared top-level names. */
+type LocalAssignmentInfo = {
+  name: string;
+  values: IrExpression[];
+  firstTopLevelIndex: number;
+};
+
+function typeRefKey(typeRef: IrTypeReference): string {
+  if (typeRef.kind === 'IrArrayType') {
+    const dim = typeRef.dimensions[0];
+    const elem =
+      typeRef.elementType.kind === 'IrScalarType'
+        ? typeRef.elementType.name
+        : typeRef.elementType.kind;
+    return `array:${elem}:${JSON.stringify(dim?.lower)}:${JSON.stringify(dim?.upper)}`;
+  }
+  if (typeRef.kind === 'IrScalarType') return `scalar:${typeRef.name}`;
+  return typeRef.kind;
+}
+
+function unifyAssignmentTypeRefs(
+  refs: readonly IrTypeReference[],
+): IrTypeReference | null {
+  if (refs.length === 0) return null;
+  const keys = refs.map(typeRefKey);
+  if (keys.every((k) => k === keys[0])) return refs[0]!;
+  const scalars = refs.filter((r): r is IrSimpleType => r.kind === 'IrScalarType');
+  if (scalars.length === refs.length) return unifyReturnTypes(scalars);
+  return null;
+}
+
+function inferTypeRefForLocalAssignments(
+  values: readonly IrExpression[],
+  localTypes: ReadonlyMap<string, IrSimpleType>,
+  parameters: readonly IrParameter[],
+  body: readonly IrStatement[],
+  routines: ReadonlyMap<string, { returnType?: IrTypeReference | null }>,
+): IrTypeReference | null {
+  const context = buildTypeInferContext(parameters, body, localTypes);
+  const refs: IrTypeReference[] = [];
+  for (const value of values) {
+    const fromRef = inferTypeRefFromExpr(value);
+    if (fromRef?.kind === 'IrArrayType') {
+      refs.push(fromRef);
+      continue;
+    }
+    const scalar = inferSimpleTypeFromExpr(value, context);
+    if (scalar && !isUnknownSimpleType(scalar)) {
+      refs.push(scalar);
+      continue;
+    }
+    if (fromRef) {
+      refs.push(fromRef);
+      continue;
+    }
+    if (value.kind === 'IrCallExpression') {
+      const sig = routines.get(value.callee.toLowerCase());
+      if (sig?.returnType) refs.push(sig.returnType);
+    }
+  }
+  return unifyAssignmentTypeRefs(refs);
+}
+
+/** Module-scope assignments, including inside nested blocks but not inside routines. */
+function collectModuleScopeLocalAssignments(
+  statements: readonly IrStatement[],
+): Map<string, LocalAssignmentInfo> {
+  const forLoopVars = collectForLoopVariables(statements);
+  const map = new Map<string, LocalAssignmentInfo>();
+
+  const walkStmt = (stmt: IrStatement, topIndex: number): void => {
+    if (stmt.kind === 'IrAssignment' && stmt.target.kind === 'IrIdentifier') {
+      const key = stmt.target.name.toLowerCase();
+      if (!forLoopVars.has(key)) {
+        let rec = map.get(key);
+        if (!rec) {
+          rec = { name: stmt.target.name, values: [], firstTopLevelIndex: topIndex };
+          map.set(key, rec);
+        }
+        rec.values.push(stmt.value);
+      }
+    }
+    if (stmt.kind === 'IrIfStatement') {
+      walkBlock(stmt.consequent, topIndex);
+      for (const c of stmt.elseIfClauses) walkBlock(c.consequent, topIndex);
+      if (stmt.alternate) walkBlock(stmt.alternate, topIndex);
+    } else if (
+      stmt.kind === 'IrWhileStatement' ||
+      stmt.kind === 'IrRepeatStatement' ||
+      stmt.kind === 'IrForStatement'
+    ) {
+      walkBlock(stmt.body, topIndex);
+    } else if (stmt.kind === 'IrCaseStatement') {
+      for (const a of stmt.arms) walkBlock(a.body, topIndex);
+      if (stmt.otherwise) walkBlock(stmt.otherwise, topIndex);
+    }
+  };
+
+  const walkBlock = (stmts: readonly IrStatement[], topIndex: number): void => {
+    for (const s of stmts) walkStmt(s, topIndex);
+  };
+
+  for (let i = 0; i < statements.length; i++) {
+    const stmt = statements[i]!;
+    if (
+      stmt.kind === 'IrFunctionDeclaration' ||
+      stmt.kind === 'IrProcedureDeclaration'
+    ) {
+      continue;
+    }
+    walkStmt(stmt, i);
+  }
+  return map;
+}
+
+/** Insert DECLARE before first use of undeclared names (including nested block assignments). */
 export function insertTopLevelDeclarations(
   statements: readonly IrStatement[],
 ): IrStatement[] {
   const routines = collectRoutineSignatures(statements);
-  const out: IrStatement[] = [];
+  const moduleAssignments = collectModuleScopeLocalAssignments(statements);
+  const moduleLocalTypes = collectLocalVariableTypes(statements, []);
   const declared = new Set<string>();
 
   for (const stmt of statements) {
@@ -717,82 +1059,91 @@ export function insertTopLevelDeclarations(
       stmt.kind === 'IrProcedureDeclaration'
     ) {
       declared.add(stmt.name.toLowerCase());
-      out.push(stmt);
-      continue;
-    }
-    if (stmt.kind === 'IrDeclareStatement') {
+    } else if (stmt.kind === 'IrDeclareStatement') {
       for (const n of stmt.names) declared.add(n.toLowerCase());
-      out.push(stmt);
-      continue;
-    }
-    if (stmt.kind === 'IrConstantStatement') {
+    } else if (stmt.kind === 'IrConstantStatement') {
       declared.add(stmt.name.toLowerCase());
+    }
+  }
+
+  const out: IrStatement[] = [];
+
+  for (let i = 0; i < statements.length; i++) {
+    const stmt = statements[i]!;
+
+    for (const [key, info] of moduleAssignments) {
+      if (info.firstTopLevelIndex !== i || declared.has(key)) continue;
+      const typeRef = inferTypeRefForLocalAssignments(
+        info.values,
+        moduleLocalTypes,
+        [],
+        statements,
+        routines,
+      );
+      if (!typeRef) continue;
+      out.push({
+        kind: 'IrDeclareStatement',
+        names: [info.name],
+        typeRef,
+        leadingTrivia: [],
+        trailingTrivia: [],
+      });
+      declared.add(key);
+    }
+
+    if (
+      stmt.kind === 'IrFunctionDeclaration' ||
+      stmt.kind === 'IrProcedureDeclaration' ||
+      stmt.kind === 'IrDeclareStatement' ||
+      stmt.kind === 'IrConstantStatement'
+    ) {
       out.push(stmt);
       continue;
     }
-    if (stmt.kind === 'IrAssignment' && stmt.target.kind === 'IrIdentifier') {
-      const name = stmt.target.name;
-      if (!declared.has(name.toLowerCase())) {
-        let typeRef: IrTypeReference | null = inferTypeRefFromExpr(stmt.value);
-        if (
-          !typeRef &&
-          stmt.value.kind === 'IrCallExpression'
-        ) {
-          const sig = routines.get(stmt.value.callee.toLowerCase());
-          if (sig?.returnType) {
-            typeRef = sig.returnType;
-          }
-        }
-        if (typeRef) {
-          out.push({
-            kind: 'IrDeclareStatement',
-            names: [name],
-            typeRef,
-            leadingTrivia: [],
-            trailingTrivia: [],
-          });
-          declared.add(name.toLowerCase());
-        }
-      }
-    }
+
     out.push(stmt);
   }
   return out;
 }
 
-function walkRoutineBody(
+function walkStatementTree(
   body: readonly IrStatement[],
   visit: (stmt: IrStatement) => void,
 ): void {
   for (const stmt of body) {
     visit(stmt);
     if (stmt.kind === 'IrIfStatement') {
-      walkRoutineBody(stmt.consequent, visit);
-      for (const c of stmt.elseIfClauses) walkRoutineBody(c.consequent, visit);
-      if (stmt.alternate) walkRoutineBody(stmt.alternate, visit);
+      walkStatementTree(stmt.consequent, visit);
+      for (const c of stmt.elseIfClauses) walkStatementTree(c.consequent, visit);
+      if (stmt.alternate) walkStatementTree(stmt.alternate, visit);
     } else if (
       stmt.kind === 'IrWhileStatement' ||
       stmt.kind === 'IrRepeatStatement' ||
       stmt.kind === 'IrForStatement'
     ) {
-      walkRoutineBody(stmt.body, visit);
+      walkStatementTree(stmt.body, visit);
     } else if (stmt.kind === 'IrCaseStatement') {
-      for (const a of stmt.arms) walkRoutineBody(a.body, visit);
-      if (stmt.otherwise) walkRoutineBody(stmt.otherwise, visit);
+      for (const a of stmt.arms) walkStatementTree(a.body, visit);
+      if (stmt.otherwise) walkStatementTree(stmt.otherwise, visit);
     }
   }
 }
 
 function collectRoutineLocalAssignments(
   body: readonly IrStatement[],
-): Map<string, { name: string; value: IrExpression }> {
-  const assigned = new Map<string, { name: string; value: IrExpression }>();
-  walkRoutineBody(body, (stmt) => {
+): Map<string, { name: string; values: IrExpression[] }> {
+  const forLoopVars = collectForLoopVariables(body);
+  const assigned = new Map<string, { name: string; values: IrExpression[] }>();
+  walkStatementTree(body, (stmt) => {
     if (stmt.kind === 'IrAssignment' && stmt.target.kind === 'IrIdentifier') {
       const key = stmt.target.name.toLowerCase();
-      if (!assigned.has(key)) {
-        assigned.set(key, { name: stmt.target.name, value: stmt.value });
+      if (forLoopVars.has(key)) return;
+      let rec = assigned.get(key);
+      if (!rec) {
+        rec = { name: stmt.target.name, values: [] };
+        assigned.set(key, rec);
       }
+      rec.values.push(stmt.value);
     }
   });
   return assigned;
@@ -800,7 +1151,7 @@ function collectRoutineLocalAssignments(
 
 function collectExistingRoutineDeclarations(body: readonly IrStatement[]): Set<string> {
   const declared = new Set<string>();
-  walkRoutineBody(body, (stmt) => {
+  walkStatementTree(body, (stmt) => {
     if (stmt.kind === 'IrDeclareStatement') {
       for (const n of stmt.names) declared.add(n.toLowerCase());
     }
@@ -820,13 +1171,20 @@ export function insertRoutineLocalDeclarations(
     const existing = collectExistingRoutineDeclarations(stmt.body);
     const assignments = collectRoutineLocalAssignments(stmt.body);
     const localTypes = collectLocalVariableTypes(stmt.body, stmt.parameters);
+    const routines = collectRoutineSignatures(statements);
     const decls: IrStatement[] = [];
-    for (const [key, { name, value }] of assignments) {
+    for (const [key, { name, values }] of assignments) {
       if (paramNames.has(key) || existing.has(key)) continue;
       const fromLocals = localTypes.get(key);
       const typeRef: IrTypeReference =
         fromLocals ??
-        inferTypeRefFromExpr(value) ??
+        inferTypeRefForLocalAssignments(
+          values,
+          localTypes,
+          stmt.parameters,
+          stmt.body,
+          routines,
+        ) ??
         ({ kind: 'IrScalarType', name: 'INTEGER' } as const);
       decls.push({
         kind: 'IrDeclareStatement',
@@ -1069,7 +1427,7 @@ export function inferArrayParametersFromUsage(
     const parameters = stmt.parameters.map((p) => {
       if (isPlaceholderParam(p) && paramUsedAsArray(p.name, stmt.body)) {
         return {
-          ...withoutParamInferenceMarker(p),
+          ...p,
           typeName: arrayTypeFromBounds(
             { kind: 'IrScalarType', name: 'INTEGER' },
             literalArrayBounds(1),
@@ -1104,7 +1462,7 @@ export function inferScalarParametersFromCallSites(
       if (arg.kind === 'IrIdentifier') {
         if (varBounds.has(arg.name.toLowerCase())) continue;
       }
-      const inferred = inferSimpleTypeFromExpr(arg);
+      const inferred = typeFromCallSiteArgument(arg);
       if (!inferred || isUnknownSimpleType(inferred)) continue;
       paramScalars.set(`${callee.toLowerCase()}:${param.name.toLowerCase()}`, inferred);
     }
@@ -1148,13 +1506,28 @@ function collectParamConstraintTypes(
     if (expr.kind !== 'IrBinaryExpression') return;
     const leftHas = exprContainsParam(expr.left, key);
     const rightHas = exprContainsParam(expr.right, key);
-    if (leftHas && !rightHas) {
-      const t = inferSimpleTypeFromExpr(expr.right, context);
+    const pushFromOther = (other: IrExpression) => {
+      const t = inferSimpleTypeFromExpr(other, context);
       if (t && !isUnknownSimpleType(t)) types.push(t);
+    };
+    if (leftHas && !rightHas) pushFromOther(expr.right);
+    if (rightHas && !leftHas) pushFromOther(expr.left);
+    if (
+      (expr.operator === '&' || expr.operator === '+') &&
+      (leftHas || rightHas)
+    ) {
+      const other = leftHas ? expr.right : expr.left;
+      if (other.kind === 'IrStringLiteral' || other.kind === 'IrCharLiteral') {
+        types.push({ kind: 'IrScalarType', name: 'STRING' });
+      }
     }
-    if (rightHas && !leftHas) {
-      const t = inferSimpleTypeFromExpr(expr.left, context);
-      if (t && !isUnknownSimpleType(t)) types.push(t);
+    if (COMPARISON_OPS.has(expr.operator) && (leftHas || rightHas)) {
+      const other = leftHas ? expr.right : expr.left;
+      if (other.kind === 'IrStringLiteral' || other.kind === 'IrCharLiteral') {
+        types.push({ kind: 'IrScalarType', name: 'STRING' });
+      } else if (other.kind === 'IrIntegerLiteral' || other.kind === 'IrRealLiteral') {
+        types.push({ kind: 'IrScalarType', name: 'INTEGER' });
+      }
     }
   };
 
@@ -1226,6 +1599,93 @@ function collectParamConstraintTypes(
   return types;
 }
 
+function collectParamTypesFromAssignmentAliases(
+  paramName: string,
+  parameters: readonly IrParameter[],
+  body: readonly IrStatement[],
+): IrSimpleType[] {
+  const key = paramName.toLowerCase();
+  const localTypes = collectLocalVariableTypes(body, parameters);
+  const types: IrSimpleType[] = [];
+  walkStatementTree(body, (stmt) => {
+    if (stmt.kind !== 'IrAssignment' || stmt.target.kind !== 'IrIdentifier') return;
+    const value = stmt.value;
+    if (value.kind !== 'IrIdentifier' || value.name.toLowerCase() !== key) return;
+    const localKey = stmt.target.name.toLowerCase();
+    const t = localTypes.get(localKey);
+    if (t && !isUnknownSimpleType(t)) types.push(t);
+  });
+  return types;
+}
+
+/** Types inferred from assignments directly to a parameter name (`hello = "hi"`). */
+function collectParamTypesFromDirectAssignments(
+  paramName: string,
+  parameters: readonly IrParameter[],
+  body: readonly IrStatement[],
+): { scalars: IrSimpleType[]; arrayTypes: IrTypeReference[] } {
+  const key = paramName.toLowerCase();
+  const localTypes = collectLocalVariableTypes(body, parameters);
+  const context = buildTypeInferContext(parameters, body, localTypes);
+  const routines = new Map<string, { returnType?: IrSimpleType | null }>();
+  const scalars: IrSimpleType[] = [];
+  const arrayTypes: IrTypeReference[] = [];
+
+  walkStatementTree(body, (stmt) => {
+    if (stmt.kind !== 'IrAssignment' || stmt.target.kind !== 'IrIdentifier') return;
+    if (stmt.target.name.toLowerCase() !== key) return;
+    const value = stmt.value;
+    const typeRef = inferTypeRefForLocalAssignments(
+      [value],
+      localTypes,
+      parameters,
+      body,
+      routines,
+    );
+    if (typeRef?.kind === 'IrArrayType') {
+      arrayTypes.push(typeRef);
+      return;
+    }
+    if (typeRef?.kind === 'IrScalarType') {
+      scalars.push(typeRef);
+      return;
+    }
+    const scalar = inferSimpleTypeFromExpr(value, context);
+    if (scalar && !isUnknownSimpleType(scalar)) scalars.push(scalar);
+  });
+
+  return { scalars, arrayTypes };
+}
+
+function inferPlaceholderParameterType(
+  p: IrParameter,
+  parameters: readonly IrParameter[],
+  body: readonly IrStatement[],
+): IrParameter {
+  if (!needsBodyParameterInference(p)) return p;
+
+  const direct = collectParamTypesFromDirectAssignments(p.name, parameters, body);
+  const scalarEvidence = [
+    ...collectParamConstraintTypes(p.name, parameters, body),
+    ...collectParamTypesFromAssignmentAliases(p.name, parameters, body),
+    ...direct.scalars,
+  ];
+
+  if (direct.arrayTypes.length > 0) {
+    const arrayUnified = unifyAssignmentTypeRefs(direct.arrayTypes);
+    if (arrayUnified?.kind === 'IrArrayType') {
+      return { ...withoutParamInferenceMarker(p), typeName: arrayUnified };
+    }
+  }
+
+  const inferred = unifyReturnTypes(scalarEvidence);
+  if (!inferred || isUnknownSimpleType(inferred)) return p;
+  return {
+    ...withoutParamInferenceMarker(p),
+    typeName: inferred,
+  };
+}
+
 /** Infer scalar parameter types from comparisons and arithmetic in the routine body. */
 export function resolveUnknownParametersFromBodyUsage(
   statements: readonly IrStatement[],
@@ -1234,16 +1694,9 @@ export function resolveUnknownParametersFromBodyUsage(
     if (stmt.kind !== 'IrFunctionDeclaration' && stmt.kind !== 'IrProcedureDeclaration') {
       return stmt;
     }
-    const parameters = stmt.parameters.map((p) => {
-      if (!isPlaceholderParam(p)) return p;
-      const types = collectParamConstraintTypes(p.name, stmt.parameters, stmt.body);
-      const inferred = unifyReturnTypes(types);
-      if (!inferred || isUnknownSimpleType(inferred)) return p;
-      return {
-        ...withoutParamInferenceMarker(p),
-        typeName: inferred,
-      };
-    });
+    const parameters = stmt.parameters.map((p) =>
+      inferPlaceholderParameterType(p, stmt.parameters, stmt.body),
+    );
     if (stmt.kind === 'IrFunctionDeclaration') {
       return { ...stmt, parameters };
     }
@@ -1512,27 +1965,115 @@ export function simplifyExpressionsInProgram(
   return statements.map(simplifyLoopAndIndexStmt);
 }
 
+function noteScalarType(
+  map: Map<string, IrSimpleType>,
+  name: string,
+  type: IrSimpleType,
+): void {
+  map.set(name.toLowerCase(), type);
+}
+
+function collectScalarNameTypesFromBlock(
+  stmts: readonly IrStatement[],
+  map: Map<string, IrSimpleType>,
+): void {
+  for (const stmt of stmts) {
+    if (stmt.kind === 'IrDeclareStatement' && stmt.typeRef.kind === 'IrScalarType') {
+      for (const name of stmt.names) noteScalarType(map, name, stmt.typeRef);
+    }
+    if (stmt.kind === 'IrFunctionDeclaration' || stmt.kind === 'IrProcedureDeclaration') {
+      for (const p of stmt.parameters) {
+        if (p.typeName.kind === 'IrScalarType') noteScalarType(map, p.name, p.typeName);
+      }
+      collectScalarNameTypesFromBlock(stmt.body, map);
+    }
+    if (stmt.kind === 'IrIfStatement') {
+      collectScalarNameTypesFromBlock(stmt.consequent, map);
+      for (const c of stmt.elseIfClauses) collectScalarNameTypesFromBlock(c.consequent, map);
+      if (stmt.alternate) collectScalarNameTypesFromBlock(stmt.alternate, map);
+    }
+    if (
+      stmt.kind === 'IrWhileStatement' ||
+      stmt.kind === 'IrRepeatStatement' ||
+      stmt.kind === 'IrForStatement'
+    ) {
+      collectScalarNameTypesFromBlock(stmt.body, map);
+    }
+    if (stmt.kind === 'IrCaseStatement') {
+      for (const a of stmt.arms) collectScalarNameTypesFromBlock(a.body, map);
+      if (stmt.otherwise) collectScalarNameTypesFromBlock(stmt.otherwise, map);
+    }
+  }
+}
+
 function collectScalarNameTypes(
   statements: readonly IrStatement[],
 ): Map<string, IrSimpleType> {
   const map = new Map<string, IrSimpleType>();
-  for (const stmt of statements) {
-    if (stmt.kind === 'IrDeclareStatement') {
-      if (stmt.typeRef.kind === 'IrScalarType') {
-        for (const name of stmt.names) {
-          map.set(name.toLowerCase(), stmt.typeRef);
-        }
-      }
-    }
-    if (stmt.kind === 'IrFunctionDeclaration' || stmt.kind === 'IrProcedureDeclaration') {
-      for (const p of stmt.parameters) {
-        if (p.typeName.kind === 'IrScalarType') {
-          map.set(p.name.toLowerCase(), p.typeName);
-        }
-      }
-    }
-  }
+  collectScalarNameTypesFromBlock(statements, map);
   return map;
+}
+
+function isStringTypedExpression(
+  expr: IrExpression,
+  types: ReadonlyMap<string, IrSimpleType>,
+): boolean {
+  if (expr.kind === 'IrStringLiteral' || expr.kind === 'IrCharLiteral') return true;
+  if (expr.kind === 'IrBinaryExpression' && expr.operator === '&') return true;
+  if (expr.kind === 'IrIdentifier') {
+    const t = types.get(expr.name.toLowerCase());
+    return isStringLikeType(t ?? null);
+  }
+  if (expr.kind === 'IrGroupingExpression') {
+    return isStringTypedExpression(expr.expression, types);
+  }
+  return false;
+}
+
+function coerceStringPlusInExpr(
+  expr: IrExpression,
+  types: ReadonlyMap<string, IrSimpleType>,
+): IrExpression {
+  switch (expr.kind) {
+    case 'IrBinaryExpression': {
+      const left = coerceStringPlusInExpr(expr.left, types);
+      const right = coerceStringPlusInExpr(expr.right, types);
+      if (
+        expr.operator === '+' &&
+        isStringTypedExpression(left, types) &&
+        isStringTypedExpression(right, types)
+      ) {
+        return { kind: 'IrBinaryExpression', operator: '&', left, right };
+      }
+      return { ...expr, left, right };
+    }
+    case 'IrUnaryExpression':
+      return { ...expr, argument: coerceStringPlusInExpr(expr.argument, types) };
+    case 'IrGroupingExpression':
+      return { ...expr, expression: coerceStringPlusInExpr(expr.expression, types) };
+    case 'IrCallExpression':
+      return {
+        ...expr,
+        args: expr.args.map((a) => coerceStringPlusInExpr(a, types)),
+      };
+    case 'IrIndexExpression':
+      return {
+        ...expr,
+        array: coerceStringPlusInExpr(expr.array, types),
+        indices: expr.indices.map((i) => coerceStringPlusInExpr(i, types)),
+      };
+    default:
+      return expr;
+  }
+}
+
+/** After types are known, rewrite STRING + STRING to Cambridge &. */
+export function coerceStringPlusToConcat(
+  statements: readonly IrStatement[],
+): IrStatement[] {
+  const types = collectScalarNameTypes(statements);
+  const fold = (expr: IrExpression) => coerceStringPlusInExpr(expr, types);
+  return statements.map((s) => mapStmt(s, fold));
 }
 
 function needsNumToStr(type: IrSimpleType): boolean {
@@ -1642,16 +2183,30 @@ export function wrapNumericConcatInOutput(
   return statements.map((s) => mapStmt(s, fold));
 }
 
+function runTypeInferencePasses(statements: readonly IrStatement[]): IrStatement[] {
+  const passes: Array<(s: readonly IrStatement[]) => IrStatement[]> = [
+    inferArrayParametersFromUsage,
+    propagateParameterBoundsFromCalls,
+    inferScalarParametersFromCallSites,
+    resolveUnknownParametersFromBodyUsage,
+    inferPendingFunctionReturnTypes,
+  ];
+  let stmts = [...statements];
+  for (let round = 0; round < 8; round++) {
+    for (const pass of passes) {
+      stmts = pass(stmts);
+    }
+  }
+  return stmts;
+}
+
 export function refineReverseProgram(body: readonly IrStatement[]): IrStatement[] {
   let stmts = [...body];
   stmts = promoteReturningProceduresToFunctions(stmts);
-  stmts = inferArrayParametersFromUsage(stmts);
-  stmts = propagateParameterBoundsFromCalls(stmts);
-  stmts = inferScalarParametersFromCallSites(stmts);
-  stmts = resolveUnknownParametersFromBodyUsage(stmts);
-  stmts = inferPendingFunctionReturnTypes(stmts);
+  stmts = runTypeInferencePasses(stmts);
   stmts = insertTopLevelDeclarations(stmts);
   stmts = insertRoutineLocalDeclarations(stmts);
+  stmts = coerceStringPlusToConcat(stmts);
   stmts = wrapNumericConcatInOutput(stmts);
   const bounds = collectAllArrayBounds(stmts);
   stmts = rewriteArrayLenCalls(stmts, bounds);

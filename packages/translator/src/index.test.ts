@@ -3798,4 +3798,375 @@ if x != -1:
       'Found 7',
     );
   });
+
+  it('DECLAREs locals assigned inside nested module-level blocks (bubble sort temp)', async () => {
+    const source = `
+mylist = [5,3,7,9,2,15,1,6,19,4,25]
+top = len(mylist)
+swapped = False
+while swapped or top != -1:
+    swapped = False
+    for count in range(top - 2):
+        if mylist[count] > mylist[count + 1]:
+            temp = mylist[count]
+            mylist[count] = mylist[count + 1]
+            mylist[count + 1] = temp
+            swapped = True
+        top = top - 1
+`;
+    const result = translatePythonToPseudocode(source);
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.code).toContain('DECLARE temp : INTEGER');
+    expect(result.code).toContain('DECLARE mylist : ARRAY[1:11] OF INTEGER');
+    expect(result.code.indexOf('DECLARE temp')).toBeLessThan(
+      result.code.indexOf('WHILE swapped'),
+    );
+
+    const parsed = parse(result.code);
+    expect(parsed.ok, JSON.stringify(parsed.diagnostics)).toBe(true);
+    const checked = check(parsed.ast);
+    expect(checked.ok, JSON.stringify(checked.diagnostics)).toBe(true);
+  });
+
+  it('DECLAREs locals assigned in nested routine blocks (IF/ELSE/WHILE/FOR)', () => {
+    const ifElse = translatePythonToPseudocode(`
+def test(x):
+    if x > 0:
+        temp = 5
+    else:
+        other = "hello"
+`);
+    expect(ifElse.diagnostics).toEqual([]);
+    expect(ifElse.code).toContain('DECLARE temp : INTEGER');
+    expect(ifElse.code).toContain('DECLARE other : STRING');
+
+    const nested = translatePythonToPseudocode(`
+def test():
+    flag = True
+    while flag:
+        for i in range(10):
+            value = i
+        flag = False
+`);
+    expect(nested.diagnostics).toEqual([]);
+    expect(nested.code).toContain('DECLARE value : INTEGER');
+    expect(nested.code).not.toContain('DECLARE i :');
+
+    const deep = translatePythonToPseudocode(`
+def test():
+    while True:
+        for i in range(3):
+            if i > 0:
+                temp = i + 1
+            else:
+                temp = 0
+`);
+    expect(deep.diagnostics).toEqual([]);
+    expect(deep.code).toContain('DECLARE temp : INTEGER');
+  });
+
+  it('reports incompatible nested local assignment types', () => {
+    const result = translatePythonToPseudocode(`
+def test():
+    if True:
+        x = 1
+    else:
+        x = "no"
+`);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'T_LOCAL_TYPE_CONFLICT')).toBe(
+      true,
+    );
+  });
+
+  describe('type inference architecture', () => {
+    it('infers STRING parameter from concatenation return', () => {
+      const result = translatePythonToPseudocode(`
+def greet(name):
+    return "Hello " + name
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('name : STRING');
+      expect(result.code).toContain('RETURNS STRING');
+      expect(result.code).not.toContain('T_PROC_DEFAULT_TYPE');
+    });
+
+    it('infers STRING parameter from string comparison return', () => {
+      const result = translatePythonToPseudocode(`
+def is_admin(name):
+    return name == "admin"
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('name : STRING');
+      expect(result.code).toContain('RETURNS BOOLEAN');
+    });
+
+    it('infers INTEGER parameter from increment', () => {
+      const result = translatePythonToPseudocode(`
+def increment(x):
+    return x + 1
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('x : INTEGER');
+      expect(result.code).toContain('RETURNS INTEGER');
+    });
+
+    it('infers INTEGER for multiple numeric parameters', () => {
+      const result = translatePythonToPseudocode(`
+def add(a, b):
+    return a + b
+print(add(2, 3))
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('a : INTEGER');
+      expect(result.code).toContain('b : INTEGER');
+    });
+
+    it('infers ARRAY parameter from index and call site', async () => {
+      await expectPythonReverseRuns(
+        `
+def first(values):
+    return values[0]
+values = [1, 2, 3]
+print(first(values))
+`,
+        '1',
+      );
+      const result = translatePythonToPseudocode(`
+def first(values):
+    return values[0]
+values = [1, 2, 3]
+print(first(values))
+`);
+      expect(result.code).toContain('values : ARRAY[1:3] OF INTEGER');
+      expect(result.diagnostics.some((d) => d.code === 'T_PROC_DEFAULT_TYPE')).toBe(
+        false,
+      );
+    });
+
+    it('infers ARRAY parameter from len in body', () => {
+      const result = translatePythonToPseudocode(`
+def size(values):
+    return len(values)
+data = [1, 2, 3]
+print(size(data))
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('values : ARRAY[1:3] OF INTEGER');
+      expect(result.code).not.toMatch(/LENGTH\(values\)/i);
+    });
+
+    it('infers ARRAY from inline literal call', () => {
+      const result = translatePythonToPseudocode(`
+def first(values):
+    return values[0]
+print(first([1, 2, 3]))
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('values : ARRAY[1:3] OF INTEGER');
+    });
+
+    it('infers local INTEGER from assignment return', () => {
+      const result = translatePythonToPseudocode(`
+def f():
+    x = 5
+    return x
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('RETURNS INTEGER');
+    });
+
+    it('infers local STRING from assignment return', () => {
+      const result = translatePythonToPseudocode(`
+def f():
+    x = "hello"
+    return x
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('RETURNS STRING');
+    });
+
+    it('uses & for STRING variable concatenation in OUTPUT', () => {
+      const result = translatePythonToPseudocode(`
+a = "hello"
+b = "world"
+print(a + b)
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toMatch(/OUTPUT a & b/);
+      expect(result.code).not.toMatch(/OUTPUT a \+ b/);
+    });
+
+    it('keeps numeric + as Cambridge +', () => {
+      const result = translatePythonToPseudocode(`
+x = 1
+y = 2
+print(x + y)
+`);
+      expect(result.code).toMatch(/x \+ y/);
+    });
+
+    it('infers parameter STRING via local assignment alias', () => {
+      const result = translatePythonToPseudocode(`
+def f(x):
+    y = x
+    y = "hello"
+    return y
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('x : STRING');
+      expect(result.code).toContain('RETURNS STRING');
+    });
+
+    it('infers STRING parameter from call-site string and body concat', () => {
+      const result = translatePythonToPseudocode(`
+def greet(name):
+    return "Hello " + name
+print(greet("Ada"))
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('greet(name : STRING)');
+    });
+
+    it('warns with T_PROC_DEFAULT_TYPE when parameter cannot be inferred', () => {
+      const result = translatePythonToPseudocode(`
+def print_value(x):
+    print(x)
+`);
+      expect(result.diagnostics.some((d) => d.code === 'T_PROC_DEFAULT_TYPE')).toBe(
+        true,
+      );
+    });
+
+    it('does not emit T_PROC_DEFAULT_TYPE for inferred STRING parameters', () => {
+      const result = translatePythonToPseudocode(`
+def greet(name):
+    print("Hello " + name)
+`);
+      expect(result.diagnostics.some((d) => d.code === 'T_PROC_DEFAULT_TYPE')).toBe(
+        false,
+      );
+      expect(result.code).toContain('name : STRING');
+    });
+
+    it('preserves explicit Python annotations', () => {
+      const result = translatePythonToPseudocode(`
+def f(x: str) -> str:
+    return x
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('f(x : STRING) RETURNS STRING');
+    });
+
+    it('infers parameter type from direct assignment in body (myfunc/hello)', () => {
+      const result = translatePythonToPseudocode(`
+def myfunc(hello):
+    hello = "hi"
+    return hello
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('myfunc(hello : STRING)');
+      expect(result.code).toContain('RETURNS STRING');
+      expect(result.code).not.toContain('hello : INTEGER');
+    });
+
+    it('infers parameter REAL, BOOLEAN, INTEGER from body assignments', () => {
+      expect(
+        translatePythonToPseudocode(`
+def f(x):
+    x = 5.5
+    return x
+`).code,
+      ).toContain('x : REAL');
+
+      expect(
+        translatePythonToPseudocode(`
+def f(x):
+    x = True
+    return x
+`).code,
+      ).toContain('x : BOOLEAN');
+
+      expect(
+        translatePythonToPseudocode(`
+def f(x):
+    x = 42
+    return x
+`).code,
+      ).toContain('x : INTEGER');
+    });
+
+    it('infers parameter ARRAY from list assignment', () => {
+      const result = translatePythonToPseudocode(`
+def f(x):
+    x = [1, 2, 3]
+    return x[0]
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('x : ARRAY[1:3] OF INTEGER');
+    });
+
+    it('infers STRING from parameter assignment used in concat return', () => {
+      const result = translatePythonToPseudocode(`
+def f(x):
+    x = "hello"
+    return x + "!"
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('x : STRING');
+      expect(result.code).toContain('RETURNS STRING');
+    });
+
+    it('reports conflict when parameter receives incompatible assignments', () => {
+      const result = translatePythonToPseudocode(`
+def f(x):
+    x = 1
+    x = "hello"
+    return x
+`);
+      expect(result.ok).toBe(false);
+      expect(result.diagnostics.some((d) => d.code === 'T_LOCAL_TYPE_CONFLICT')).toBe(
+        true,
+      );
+    });
+
+    it('keeps explicit parameter annotation when assignment matches', () => {
+      const result = translatePythonToPseudocode(`
+def f(x: int):
+    x = 5
+    return x
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('x : INTEGER');
+    });
+
+    it('reports conflict when assignment contradicts explicit annotation', () => {
+      const result = translatePythonToPseudocode(`
+def f(x: int):
+    x = "hello"
+    return x
+`);
+      expect(result.ok).toBe(false);
+      expect(result.diagnostics.some((d) => d.code === 'T_LOCAL_TYPE_CONFLICT')).toBe(
+        true,
+      );
+    });
+
+    it('translates Python negative list index to last Cambridge element', async () => {
+      await expectPythonReverseRuns(
+        `
+values = [1, 2, 3]
+print(values[-1])
+`,
+        '3',
+      );
+      const result = translatePythonToPseudocode(`
+values = [1, 2, 3]
+print(values[-1])
+`);
+      expect(result.code).toMatch(/values\[3\]/);
+      expect(result.code).not.toMatch(/values\[0\]/);
+    });
+  });
 });

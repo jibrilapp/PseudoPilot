@@ -21,6 +21,7 @@ import { attachTriviaToStatements } from '../trivia/attach.js';
 import { pythonIndexToCambridge } from './array-index.js';
 import {
   arrayTypeFromBounds,
+  collectIncompatibleLocalAssignmentTypeErrors,
   collectUninferredParameterWarnings,
   collectUninferredReturnTypeErrors,
   finalizeInferredParameters,
@@ -3650,27 +3651,38 @@ function collapseByRefCallSites(
   return out;
 }
 
+type ArrayDimBounds = {
+  readonly lower: IrExpression;
+  readonly upper: IrExpression;
+};
+
 function collectArrayBounds(
   statements: readonly IrStatement[],
-): Map<string, IrExpression[]> {
-  const map = new Map<string, IrExpression[]>();
+): Map<string, ArrayDimBounds[]> {
+  const map = new Map<string, ArrayDimBounds[]>();
   const walk = (stmts: readonly IrStatement[]) => {
     for (const stmt of stmts) {
       if (stmt.kind === 'IrDeclareStatement' && stmt.typeRef.kind === 'IrArrayType') {
-        const lowers = stmt.typeRef.dimensions.map((d) => d.lower);
+        const dims = stmt.typeRef.dimensions.map((d) => ({
+          lower: d.lower,
+          upper: d.upper,
+        }));
         for (const name of stmt.names) {
-          map.set(name.toLowerCase(), lowers);
+          map.set(name.toLowerCase(), dims);
         }
       }
       if (stmt.kind === 'IrTypeDeclaration') {
         for (const field of stmt.fields) {
           if (field.typeRef.kind !== 'IrArrayType') continue;
-          const lowers = field.typeRef.dimensions.map((d) => d.lower);
+          const dims = field.typeRef.dimensions.map((d) => ({
+            lower: d.lower,
+            upper: d.upper,
+          }));
           for (const name of field.names) {
             // Field bounds keyed as `TypeName.field` are resolved via member
             // chains in stripIndexOffsetsInExpr; also store bare field name as
             // a weak fallback when the base is an index of that record type.
-            map.set(`*.${name.toLowerCase()}`, lowers);
+            map.set(`*.${name.toLowerCase()}`, dims);
           }
         }
       }
@@ -3680,8 +3692,11 @@ function collectArrayBounds(
       ) {
         for (const p of stmt.parameters) {
           if (p.typeName.kind === 'IrArrayType') {
-            const lowers = p.typeName.dimensions.map((d) => d.lower);
-            map.set(p.name.toLowerCase(), lowers);
+            const dims = p.typeName.dimensions.map((d) => ({
+              lower: d.lower,
+              upper: d.upper,
+            }));
+            map.set(p.name.toLowerCase(), dims);
           }
         }
         walk(stmt.body);
@@ -3710,7 +3725,7 @@ function collectArrayBounds(
 
 function stripIndexOffsetsInStmt(
   stmt: IrStatement,
-  bounds: Map<string, IrExpression[]>,
+  bounds: Map<string, ArrayDimBounds[]>,
 ): IrStatement {
   const mapExpr = (e: IrExpression): IrExpression =>
     stripIndexOffsetsInExpr(e, bounds);
@@ -3792,18 +3807,20 @@ function stripIndexOffsetsInStmt(
 
 function stripIndexOffsetsInExpr(
   expr: IrExpression,
-  bounds: Map<string, IrExpression[]>,
+  bounds: Map<string, ArrayDimBounds[]>,
 ): IrExpression {
   switch (expr.kind) {
     case 'IrIndexExpression': {
       const array = stripIndexOffsetsInExpr(expr.array, bounds);
-      const lowers = resolveLowersForArrayExpr(array, bounds);
+      const dims = resolveDimsForArrayExpr(array, bounds);
       const indices = expr.indices.map((idx, i) =>
         pythonIndexToCambridge(
           stripIndexOffsetsInExpr(idx, bounds),
-          lowers?.[i],
+          dims?.[i]?.lower,
+          dims?.[i]?.upper,
         ),
       );
+      const lowers = dims?.map((d) => d.lower);
       return {
         kind: 'IrIndexExpression',
         array,
@@ -3855,10 +3872,10 @@ function stripIndexOffsetsInExpr(
   }
 }
 
-function resolveLowersForArrayExpr(
+function resolveDimsForArrayExpr(
   array: IrExpression,
-  bounds: Map<string, IrExpression[]>,
-): IrExpression[] | undefined {
+  bounds: Map<string, ArrayDimBounds[]>,
+): ArrayDimBounds[] | undefined {
   if (array.kind === 'IrIdentifier') {
     return bounds.get(array.name.toLowerCase());
   }
@@ -4211,8 +4228,14 @@ export function parsePythonToIr(
   const finalizedBody = finalizeInferredParameters(ir.body);
   const paramWarnings = collectUninferredParameterWarnings(finalizedBody);
   const returnTypeErrors = collectUninferredReturnTypeErrors(finalizedBody);
+  const localTypeConflicts = collectIncompatibleLocalAssignmentTypeErrors(finalizedBody);
   return {
     ir: { ...ir, body: finalizedBody },
-    diagnostics: [...parser.diagnostics, ...paramWarnings, ...returnTypeErrors],
+    diagnostics: [
+      ...parser.diagnostics,
+      ...paramWarnings,
+      ...returnTypeErrors,
+      ...localTypeConflicts,
+    ],
   };
 }
