@@ -2613,9 +2613,25 @@ class PyParser {
     };
   }
 
+  private python3PrintParenMessage(): string {
+    const tok = this.peek();
+    if (tok.kind === PyTokenKind.Identifier) {
+      return `'print' requires parentheses in Python 3. Use print(${tok.lexeme}).`;
+    }
+    if (tok.kind === PyTokenKind.String) {
+      return "'print' requires parentheses in Python 3. Use print(...).";
+    }
+    return "'print' requires parentheses in Python 3. Use print(...).";
+  }
+
   private parsePrint(): { stmt: IrStatement; span: StmtSpan } | null {
     const printTok = this.expect(PyTokenKind.Print)!;
-    this.expect(PyTokenKind.LParen);
+    if (!this.check(PyTokenKind.LParen)) {
+      this.error(this.python3PrintParenMessage(), this.peek());
+      this.skipRestOfLine();
+      return null;
+    }
+    this.advance(); // (
     const values: IrExpression[] = [];
     if (!this.check(PyTokenKind.RParen)) {
       const first = this.parsePrintArg();
@@ -2627,9 +2643,12 @@ class PyParser {
         values.push(...next);
       }
     }
-    const rparen = this.expect(PyTokenKind.RParen);
+    if (!this.match(PyTokenKind.RParen)) {
+      this.error("Expected ')' after print arguments.", this.peek());
+      return null;
+    }
     return {
-      span: tokenSpan(printTok, rparen ?? this.previous()),
+      span: tokenSpan(printTok, this.previous()),
       stmt: withEmptyTrivia({
         kind: 'IrOutput' as const,
         values,

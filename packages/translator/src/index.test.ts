@@ -4169,4 +4169,50 @@ print(values[-1])
       expect(result.code).not.toMatch(/values\[0\]/);
     });
   });
+
+  describe('Python 3 print syntax', () => {
+    it('accepts print(...)', () => {
+      expect(translatePythonToPseudocode('hello = "x"\nprint(hello)\n').ok).toBe(true);
+      expect(translatePythonToPseudocode('print("hello")\n').ok).toBe(true);
+      expect(translatePythonToPseudocode('print(a, b, c)\n').ok).toBe(true);
+      expect(translatePythonToPseudocode('x = 1\nprint(f"Value: {x}")\n').ok).toBe(
+        true,
+      );
+    });
+
+    it('rejects bare print with a clear Python 3 diagnostic', () => {
+      const result = translatePythonToPseudocode('print hello\n');
+      expect(result.ok).toBe(false);
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]?.code).toBe('T_PY_PARSE');
+      expect(result.diagnostics[0]?.message).toBe(
+        "'print' requires parentheses in Python 3. Use print(hello).",
+      );
+    });
+
+    it('translates myfunc string concat and print(x) end-to-end', async () => {
+      await expectPythonReverseRuns(
+        `
+def myfunc(hello):
+    hello = hello + " hi"
+    return hello
+
+x = myfunc("yo")
+print(x)
+`,
+        'yo hi',
+      );
+      const result = translatePythonToPseudocode(`
+def myfunc(hello):
+    hello = hello + " hi"
+    return hello
+
+x = myfunc("yo")
+print(x)
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('myfunc(hello : STRING)');
+      expect(result.code).toContain('DECLARE x : STRING');
+    });
+  });
 });

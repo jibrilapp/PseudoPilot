@@ -112,6 +112,32 @@ describe('runPythonToPseudocode (web adapter)', () => {
     expect(translated.code).not.toMatch(/- 1 \+ 1 - 1/);
   });
 
+  it('reports clear Python 3 diagnostic for bare print', () => {
+    const translated = runPythonToPseudocode('print hello\n');
+    expect(translated.ok).toBe(false);
+    expect(translated.diagnostics).toHaveLength(1);
+    expect(translated.diagnostics[0]?.message).toContain('requires parentheses in Python 3');
+  });
+
+  it('translates myfunc concat + print(x) through web adapter', async () => {
+    const source = `
+def myfunc(hello):
+    hello = hello + " hi"
+    return hello
+x = myfunc("yo")
+print(x)
+`;
+    const translated = runPythonToPseudocode(source);
+    expect(translated.ok, translated.diagnostics.map((d) => d.message).join('; ')).toBe(
+      true,
+    );
+    expect(translated.diagnostics).toEqual([]);
+    const host = new MemoryHost();
+    const run = await runPseudocode(translated.code, { host });
+    expect(run.ok, JSON.stringify(run.diagnostics)).toBe(true);
+    expect(host.outputs.join('')).toBe('yo hi');
+  });
+
   it('infers STRING parameter from body assignment (myfunc/hello)', () => {
     const source = `
 def myfunc(hello):
