@@ -3577,6 +3577,147 @@ print(search(values, 2))
     expect(result.code).toContain('target : INTEGER');
   });
 
+  describe('Python bare list parameter annotations', () => {
+    it('infers INTEGER array from indexing and inline call (first)', async () => {
+      await expectPythonReverseRuns(
+        `
+def first(items: list):
+    return items[0]
+print(first([10, 20, 30]))
+`,
+        '10',
+      );
+      const result = translatePythonToPseudocode(`
+def first(items: list):
+    return items[0]
+print(first([10, 20, 30]))
+`);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('items : ARRAY[1:3] OF INTEGER');
+      expect(result.code).toContain('RETURNS INTEGER');
+      expect(result.code).not.toContain(': list');
+    });
+
+    it('infers bounds from len(items: list)', async () => {
+      await expectPythonReverseRuns(
+        `
+def size(items: list):
+    return len(items)
+print(size([10, 20, 30]))
+`,
+        '3',
+      );
+      expect(
+        translatePythonToPseudocode(`
+def size(items: list):
+    return len(items)
+print(size([10, 20, 30]))
+`).code,
+      ).toContain('items : ARRAY[1:3] OF INTEGER');
+    });
+
+    it('supports iteration with len and indexing (total)', async () => {
+      await expectPythonReverseRuns(
+        `
+def total(items: list):
+    total = 0
+    for i in range(len(items)):
+        total = total + items[i]
+    return total
+print(total([1, 2, 3, 4]))
+`,
+        '10',
+      );
+    });
+
+    it('supports negative indexing (last)', async () => {
+      await expectPythonReverseRuns(
+        `
+def last(items: list):
+    return items[-1]
+print(last([10, 20, 30]))
+`,
+        '30',
+      );
+    });
+
+    it('infers STRING array from string list call site', async () => {
+      await expectPythonReverseRuns(
+        `
+def first_word(words: list):
+    return words[0]
+print(first_word(["hello", "world"]))
+`,
+        'hello',
+      );
+      expect(
+        translatePythonToPseudocode(`
+def first_word(words: list):
+    return words[0]
+print(first_word(["hello", "world"]))
+`).code,
+      ).toContain('ARRAY[1:2] OF STRING');
+    });
+
+    it('refines list alongside explicit int parameter (add_first)', async () => {
+      await expectPythonReverseRuns(
+        `
+def add_first(x: int, items: list):
+    return x + items[0]
+print(add_first(10, [5, 6, 7]))
+`,
+        '15',
+      );
+    });
+
+    it('linearsearch with list param and inline literal call', async () => {
+      const code = await expectPythonReverseRuns(
+        `
+def linearsearch(target: int, mylist: list):
+    for i in range(len(mylist)):
+        if target == mylist[i]:
+            return i
+    return -1
+x = linearsearch(3, [1, 2, 3, 4, 5, 6, 7, 8])
+print(x)
+`,
+        '2',
+      );
+      expect(code).toContain('mylist : ARRAY[1:8] OF INTEGER');
+      expect(code).toContain('target : INTEGER');
+      expect(code).toContain('RETURNS INTEGER');
+      expect(code).not.toMatch(/\bmylist\s*:\s*list\b/i);
+    });
+
+    it('types bubblesort list parameter and body (in-place procedure)', () => {
+      const result = translatePythonToPseudocode(`
+def bubblesort(mylist: list):
+    top = len(mylist) - 1
+    swapped = True
+    while swapped:
+        swapped = False
+        for i in range(top):
+            if mylist[i] > mylist[i + 1]:
+                temp = mylist[i]
+                mylist[i] = mylist[i + 1]
+                mylist[i + 1] = temp
+                swapped = True
+        top = top - 1
+data = [5, 2, 8, 1, 3]
+bubblesort(data)
+print(data[0])
+`);
+      expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.code).toContain('mylist : ARRAY[1:5] OF INTEGER');
+      expect(result.code).toContain('DECLARE temp : INTEGER');
+      const parsed = parse(result.code);
+      expect(parsed.ok, JSON.stringify(parsed.diagnostics)).toBe(true);
+      const checked = check(parsed.ast);
+      expect(checked.ok, JSON.stringify(checked.diagnostics)).toBe(true);
+    });
+  });
+
   it('infers unannotated parameter types from call-site literals without warnings', () => {
     const result = translatePythonToPseudocode(`
 def print_value(x):

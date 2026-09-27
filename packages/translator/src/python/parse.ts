@@ -1989,7 +1989,13 @@ class PyParser {
       return null;
     }
     const typeTok = this.advance();
-    if (typeTok.lexeme === 'list' && this.match(PyTokenKind.LBracket)) {
+    if (typeTok.lexeme === 'list') {
+      if (!this.match(PyTokenKind.LBracket)) {
+        return arrayTypeFromBounds(
+          { kind: 'IrNamedType', name: 'UNKNOWN' },
+          literalArrayBounds(1),
+        );
+      }
       if (!this.check(PyTokenKind.Identifier)) {
         this.error('Expected element type inside list[…].', this.peek());
         return null;

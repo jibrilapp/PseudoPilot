@@ -83,8 +83,16 @@ function isDefaultPlaceholderArrayType(typeRef: IrTypeReference): boolean {
   );
 }
 
+/** Python `list` annotation without element type — ARRAY placeholder awaiting refinement. */
+function isUnresolvedListParameter(param: IrParameter): boolean {
+  if (param.typeName.kind !== 'IrArrayType') return false;
+  if (!isDefaultPlaceholderArrayType(param.typeName)) return false;
+  return isUnknownSimpleType(param.typeName.elementType);
+}
+
 /** Unannotated parameters still eligible for body/call-site refinement. */
 function needsBodyParameterInference(param: IrParameter): boolean {
+  if (isUnresolvedListParameter(param)) return true;
   if (param.unannotated !== true) return false;
   if (isUnknownType(param.typeName)) return true;
   return isDefaultPlaceholderArrayType(param.typeName);
@@ -1425,13 +1433,18 @@ export function inferArrayParametersFromUsage(
       return stmt;
     }
     const parameters = stmt.parameters.map((p) => {
-      if (isPlaceholderParam(p) && paramUsedAsArray(p.name, stmt.body)) {
+      if (
+        (isPlaceholderParam(p) || isUnresolvedListParameter(p)) &&
+        paramUsedAsArray(p.name, stmt.body)
+      ) {
+        const elementType: IrSimpleType =
+          p.typeName.kind === 'IrArrayType' &&
+          !isUnknownSimpleType(p.typeName.elementType)
+            ? p.typeName.elementType
+            : ({ kind: 'IrScalarType', name: 'INTEGER' } as const);
         return {
           ...p,
-          typeName: arrayTypeFromBounds(
-            { kind: 'IrScalarType', name: 'INTEGER' },
-            literalArrayBounds(1),
-          ),
+          typeName: arrayTypeFromBounds(elementType, literalArrayBounds(1)),
         };
       }
       return p;
@@ -2200,10 +2213,123 @@ function runTypeInferencePasses(statements: readonly IrStatement[]): IrStatement
   return stmts;
 }
 
+/** Cambridge runtime requires array literals on assignment targets, not in call args. */
+function rewriteExprHoistArrayLiteralCallArgs(
+  expr: IrExpression,
+  hoists: IrStatement[],
+  nextTempName: () => string,
+): IrExpression {
+  switch (expr.kind) {
+    case 'IrCallExpression':
+      return {
+        ...expr,
+        args: expr.args.map((arg) => {
+          if (arg.kind === 'IrArrayLiteralExpression') {
+            const typeRef = inferTypeRefFromExpr(arg);
+            if (!typeRef || typeRef.kind !== 'IrArrayType') return arg;
+            const name = nextTempName();
+            hoists.push({
+              kind: 'IrDeclareStatement',
+              names: [name],
+              typeRef,
+              leadingTrivia: [],
+              trailingTrivia: [],
+            });
+            hoists.push({
+              kind: 'IrAssignment',
+              target: { kind: 'IrIdentifier', name },
+              value: arg,
+              leadingTrivia: [],
+              trailingTrivia: [],
+            });
+            return { kind: 'IrIdentifier', name };
+          }
+          return rewriteExprHoistArrayLiteralCallArgs(arg, hoists, nextTempName);
+        }),
+      };
+    case 'IrBinaryExpression':
+      return {
+        ...expr,
+        left: rewriteExprHoistArrayLiteralCallArgs(expr.left, hoists, nextTempName),
+        right: rewriteExprHoistArrayLiteralCallArgs(expr.right, hoists, nextTempName),
+      };
+    case 'IrUnaryExpression':
+      return {
+        ...expr,
+        argument: rewriteExprHoistArrayLiteralCallArgs(expr.argument, hoists, nextTempName),
+      };
+    case 'IrGroupingExpression':
+      return {
+        ...expr,
+        expression: rewriteExprHoistArrayLiteralCallArgs(
+          expr.expression,
+          hoists,
+          nextTempName,
+        ),
+      };
+    case 'IrIndexExpression':
+      return {
+        ...expr,
+        array: rewriteExprHoistArrayLiteralCallArgs(expr.array, hoists, nextTempName),
+        indices: expr.indices.map((i) =>
+          rewriteExprHoistArrayLiteralCallArgs(i, hoists, nextTempName),
+        ),
+      };
+    default:
+      return expr;
+  }
+}
+
+function hoistModuleLevelArrayLiteralCallArgs(
+  statements: readonly IrStatement[],
+): IrStatement[] {
+  let tempIndex = 0;
+  const nextTempName = () => `_pp_list_lit_${tempIndex++}`;
+  const out: IrStatement[] = [];
+
+  for (const stmt of statements) {
+    if (
+      stmt.kind === 'IrFunctionDeclaration' ||
+      stmt.kind === 'IrProcedureDeclaration'
+    ) {
+      out.push(stmt);
+      continue;
+    }
+
+    const hoists: IrStatement[] = [];
+    let rewritten: IrStatement = stmt;
+
+    if (stmt.kind === 'IrAssignment') {
+      rewritten = {
+        ...stmt,
+        value: rewriteExprHoistArrayLiteralCallArgs(stmt.value, hoists, nextTempName),
+      };
+    } else if (stmt.kind === 'IrOutput') {
+      rewritten = {
+        ...stmt,
+        values: stmt.values.map((v) =>
+          rewriteExprHoistArrayLiteralCallArgs(v, hoists, nextTempName),
+        ),
+      };
+    } else if (stmt.kind === 'IrCallStatement') {
+      rewritten = {
+        ...stmt,
+        args: stmt.args.map((a) =>
+          rewriteExprHoistArrayLiteralCallArgs(a, hoists, nextTempName),
+        ),
+      };
+    }
+
+    out.push(...hoists, rewritten);
+  }
+  return out;
+}
+
 export function refineReverseProgram(body: readonly IrStatement[]): IrStatement[] {
   let stmts = [...body];
   stmts = promoteReturningProceduresToFunctions(stmts);
   stmts = runTypeInferencePasses(stmts);
+  stmts = hoistModuleLevelArrayLiteralCallArgs(stmts);
   stmts = insertTopLevelDeclarations(stmts);
   stmts = insertRoutineLocalDeclarations(stmts);
   stmts = coerceStringPlusToConcat(stmts);

@@ -153,4 +153,28 @@ def myfunc(hello):
     expect(translated.code).toContain('RETURNS STRING');
     expect(translated.code).not.toContain('hello : INTEGER');
   });
+
+  it('translates linearsearch with bare list parameter through web adapter', async () => {
+    const source = `
+def linearsearch(target: int, mylist: list):
+    for i in range(len(mylist)):
+        if target == mylist[i]:
+            return i
+    return -1
+x = linearsearch(3, [1, 2, 3, 4, 5, 6, 7, 8])
+print(x)
+`;
+    const translated = runPythonToPseudocode(source);
+    expect(translated.ok, translated.diagnostics.map((d) => d.message).join('; ')).toBe(
+      true,
+    );
+    expect(translated.diagnostics).toEqual([]);
+    expect(translated.code).toContain('mylist : ARRAY[1:8] OF INTEGER');
+    expect(translated.code).not.toMatch(/\bmylist\s*:\s*list\b/i);
+
+    const host = new MemoryHost();
+    const run = await runPseudocode(translated.code, { host });
+    expect(run.ok, JSON.stringify(run.diagnostics)).toBe(true);
+    expect(host.outputs.join('')).toBe('2');
+  });
 });
