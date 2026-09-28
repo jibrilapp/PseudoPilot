@@ -315,6 +315,8 @@ export type IrCallStatement = WithTrivia & {
 export type IrReturnStatement = WithTrivia & {
   readonly kind: 'IrReturnStatement';
   readonly value: IrExpression;
+  /** Span of the Python `return` for reverse-translation diagnostics. */
+  readonly sourceSpan?: IrSourceSpan;
 };
 
 /** Internal-only for Python pattern recognition; not a Cambridge surface feature. */

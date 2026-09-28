@@ -10,6 +10,7 @@ import type {
   IrParameter,
   IrScalarType,
   IrSimpleType,
+  IrSourceSpan,
   IrStatement,
   IrTypeName,
   IrTypeReference,
@@ -419,6 +420,113 @@ function collectReturns(body: readonly IrStatement[]): IrExpression[] {
   return out;
 }
 
+function collectReturnStatements(
+  body: readonly IrStatement[],
+): Extract<IrStatement, { kind: 'IrReturnStatement' }>[] {
+  const out: Extract<IrStatement, { kind: 'IrReturnStatement' }>[] = [];
+  const walk = (stmts: readonly IrStatement[]) => {
+    for (const stmt of stmts) {
+      if (stmt.kind === 'IrReturnStatement') out.push(stmt);
+      if (stmt.kind === 'IrIfStatement') {
+        walk(stmt.consequent);
+        for (const c of stmt.elseIfClauses) walk(c.consequent);
+        if (stmt.alternate) walk(stmt.alternate);
+      }
+      if (
+        stmt.kind === 'IrWhileStatement' ||
+        stmt.kind === 'IrRepeatStatement' ||
+        stmt.kind === 'IrForStatement'
+      ) {
+        walk(stmt.body);
+      }
+      if (stmt.kind === 'IrCaseStatement') {
+        for (const a of stmt.arms) walk(a.body);
+        if (stmt.otherwise) walk(stmt.otherwise);
+      }
+    }
+  };
+  walk(body);
+  return out;
+}
+
+function isExplicitPythonListReturnAnnotation(type: IrSimpleType): boolean {
+  if (type.kind !== 'IrNamedType') return false;
+  const name = type.name.toLowerCase();
+  return name === 'list' || name === 'list_';
+}
+
+function returnExpressionDenotesArrayValue(
+  expr: IrExpression,
+  parameters: readonly IrParameter[],
+  body: readonly IrStatement[],
+): boolean {
+  if (expr.kind === 'IrArrayLiteralExpression') return true;
+  const fromExpr = inferTypeRefFromExpr(expr);
+  if (fromExpr?.kind === 'IrArrayType') return true;
+  if (expr.kind === 'IrIdentifier') {
+    const key = expr.name.toLowerCase();
+    const param = parameters.find((p) => p.name.toLowerCase() === key);
+    if (param?.typeName.kind === 'IrArrayType') return true;
+    for (const stmt of body) {
+      if (
+        stmt.kind === 'IrDeclareStatement' &&
+        stmt.typeRef.kind === 'IrArrayType' &&
+        stmt.names.some((n) => n.toLowerCase() === key)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export type UnsupportedArrayFunctionReturn = {
+  readonly errors: TranslateDiagnostic[];
+  readonly excludedFunctionNames: ReadonlySet<string>;
+};
+
+/** Cambridge FUNCTION return types cannot represent Python list/array values. */
+export function collectUnsupportedArrayFunctionReturnIssues(
+  statements: readonly IrStatement[],
+): UnsupportedArrayFunctionReturn {
+  const errors: TranslateDiagnostic[] = [];
+  const excludedFunctionNames = new Set<string>();
+
+  for (const stmt of statements) {
+    if (stmt.kind !== 'IrFunctionDeclaration') continue;
+
+    const explicitList = isExplicitPythonListReturnAnnotation(stmt.returnType);
+    const arrayReturns = collectReturnStatements(stmt.body).filter((ret) =>
+      returnExpressionDenotesArrayValue(ret.value, stmt.parameters, stmt.body),
+    );
+
+    if (!explicitList && arrayReturns.length === 0) continue;
+
+    excludedFunctionNames.add(stmt.name);
+    const span: IrSourceSpan | undefined =
+      arrayReturns[0]?.sourceSpan ?? stmt.inferenceSpan;
+    errors.push({
+      severity: 'error',
+      code: 'T_PY_PARSE',
+      message: `Function '${stmt.name}' returns a list/array, but this cannot currently be represented as a Cambridge FUNCTION return type. The function was not translated.`,
+      ...(span ? { span } : {}),
+    });
+  }
+
+  return { errors, excludedFunctionNames };
+}
+
+/** Drop module-level FUNCTION declarations that cannot be translated. */
+export function omitModuleFunctionsByName(
+  statements: readonly IrStatement[],
+  names: ReadonlySet<string>,
+): IrStatement[] {
+  if (names.size === 0) return [...statements];
+  return statements.filter(
+    (s) => !(s.kind === 'IrFunctionDeclaration' && names.has(s.name)),
+  );
+}
+
 export function inferReturnTypeFromBody(
   body: readonly IrStatement[],
   parameters: readonly IrParameter[] = [],
@@ -510,6 +618,7 @@ function containsReturnInBody(body: readonly IrStatement[]): boolean {
 
 export function collectUninferredReturnTypeErrors(
   statements: readonly IrStatement[],
+  skipFunctionNames: ReadonlySet<string> = new Set(),
 ): TranslateDiagnostic[] {
   const errors: TranslateDiagnostic[] = [];
   const walk = (stmts: readonly IrStatement[]) => {
@@ -517,7 +626,8 @@ export function collectUninferredReturnTypeErrors(
       if (
         stmt.kind === 'IrFunctionDeclaration' &&
         stmt.pendingReturnTypeInference &&
-        stmt.inferenceSpan
+        stmt.inferenceSpan &&
+        !skipFunctionNames.has(stmt.name)
       ) {
         errors.push({
           severity: 'error',

@@ -3689,6 +3689,55 @@ print(x)
       expect(code).not.toMatch(/\bmylist\s*:\s*list\b/i);
     });
 
+    it('rejects FUNCTION that returns a list parameter with a clear diagnostic', () => {
+      const result = translatePythonToPseudocode(`
+def InsertionSort(TheData: list):
+    return TheData
+`);
+      expect(result.ok).toBe(false);
+      expect(
+        result.diagnostics.some(
+          (d) =>
+            d.severity === 'error' &&
+            d.message.includes("Function 'InsertionSort' returns a list/array"),
+        ),
+      ).toBe(true);
+      expect(result.code).not.toContain('InsertionSort');
+      expect(result.code).not.toMatch(/\bRETURNS\s+(list|lis|list_)\b/i);
+      expect(result.code).not.toMatch(/:\s*(list|lis|list_)\b/i);
+    });
+
+    it('still infers scalar FUNCTION return from list parameter indexing', async () => {
+      await expectPythonReverseRuns(
+        `
+def first(items: list):
+    return items[0]
+print(first([10, 20, 30]))
+`,
+        '10',
+      );
+      const result = translatePythonToPseudocode(`
+def first(items: list):
+    return items[0]
+print(first([10, 20, 30]))
+`);
+      expect(result.ok).toBe(true);
+      expect(result.code).toContain('RETURNS INTEGER');
+    });
+
+    it('rejects explicit Python -> list return annotation', () => {
+      const result = translatePythonToPseudocode(`
+def f(TheData: list) -> list:
+    return TheData
+`);
+      expect(result.ok).toBe(false);
+      expect(result.diagnostics.some((d) => d.message.includes('list/array'))).toBe(
+        true,
+      );
+      expect(result.code).not.toContain('FUNCTION f');
+      expect(result.code).not.toMatch(/\bRETURNS\s+list\b/i);
+    });
+
     it('types bubblesort list parameter and body (in-place procedure)', () => {
       const result = translatePythonToPseudocode(`
 def bubblesort(mylist: list):

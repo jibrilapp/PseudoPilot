@@ -23,7 +23,9 @@ import {
   arrayTypeFromBounds,
   collectIncompatibleLocalAssignmentTypeErrors,
   collectUninferredParameterWarnings,
+  collectUnsupportedArrayFunctionReturnIssues,
   collectUninferredReturnTypeErrors,
+  omitModuleFunctionsByName,
   finalizeInferredParameters,
   fStringPartsToConcat,
   literalArrayBounds,
@@ -1906,6 +1908,7 @@ class PyParser {
       stmt: withEmptyTrivia({
         kind: 'IrReturnStatement' as const,
         value,
+        sourceSpan: tokenSpan(retTok, this.previous()),
       }),
     };
   }
@@ -4252,13 +4255,23 @@ export function parsePythonToIr(
   const ir = parser.parseProgram(source, preserveTrivia);
   const finalizedBody = finalizeInferredParameters(ir.body);
   const paramWarnings = collectUninferredParameterWarnings(finalizedBody);
-  const returnTypeErrors = collectUninferredReturnTypeErrors(finalizedBody);
+  const arrayFunctionReturns =
+    collectUnsupportedArrayFunctionReturnIssues(finalizedBody);
+  const returnTypeErrors = collectUninferredReturnTypeErrors(
+    finalizedBody,
+    arrayFunctionReturns.excludedFunctionNames,
+  );
   const localTypeConflicts = collectIncompatibleLocalAssignmentTypeErrors(finalizedBody);
+  const bodyForEmit = omitModuleFunctionsByName(
+    finalizedBody,
+    arrayFunctionReturns.excludedFunctionNames,
+  );
   return {
-    ir: { ...ir, body: finalizedBody },
+    ir: { ...ir, body: bodyForEmit },
     diagnostics: [
       ...parser.diagnostics,
       ...paramWarnings,
+      ...arrayFunctionReturns.errors,
       ...returnTypeErrors,
       ...localTypeConflicts,
     ],
