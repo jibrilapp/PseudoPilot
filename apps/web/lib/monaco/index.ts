@@ -40,3 +40,4 @@ export {
 export { createGenerationDebouncer } from './debounce';
 export { nextDocumentVersion } from './documentSync';
 export { applyExternalModelText } from './applyExternalText';
+export { syncPeerEditorBuffer } from './syncPeerEditorBuffer';

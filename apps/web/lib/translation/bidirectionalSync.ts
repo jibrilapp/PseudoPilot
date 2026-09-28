@@ -121,7 +121,7 @@ export function createBidirectionalSync(
     }
   }
 
-  function scheduleForward(source: string): void {
+  function scheduleForward(): void {
     cancelReverse();
     pending = 'pseudocode';
     status = 'pending';
@@ -133,11 +133,11 @@ export function createBidirectionalSync(
       forwardTimer = null;
       if (token !== forwardGen) return;
       pending = null;
-      const result = options.translateForward(source);
+      const result = options.translateForward(pseudocode);
       diagnostics = result.diagnostics;
       if (result.ok) {
         lastGoodPython = result.code;
-        lastGoodPseudocode = source;
+        lastGoodPseudocode = pseudocode;
         python = result.code;
         status = 'ok';
         errorSide = null;
@@ -148,10 +148,10 @@ export function createBidirectionalSync(
         errorSide = 'pseudocode';
       }
       emit();
-    }, debounceMs(source.length));
+    }, debounceMs(pseudocode.length));
   }
 
-  function scheduleReverse(source: string): void {
+  function scheduleReverse(): void {
     cancelForward();
     pending = 'python';
     status = 'pending';
@@ -163,11 +163,11 @@ export function createBidirectionalSync(
       reverseTimer = null;
       if (token !== reverseGen) return;
       pending = null;
-      const result = options.translateReverse(source);
+      const result = options.translateReverse(python);
       diagnostics = result.diagnostics;
       if (result.ok) {
         lastGoodPseudocode = result.code;
-        lastGoodPython = source;
+        lastGoodPython = python;
         // Apply translated Pseudocode WITHOUT scheduling forward (loop guard).
         pseudocode = result.code;
         status = 'ok';
@@ -179,14 +179,14 @@ export function createBidirectionalSync(
         errorSide = 'python';
       }
       emit();
-    }, debounceMs(source.length));
+    }, debounceMs(python.length));
   }
 
   return {
     getState: snapshot,
 
     bootstrap() {
-      scheduleForward(pseudocode);
+      scheduleForward();
     },
 
     restoreBuffers(nextPseudocode: string, nextPython: string) {
@@ -210,7 +210,7 @@ export function createBidirectionalSync(
       if (value === pseudocode) return;
       pseudocode = value;
       emit();
-      scheduleForward(value);
+      scheduleForward();
     },
 
     editPython(value: string) {
@@ -221,15 +221,15 @@ export function createBidirectionalSync(
       if (value === python) return;
       python = value;
       emit();
-      scheduleReverse(value);
+      scheduleReverse();
     },
 
     forceTranslateForward() {
-      scheduleForward(pseudocode);
+      scheduleForward();
     },
 
     forceTranslateReverse() {
-      scheduleReverse(python);
+      scheduleReverse();
     },
 
     subscribe(listener) {

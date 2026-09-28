@@ -209,6 +209,24 @@ describe('createBidirectionalSync', () => {
     expect(sync.getState().python).toBe('print(OUTPUT 2)');
   });
 
+  it('forward flush translates the latest pseudocode buffer', () => {
+    let captured = '';
+    const sync = createBidirectionalSync({
+      initialPseudocode: 'OUTPUT 0',
+      translateForward: (s) => {
+        captured = s;
+        return ok('print(1)');
+      },
+      translateReverse: () => ok('OUTPUT 1'),
+      debounceMs: () => 50,
+    });
+    sync.editPseudocode('OUTPUT 1');
+    sync.editPseudocode('OUTPUT 2');
+    vi.advanceTimersByTime(50);
+    expect(captured).toBe('OUTPUT 2');
+    expect(sync.getState().python).toBe('print(1)');
+  });
+
   it('stale forward result is dropped after reverse edit', () => {
     const sync = createBidirectionalSync({
       initialPseudocode: 'OUTPUT 1',

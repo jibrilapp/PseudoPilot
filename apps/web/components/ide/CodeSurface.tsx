@@ -13,7 +13,7 @@ import {
   acquireLanguageProviders,
   mergeEditorDecorations,
   diagnosticsToMarkers,
-  applyExternalModelText,
+  syncPeerEditorBuffer,
   MONACO_FONT,
   LS_DIAGNOSTICS_DEBOUNCE_MS,
   PSEUDOCODE_LANGUAGE_ID,
@@ -74,6 +74,8 @@ export function CodeSurface({
   const mouseDisposeRef = useRef<Monaco.IDisposable | null>(null);
   const selectionDisposeRef = useRef<Monaco.IDisposable | null>(null);
   const versionRef = useRef(0);
+  const codeRef = useRef(code);
+  codeRef.current = code;
   const suppressChangeRef = useRef(false);
   const onToggleBreakpointRef = useRef(onToggleBreakpoint);
   onToggleBreakpointRef.current = onToggleBreakpoint;
@@ -163,25 +165,34 @@ export function CodeSurface({
     }
   }, []);
 
-  // Sync external value (translation / restart) without fighting keystrokes.
-  useEffect(() => {
+  const applyPeerBufferRef = useRef<() => boolean>(() => false);
+
+  const applyPeerBufferToEditor = useCallback(() => {
     const editor = editorRef.current;
-    if (!editor) return;
+    const next = codeRef.current;
+    if (!editor) return false;
     suppressChangeRef.current = true;
-    const result = applyExternalModelText(
-      editor as unknown as Parameters<typeof applyExternalModelText>[0],
-      code,
+    const { applied } = syncPeerEditorBuffer(
+      editor as unknown as Parameters<typeof syncPeerEditorBuffer>[0],
+      next,
     );
     // Keep suppress through any deferred model-content listeners so peer
     // executeEdits cannot echo into onChange → opposite-direction translate.
     queueMicrotask(() => {
       suppressChangeRef.current = false;
     });
-    if (result.applied && language === 'pseudocode') {
-      syncLanguageService(code);
+    if (applied && language === 'pseudocode') {
+      syncLanguageService(next);
       scheduleMarkers();
     }
-  }, [code, language, syncLanguageService, scheduleMarkers]);
+    return applied;
+  }, [language, syncLanguageService, scheduleMarkers]);
+  applyPeerBufferRef.current = applyPeerBufferToEditor;
+
+  // Sync external value (translation / restart) without fighting keystrokes.
+  useEffect(() => {
+    applyPeerBufferToEditor();
+  }, [code, applyPeerBufferToEditor]);
 
   useEffect(() => {
     applyDecorations();
@@ -247,7 +258,7 @@ export function CodeSurface({
         IDE_DOCUMENT_URI,
         versionRef.current,
       );
-      ls.openDocument(IDE_DOCUMENT_URI, code, versionRef.current);
+      ls.openDocument(IDE_DOCUMENT_URI, codeRef.current, versionRef.current);
 
       providersRef.current?.dispose();
       providersRef.current = acquireLanguageProviders(
@@ -273,6 +284,9 @@ export function CodeSurface({
 
     applyDecorations();
     applyExternalMarkers();
+    // Monaco loads asynchronously — translation may finish before onMount, so
+    // the [code] effect can no-op while editorRef was null. Catch up here.
+    applyPeerBufferRef.current();
   };
 
   return (
